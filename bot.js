@@ -62,18 +62,17 @@ bot.on('message', async (msg) => {
             return convertToInstaFix(fullLink);
         });
         console.log('Исправленные ссылки:', fixedLinks);
+        const username = msg.from?.username
+            ? `@${msg.from.username}`
+            : msg.from?.first_name || 'user';
+        const formattedMessages = fixedLinks.map(url => `Saved ${username} a click:\n${url}`);
         if (isGroup) {
             try {
-                let newMessageText = messageText;
-                instagramLinks.forEach((originalLink, index) => {
-                    newMessageText = newMessageText.replace(originalLink, fixedLinks[index]);
-                });
-                const finalMessage = `${newMessageText}`;
                 const sendOptions = {
                     disable_web_page_preview: false,
                     reply_to_message_id: msg.message_id,
                 };
-                await bot.sendMessage(chatId, finalMessage, sendOptions);
+                await bot.sendMessage(chatId, formattedMessages.join('\n\n'), sendOptions);
                 console.log('✅ Сообщение-ответ успешно отправлено');
                 await bot.deleteMessage(chatId, msg.message_id);
             }
@@ -84,7 +83,7 @@ bot.on('message', async (msg) => {
             }
         }
         else {
-            bot.sendMessage(chatId, fixedLinks.join('\n'), {
+            bot.sendMessage(chatId, formattedMessages.join('\n\n'), {
                 disable_web_page_preview: false,
             });
         }
