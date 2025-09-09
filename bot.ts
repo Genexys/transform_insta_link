@@ -11,7 +11,8 @@ const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 function convertToInstaFix(url: string): string {
   return url
     .replace(/instagram\.com/g, 'kkinstagram.com')
-    .replace(/instagr\.am/g, 'kkinstagram.com');
+    .replace(/instagr\.am/g, 'kkinstagram.com')
+    .replace(/x\.com/g, 'fixvx.com');
 }
 
 function findInstagramLinks(text: string): string[] {
@@ -23,7 +24,8 @@ function findInstagramLinks(text: string): string[] {
 
     if (
       (cleanWord.includes('instagram.com') ||
-        cleanWord.includes('instagr.am')) &&
+        cleanWord.includes('instagr.am') ||
+        cleanWord.includes('x.com')) &&
       (cleanWord.includes('/p/') ||
         cleanWord.includes('/reel/') ||
         cleanWord.includes('/tv/'))
@@ -31,7 +33,8 @@ function findInstagramLinks(text: string): string[] {
       if (
         !cleanWord.includes('ddinstagram.com') &&
         !cleanWord.includes('kkinstagram.com') &&
-        !cleanWord.includes('vxinstagram.com')
+        !cleanWord.includes('vxinstagram.com') &&
+        !cleanWord.includes('fixvx.com')
       ) {
         instagramLinks.push(cleanWord);
       }
