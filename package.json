@@ -11,7 +11,9 @@
     "watch": "tsc -w"
   },
   "dependencies": {
-    "node-telegram-bot-api": "^0.63.0"
+    "dotenv": "^17.2.2",
+    "node-telegram-bot-api": "^0.63.0",
+    "prettier": "^3.6.2"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
@@ -19,7 +21,12 @@
     "ts-node": "^10.9.0",
     "typescript": "^5.0.0"
   },
-  "keywords": ["telegram", "bot", "instagram", "fix"],
+  "keywords": [
+    "telegram",
+    "bot",
+    "instagram",
+    "fix"
+  ],
   "author": "genexys",
   "license": "MIT"
 }
