@@ -6,7 +6,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || 'YOUR_BOT_TOKEN';
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
 function convertToInstaFix(url: string): string {
-  return url.replace(/instagram\.com/g, 'ddinstagram.com').replace(/instagr\.am/g, 'kkinstagram.com');
+  return url.replace(/instagram\.com/g, 'kkinstagram.com').replace(/instagr\.am/g, 'kkinstagram.com');
 }
 
 function findInstagramLinks(text: string): string[] {
