@@ -13,7 +13,8 @@ function convertToInstaFix(url) {
     return url
         .replace(/instagram\.com/g, 'kkinstagram.com')
         .replace(/instagr\.am/g, 'kkinstagram.com')
-        .replace(/x\.com/g, 'fixvx.com');
+        .replace(/x\.com/g, 'fixvx.com')
+        .replace(/tiktok\.com/g, 'vxtiktok.com');
 }
 function findInstagramLinks(text) {
     const words = text.split(' ');
@@ -21,17 +22,26 @@ function findInstagramLinks(text) {
     for (let word of words) {
         const cleanWord = word.replace(/[.,!?;)]*$/, '');
         if ((cleanWord.includes('instagram.com') ||
-            cleanWord.includes('instagr.am') ||
-            cleanWord.includes('x.com')) &&
+            cleanWord.includes('instagr.am')) &&
             (cleanWord.includes('/p/') ||
                 cleanWord.includes('/reel/') ||
                 cleanWord.includes('/tv/'))) {
             if (!cleanWord.includes('ddinstagram.com') &&
                 !cleanWord.includes('kkinstagram.com') &&
-                !cleanWord.includes('vxinstagram.com') &&
-                !cleanWord.includes('fixvx.com')) {
+                !cleanWord.includes('vxinstagram.com')) {
                 instagramLinks.push(cleanWord);
             }
+        }
+        if (cleanWord.includes('x.com') &&
+            (cleanWord.match(/x\.com\/(?:[A-Za-z0-9_]+)\/status\/[0-9]+/) ||
+                cleanWord.match(/x\.com\/(?:[A-Za-z0-9_]+)\/replies/)) &&
+            !cleanWord.includes('fixvx.com')) {
+            instagramLinks.push(cleanWord);
+        }
+        if (cleanWord.includes('tiktok.com') &&
+            cleanWord.match(/tiktok\.com\/@[A-Za-z0-9_.-]+\/video\/[0-9]+/) &&
+            !cleanWord.includes('vxtiktok.com')) {
+            instagramLinks.push(cleanWord);
         }
     }
     return instagramLinks;
