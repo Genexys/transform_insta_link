@@ -1,4 +1,5 @@
 import TelegramBot from 'node-telegram-bot-api';
+import * as http from 'http';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || 'YOUR_BOT_TOKEN';
 
@@ -10,9 +11,10 @@ function convertToInstaFix(url: string): string {
   return url.replace(/(instagram\.com|instagr\.am)/gi, 'ddinstagram.com');
 }
 
-bot.on('message', (msg) => {
+bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const messageText = msg.text;
+  const isGroup = msg.chat.type === 'group' || msg.chat.type === 'supergroup';
 
   if (!messageText || messageText.startsWith('/')) {
     return;
@@ -26,14 +28,35 @@ bot.on('message', (msg) => {
       return convertToInstaFix(fullLink);
     });
 
-    const response = fixedLinks.length === 1 
-      ? `📱 Исправленная ссылка:\n${fixedLinks[0]}` 
-      : `📱 Исправленные ссылки:\n${fixedLinks.join('\n')}`;
+    if (isGroup) {
+      try {
+        await bot.deleteMessage(chatId, msg.message_id);
+        
+        const username = msg.from && msg.from.username ? `@${msg.from.username}` : msg.from?.first_name || 'Unknown';
+        const newMessage = fixedLinks.length === 1 
+          ? `${username}: ${fixedLinks[0]}`
+          : `${username}:\n${fixedLinks.join('\n')}`;
+          
+        await bot.sendMessage(chatId, newMessage, {
+          disable_web_page_preview: false
+        });
+      } catch (error) {
+        // Если не можем удалить (нет прав) - отправляем как обычно
+        const response = fixedLinks.length === 1 
+          ? `📱 Исправленная ссылка:\n${fixedLinks[0]}` 
+          : `📱 Исправленные ссылки:\n${fixedLinks.join('\n')}`;
 
-    bot.sendMessage(chatId, response, {
-      disable_web_page_preview: false,
-      reply_to_message_id: msg.message_id
-    });
+        bot.sendMessage(chatId, response, {
+          disable_web_page_preview: false,
+          reply_to_message_id: msg.message_id
+        });
+      }
+    } else {
+      const response = fixedLinks.join('\n');
+      bot.sendMessage(chatId, response, {
+        disable_web_page_preview: false
+      });
+    }
   }
 });
 
@@ -62,7 +85,7 @@ bot.on('polling_error', (error) => {
   console.error('Polling error:', error);
 });
 
-import * as http from 'http';
+
 
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
