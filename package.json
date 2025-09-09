@@ -4,7 +4,6 @@
   "description": "Telegram bot that converts Instagram links to working preview links",
   "main": "index.js",
   "scripts": {
-    "build": "tsc",
     "start": "node index.js",
     "dev": "node index.js",
     "watch": "tsc -w"
