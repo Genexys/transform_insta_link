@@ -63,7 +63,7 @@ bot.on('message', async (msg) => {
         });
         
         const username = msg.from && msg.from.username ? `@${msg.from.username}` : msg.from?.first_name || 'Unknown';
-        const finalMessage = `${username}: ${newMessageText}`;
+        const finalMessage = `${newMessageText}`;
         
         const sendOptions: { disable_web_page_preview: boolean; message_thread_id?: number } = {
           disable_web_page_preview: false
