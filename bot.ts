@@ -86,9 +86,7 @@ bot.on('message', async msg => {
 
     console.log('Исправленные ссылки:', fixedLinks);
 
-    const username = msg.from?.username
-      ? `@${msg.from.username}`
-      : msg.from?.first_name || 'user';
+    const username = msg.from?.username ? `@${msg.from.username}` : 'кто-то';
     const formattedMessages = fixedLinks.map(
       url => `Saved ${username} a click:\n${url}`
     );
