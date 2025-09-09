@@ -22,10 +22,10 @@ function findInstagramLinks(text: string): string[] {
   for (let word of words) {
     const cleanWord = word.replace(/[.,!?;)]*$/, '');
 
+    // Instagram
     if (
       (cleanWord.includes('instagram.com') ||
-        cleanWord.includes('instagr.am') ||
-        cleanWord.includes('x.com')) &&
+        cleanWord.includes('instagr.am')) &&
       (cleanWord.includes('/p/') ||
         cleanWord.includes('/reel/') ||
         cleanWord.includes('/tv/'))
@@ -33,11 +33,20 @@ function findInstagramLinks(text: string): string[] {
       if (
         !cleanWord.includes('ddinstagram.com') &&
         !cleanWord.includes('kkinstagram.com') &&
-        !cleanWord.includes('vxinstagram.com') &&
-        !cleanWord.includes('fixvx.com')
+        !cleanWord.includes('vxinstagram.com')
       ) {
         instagramLinks.push(cleanWord);
       }
+    }
+
+    // X.com (Twitter)
+    if (
+      cleanWord.includes('x.com') &&
+      (cleanWord.match(/x\.com\/(?:[A-Za-z0-9_]+)\/status\/[0-9]+/) ||
+        cleanWord.match(/x\.com\/(?:[A-Za-z0-9_]+)\/replies/)) &&
+      !cleanWord.includes('fixvx.com')
+    ) {
+      instagramLinks.push(cleanWord);
     }
   }
 
