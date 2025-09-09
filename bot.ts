@@ -8,7 +8,7 @@ const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 const instagramRegex = /(https?:\/\/)?(www\.)?(instagram\.com|instagr\.am)\/(p|reel|tv)\/([A-Za-z0-9_-]+)\/?(\?[^\s]*)?/gi;
 
 function convertToInstaFix(url: string): string {
-  return url.replace(/(instagram\.com|instagr\.am)/gi, 'ddinstagram.com');
+  return url.replace(/(instagram\.com|instagr\.am)/gi, 'kkinstagram.com');
 }
 
 bot.on('message', async (msg) => {
