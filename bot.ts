@@ -5,10 +5,29 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || 'YOUR_BOT_TOKEN';
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
-const instagramRegex = /(https?:\/\/)?(www\.)?(instagram\.com|instagr\.am)\/(p|reel|tv)\/([A-Za-z0-9_-]+)\/?(\?[^\s]*)?/gi;
-
 function convertToInstaFix(url: string): string {
-  return url.replace(/(instagram\.com|instagr\.am)/gi, 'kkinstagram.com');
+  return url.replace(/instagram\.com/g, 'ddinstagram.com').replace(/instagr\.am/g, 'kkinstagram.com');
+}
+
+function findInstagramLinks(text: string): string[] {
+  const words = text.split(' ');
+  const instagramLinks: string[] = [];
+
+  for (let word of words) {
+    const cleanWord = word.replace(/[.,!?;)]*$/, '');
+    
+    if ((cleanWord.includes('instagram.com') || cleanWord.includes('instagr.am')) &&
+        (cleanWord.includes('/p/') || cleanWord.includes('/reel/') || cleanWord.includes('/tv/'))) {
+      
+      if (!cleanWord.includes('ddinstagram.com') && 
+          !cleanWord.includes('kkinstagram.com') && 
+          !cleanWord.includes('vxinstagram.com')) {
+        instagramLinks.push(cleanWord);
+      }
+    }
+  }
+  
+  return instagramLinks;
 }
 
 bot.on('message', async (msg) => {
@@ -20,18 +39,19 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  const hasFixedLinks = instagramRegex.test(messageText);
-  if (hasFixedLinks) {
-    return; 
-  }
+  console.log('Получено сообщение:', messageText);
 
-  const instagramLinks = messageText.match(instagramRegex);
+  const instagramLinks = findInstagramLinks(messageText);
+  
+  console.log('Найденные Instagram ссылки:', instagramLinks);
 
-  if (instagramLinks && instagramLinks.length > 0) {
+  if (instagramLinks.length > 0) {
     const fixedLinks = instagramLinks.map(link => {
       const fullLink = link.startsWith('http') ? link : `https://${link}`;
       return convertToInstaFix(fullLink);
     });
+
+    console.log('Исправленные ссылки:', fixedLinks);
 
     if (isGroup) {
       try {
@@ -43,8 +63,7 @@ bot.on('message', async (msg) => {
           newMessageText = newMessageText.replace(originalLink, fixedLinks[index]);
         });
         
-        const username = msg.from && msg.from.username ? `@${msg.from.username}` : msg.from?.first_name || 'Unknown';
-        const finalMessage = `${username}: ${newMessageText}`;
+        const finalMessage = `${newMessageText}`;
           
         await bot.sendMessage(chatId, finalMessage, {
           disable_web_page_preview: false
