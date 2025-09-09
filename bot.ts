@@ -1,5 +1,5 @@
 import TelegramBot from 'node-telegram-bot-api';
-import * as http from 'http';
+import http from 'http';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || 'YOUR_BOT_TOKEN';
 
@@ -20,6 +20,11 @@ bot.on('message', async (msg) => {
     return;
   }
 
+  const hasFixedLinks = instagramRegex.test(messageText);
+  if (hasFixedLinks) {
+    return; 
+  }
+
   const instagramLinks = messageText.match(instagramRegex);
 
   if (instagramLinks && instagramLinks.length > 0) {
@@ -32,16 +37,19 @@ bot.on('message', async (msg) => {
       try {
         await bot.deleteMessage(chatId, msg.message_id);
         
+        let newMessageText = messageText;
+        instagramLinks.forEach((originalLink, index) => {
+          const fullOriginalLink = originalLink.startsWith('http') ? originalLink : `https://${originalLink}`;
+          newMessageText = newMessageText.replace(originalLink, fixedLinks[index]);
+        });
+        
         const username = msg.from && msg.from.username ? `@${msg.from.username}` : msg.from?.first_name || 'Unknown';
-        const newMessage = fixedLinks.length === 1 
-          ? `${username}: ${fixedLinks[0]}`
-          : `${username}:\n${fixedLinks.join('\n')}`;
+        const finalMessage = `${username}: ${newMessageText}`;
           
-        await bot.sendMessage(chatId, newMessage, {
+        await bot.sendMessage(chatId, finalMessage, {
           disable_web_page_preview: false
         });
       } catch (error) {
-        // Если не можем удалить (нет прав) - отправляем как обычно
         const response = fixedLinks.length === 1 
           ? `📱 Исправленная ссылка:\n${fixedLinks[0]}` 
           : `📱 Исправленные ссылки:\n${fixedLinks.join('\n')}`;
@@ -84,8 +92,6 @@ bot.onText(/\/help/, (msg) => {
 bot.on('polling_error', (error) => {
   console.error('Polling error:', error);
 });
-
-
 
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
