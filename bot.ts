@@ -12,7 +12,7 @@ function convertToInstaFix(url: string): string {
 function findInstagramLinks(text: string): string[] {
   const words = text.split(' ');
   const instagramLinks: string[] = [];
-
+  
   for (let word of words) {
     const cleanWord = word.replace(/[.,!?;)]*$/, '');
     
@@ -59,28 +59,44 @@ bot.on('message', async (msg) => {
         
         let newMessageText = messageText;
         instagramLinks.forEach((originalLink, index) => {
-          const fullOriginalLink = originalLink.startsWith('http') ? originalLink : `https://${originalLink}`;
           newMessageText = newMessageText.replace(originalLink, fixedLinks[index]);
         });
         
-        const finalMessage = `${newMessageText}`;
-          
-        await bot.sendMessage(chatId, finalMessage, {
+        const username = msg.from && msg.from.username ? `@${msg.from.username}` : msg.from?.first_name || 'Unknown';
+        const finalMessage = `${username}: ${newMessageText}`;
+        
+        const sendOptions: { disable_web_page_preview: boolean; message_thread_id?: number } = {
           disable_web_page_preview: false
-        });
+        };
+        
+        if (msg.message_thread_id) {
+          sendOptions.message_thread_id = msg.message_thread_id;
+        }
+          
+        await bot.sendMessage(chatId, finalMessage, sendOptions);
+        
+        console.log('✅ Сообщение успешно заменено');
       } catch (error) {
-        const response = fixedLinks.length === 1 
-          ? `📱 Исправленная ссылка:\n${fixedLinks[0]}` 
-          : `📱 Исправленные ссылки:\n${fixedLinks.join('\n')}`;
-
-        bot.sendMessage(chatId, response, {
+        if (error instanceof Error) {
+          console.error('❌ Не удалось удалить сообщение:', error.message);
+        } else {
+          console.error('❌ Не удалось удалить сообщение:', error);
+        }
+        const response = `📱 ${fixedLinks.join('\n')}`;
+        
+        const replyOptions: { disable_web_page_preview: boolean; reply_to_message_id: number; message_thread_id?: number } = {
           disable_web_page_preview: false,
           reply_to_message_id: msg.message_id
-        });
+        };
+        
+        if (msg.message_thread_id) {
+          replyOptions.message_thread_id = msg.message_thread_id;
+        }
+        
+        bot.sendMessage(chatId, response, replyOptions);
       }
     } else {
-      const response = fixedLinks.join('\n');
-      bot.sendMessage(chatId, response, {
+      bot.sendMessage(chatId, fixedLinks.join('\n'), {
         disable_web_page_preview: false
       });
     }
