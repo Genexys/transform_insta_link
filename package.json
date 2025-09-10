@@ -5,8 +5,8 @@
   "main": "bot.js",
   "scripts": {
     "build": "tsc",
-    "start": "node bot.js & node server_shorts/index.js",
-    "dev": "ts-node bot.ts & ts-node server_shorts/index.ts",
+    "start": "node bot.js",
+    "dev": "ts-node bot.ts",
     "railway:start": "npm start",
     "watch": "tsc -w"
   },
