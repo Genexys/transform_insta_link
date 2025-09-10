@@ -16,7 +16,8 @@
     "express": "^5.1.0",
     "node-telegram-bot-api": "^0.63.0",
     "prettier": "^3.6.2",
-    "ytdl-core": "^4.11.5"
+    "ytdl-core": "^4.11.5",
+    "ytdlp-nodejs": "^2.3.4"
   },
   "devDependencies": {
     "@types/node": "^20.19.13",
