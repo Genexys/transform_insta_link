@@ -63,6 +63,84 @@ function findInstagramLinks(text: string): string[] {
   return instagramLinks;
 }
 
+bot.on('inline_query', async query => {
+  const queryText = query.query.trim();
+  const queryId = query.id;
+
+  console.log('Inline запрос:', queryText);
+
+  if (!queryText) {
+    await bot.answerInlineQuery(queryId, [
+      {
+        type: 'article',
+        id: 'instruction',
+        title: '📱 Link Fixer',
+        description: 'Введите ссылку для исправления',
+        input_message_content: {
+          message_text: '📱 Отправьте ссылку для получения рабочей версии',
+        },
+      },
+    ]);
+    return;
+  }
+
+  const instagramLinks = findInstagramLinks(queryText);
+
+  if (instagramLinks.length === 0) {
+    await bot.answerInlineQuery(queryId, [
+      {
+        type: 'article',
+        id: 'no_links',
+        title: '❌ Instagram ссылки не найдены',
+        description: 'Убедитесь что отправили правильную ссылку',
+        input_message_content: {
+          message_text: queryText,
+        },
+      },
+    ]);
+    return;
+  }
+
+  const fixedLinks = instagramLinks.map(link => {
+    const fullLink = link.startsWith('http') ? link : `https://${link}`;
+    return convertToInstaFix(fullLink);
+  });
+
+  let fixedText = queryText;
+  instagramLinks.forEach((originalLink, index) => {
+    fixedText = fixedText.replace(originalLink, fixedLinks[index]);
+  });
+
+  console.log('Исправленный текст:', fixedText);
+
+  const results = [
+    {
+      type: 'article' as const,
+      id: 'fixed_message',
+      title: '✅ ссылки исправлены',
+      description: `${fixedLinks.length} ссылок исправлено`,
+      input_message_content: {
+        message_text: fixedText,
+        disable_web_page_preview: false,
+      },
+    },
+    {
+      type: 'article' as const,
+      id: 'links_only',
+      title: '🔗 Только исправленные ссылки',
+      description: 'Отправить только ссылки без текста',
+      input_message_content: {
+        message_text: fixedLinks.join('\n'),
+        disable_web_page_preview: false,
+      },
+    },
+  ];
+
+  await bot.answerInlineQuery(queryId, results, {
+    cache_time: 0,
+  });
+});
+
 bot.on('message', async msg => {
   const chatId = msg.chat.id;
   const messageText = msg.text;
@@ -76,7 +154,7 @@ bot.on('message', async msg => {
 
   const instagramLinks = findInstagramLinks(messageText);
 
-  console.log('Найденные Instagram ссылки:', instagramLinks);
+  console.log('Найденные ссылки:', instagramLinks);
 
   if (instagramLinks.length > 0) {
     const fixedLinks = instagramLinks.map(link => {
