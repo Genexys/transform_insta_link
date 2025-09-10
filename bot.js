@@ -14,7 +14,8 @@ function convertToInstaFix(url) {
         .replace(/instagram\.com/g, 'kkinstagram.com')
         .replace(/instagr\.am/g, 'kkinstagram.com')
         .replace(/x\.com/g, 'fixvx.com')
-        .replace(/tiktok\.com/g, 'vxtiktok.com');
+        .replace(/tiktok\.com/g, 'vxtiktok.com')
+        .replace(/vt\.tiktok\.com/g, 'vxtiktok.com');
 }
 function findInstagramLinks(text) {
     const words = text.split(' ');
@@ -38,8 +39,9 @@ function findInstagramLinks(text) {
             !cleanWord.includes('fixvx.com')) {
             instagramLinks.push(cleanWord);
         }
-        if (cleanWord.includes('tiktok.com') &&
-            cleanWord.match(/tiktok\.com\/@[A-Za-z0-9_.-]+\/video\/[0-9]+/) &&
+        if (((cleanWord.includes('tiktok.com') &&
+            cleanWord.match(/tiktok\.com\/@[A-Za-z0-9_.-]+\/video\/[0-9]+/)) ||
+            cleanWord.includes('vt.tiktok.com')) &&
             !cleanWord.includes('vxtiktok.com')) {
             instagramLinks.push(cleanWord);
         }
@@ -102,7 +104,7 @@ bot.on('inline_query', async (query) => {
         {
             type: 'article',
             id: 'links_only',
-            title: '🔗 Только исправленные ссылки',
+            title: 'ℹ️ Только исправленные ссылки',
             description: 'Отправить только ссылки без текста',
             input_message_content: {
                 message_text: fixedLinks.join('\n'),
