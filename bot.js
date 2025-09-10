@@ -172,6 +172,14 @@ bot.onText(/\/help/, msg => {
         '3. Исправленные ссылки будут показывать нормальный предпросмотр\n\n' +
         '⚠️ Бот работает со ссылками на посты, reels и IGTV');
 });
+bot.onText(/\/donate/, msg => {
+    bot.sendMessage(msg.chat.id, '❤️ Поддержать бота:\n\n' +
+        '💳 Тинь: 5536 9137 8978 6452\n' +
+        '🥝 BOG: GE76BG0000000538914758\n' +
+        'USDT TRC20: TYS2zFqnBjRtwTUyJjggFtQk9zrJX6T976\n' +
+        '₿ BTC: bc1q3ezgkak8swygvgfcqgtcxyswfmt4dzeeu93vq5\n\n' +
+        'Спасибо за поддержку! 🙏');
+});
 bot.on('polling_error', error => {
     console.error('Polling error:', error);
 });
