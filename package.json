@@ -5,21 +5,24 @@
   "main": "bot.js",
   "scripts": {
     "build": "tsc",
-    "start": "node bot.js",
-    "dev": "ts-node bot.ts",
+    "start": "node bot.js & node server_shorts/index.js",
+    "dev": "ts-node bot.ts & ts-node server_shorts/index.ts",
     "railway:start": "npm start",
     "watch": "tsc -w"
   },
   "dependencies": {
+    "@types/express": "^5.0.3",
     "dotenv": "^17.2.2",
+    "express": "^5.1.0",
     "node-telegram-bot-api": "^0.63.0",
-    "prettier": "^3.6.2"
+    "prettier": "^3.6.2",
+    "ytdl-core": "^4.11.5"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
+    "@types/node": "^20.19.13",
     "@types/node-telegram-bot-api": "^0.63.0",
     "ts-node": "^10.9.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.9.2"
   },
   "keywords": [
     "telegram",
@@ -28,5 +31,14 @@
     "fix"
   ],
   "author": "genexys",
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Genexys/transform_insta_link.git"
+  },
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Genexys/transform_insta_link/issues"
+  },
+  "homepage": "https://github.com/Genexys/transform_insta_link#readme"
 }
