@@ -165,6 +165,10 @@ bot.on('message', async msg => {
   }
 
   console.log('Получено сообщение:', messageText);
+  console.log(
+    'Получено сообщение от:',
+    msg.from?.username || 'неизвестный пользователь'
+  );
 
   const instagramLinks = findInstagramLinks(messageText);
 
