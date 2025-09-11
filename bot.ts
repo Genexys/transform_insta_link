@@ -152,7 +152,8 @@ bot.on('message', async msg => {
     return;
   }
 
-  if (msg.from?.username === '@bulocha_s_coritsoi') {
+  console.log('🚀 ~ msg.from?.username:', msg.from?.username);
+  if (msg.from?.username === 'bulocha_s_coritsoi') {
     const sendOptions: TelegramBot.SendMessageOptions = {
       disable_web_page_preview: false,
       reply_to_message_id: msg.message_id,
