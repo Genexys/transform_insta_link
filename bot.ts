@@ -152,6 +152,17 @@ bot.on('message', async msg => {
     return;
   }
 
+  if (msg.from?.username === '@bulocha_s_coritsoi') {
+    const sendOptions: TelegramBot.SendMessageOptions = {
+      disable_web_page_preview: false,
+      reply_to_message_id: msg.message_id,
+    };
+    await bot.sendMessage(chatId, 'Какой Илья хороший человек!', sendOptions);
+
+    await bot.deleteMessage(chatId, msg.message_id);
+    return;
+  }
+
   console.log('Получено сообщение:', messageText);
 
   const instagramLinks = findInstagramLinks(messageText);
