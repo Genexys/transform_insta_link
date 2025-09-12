@@ -15,11 +15,13 @@ function convertToInstaFix(url) {
         .replace(/instagr\.am/g, 'kkinstagram.com')
         .replace(/x\.com/g, 'fixvx.com')
         .replace(/tiktok\.com/g, 'vxtiktok.com')
-        .replace(/vt\.tiktok\.com/g, 'vxtiktok.com');
+        .replace(/vt\.tiktok\.com/g, 'vxtiktok.com')
+        .replace(/reddit\.com/g, 'rxddit.com')
+        .replace(/www\.reddit\.com/g, 'rxddit.com');
 }
-function findInstagramLinks(text) {
+function findsocialLinks(text) {
     const words = text.split(' ');
-    const instagramLinks = [];
+    const socialLinks = [];
     for (let word of words) {
         const cleanWord = word.replace(/[.,!?;)]*$/, '');
         if ((cleanWord.includes('instagram.com') ||
@@ -30,23 +32,32 @@ function findInstagramLinks(text) {
             if (!cleanWord.includes('ddinstagram.com') &&
                 !cleanWord.includes('kkinstagram.com') &&
                 !cleanWord.includes('vxinstagram.com')) {
-                instagramLinks.push(cleanWord);
+                socialLinks.push(cleanWord);
             }
         }
         if (cleanWord.includes('x.com') &&
             (cleanWord.match(/x\.com\/(?:[A-Za-z0-9_]+)\/status\/[0-9]+/) ||
                 cleanWord.match(/x\.com\/(?:[A-Za-z0-9_]+)\/replies/)) &&
             !cleanWord.includes('fixvx.com')) {
-            instagramLinks.push(cleanWord);
+            socialLinks.push(cleanWord);
         }
         if (((cleanWord.includes('tiktok.com') &&
             cleanWord.match(/tiktok\.com\/@[A-Za-z0-9_.-]+\/video\/[0-9]+/)) ||
             cleanWord.includes('vt.tiktok.com')) &&
             !cleanWord.includes('vxtiktok.com')) {
-            instagramLinks.push(cleanWord);
+            socialLinks.push(cleanWord);
+        }
+        if ((cleanWord.includes('reddit.com') ||
+            cleanWord.includes('www.reddit.com')) &&
+            !cleanWord.includes('rxddit.com') &&
+            !cleanWord.includes('vxreddit.com') &&
+            (cleanWord.match(/reddit\.com\/r\/[A-Za-z0-9_]+\/comments\/[A-Za-z0-9]+/) ||
+                cleanWord.match(/reddit\.com\/u\/[A-Za-z0-9_-]+\/comments\/[A-Za-z0-9]+/)) &&
+            !cleanWord.includes('rxddit.com')) {
+            socialLinks.push(cleanWord);
         }
     }
-    return instagramLinks;
+    return socialLinks;
 }
 bot.on('inline_query', async (query) => {
     const queryText = query.query.trim();
@@ -66,8 +77,8 @@ bot.on('inline_query', async (query) => {
         ]);
         return;
     }
-    const instagramLinks = findInstagramLinks(queryText);
-    if (instagramLinks.length === 0) {
+    const socialLinks = findsocialLinks(queryText);
+    if (socialLinks.length === 0) {
         await bot.answerInlineQuery(queryId, [
             {
                 type: 'article',
@@ -81,12 +92,12 @@ bot.on('inline_query', async (query) => {
         ]);
         return;
     }
-    const fixedLinks = instagramLinks.map(link => {
+    const fixedLinks = socialLinks.map(link => {
         const fullLink = link.startsWith('http') ? link : `https://${link}`;
         return convertToInstaFix(fullLink);
     });
     let fixedText = queryText;
-    instagramLinks.forEach((originalLink, index) => {
+    socialLinks.forEach((originalLink, index) => {
         fixedText = fixedText.replace(originalLink, fixedLinks[index]);
     });
     console.log('Исправленный текст:', fixedText);
@@ -124,16 +135,27 @@ bot.on('message', async (msg) => {
         return;
     }
     console.log('Получено сообщение:', messageText);
-    const instagramLinks = findInstagramLinks(messageText);
-    console.log('Найденные ссылки:', instagramLinks);
-    if (instagramLinks.length > 0) {
-        const fixedLinks = instagramLinks.map(link => {
+    const socialLinks = findsocialLinks(messageText);
+    console.log('Найденные ссылки:', socialLinks);
+    if (socialLinks.length > 0) {
+        const fixedLinks = socialLinks.map(link => {
             const fullLink = link.startsWith('http') ? link : `https://${link}`;
             return convertToInstaFix(fullLink);
         });
         console.log('Исправленные ссылки:', fixedLinks);
         const username = msg.from?.username ? `@${msg.from.username}` : 'кто-то';
-        const formattedMessages = fixedLinks.map(url => `Saved ${username} a click:\n${url}`);
+        const formattedMessages = fixedLinks.map(url => {
+            let platform = '🔗';
+            if (url.includes('kkinstagram'))
+                platform = '📸 Instagram';
+            else if (url.includes('fixvx'))
+                platform = '🐦 X/Twitter';
+            else if (url.includes('vxtiktok'))
+                platform = '🎵 TikTok';
+            else if (url.includes('rxddit'))
+                platform = '🟠 Reddit';
+            return `Saved ${username} a click (${platform}):\n${url}`;
+        });
         if (isGroup) {
             try {
                 const sendOptions = {
