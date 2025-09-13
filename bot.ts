@@ -9,14 +9,20 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
 function convertToInstaFix(url: string): string {
-  return url
+  let convertedUrl = url
     .replace(/instagram\.com/g, 'kkinstagram.com')
     .replace(/instagr\.am/g, 'kkinstagram.com')
-    .replace(/x\.com/g, 'fixvx.com')
+    .replace(/x\.com/g, 'fxtwitter.com')
     .replace(/tiktok\.com/g, 'vxtiktok.com')
     .replace(/vt\.tiktok\.com/g, 'vxtiktok.com')
-    .replace(/reddit\.com/g, 'rxddit.com')
-    .replace(/www\.reddit\.com/g, 'rxddit.com');
+    .replace(/reddit\.com/g, 'vxreddit.com')
+    .replace(/www\.reddit\.com/g, 'vxreddit.com');
+
+  if (url.includes('reddit.com') && url.includes('/s/')) {
+    convertedUrl += ' ⚠️ (кросспост - видео может быть в оригинальном посте)';
+  }
+
+  return convertedUrl;
 }
 
 function findsocialLinks(text: string): string[] {
@@ -48,7 +54,7 @@ function findsocialLinks(text: string): string[] {
       cleanWord.includes('x.com') &&
       (cleanWord.match(/x\.com\/(?:[A-Za-z0-9_]+)\/status\/[0-9]+/) ||
         cleanWord.match(/x\.com\/(?:[A-Za-z0-9_]+)\/replies/)) &&
-      !cleanWord.includes('fixvx.com')
+      !cleanWord.includes('fxtwitter.com')
     ) {
       socialLinks.push(cleanWord);
     }
@@ -68,16 +74,15 @@ function findsocialLinks(text: string): string[] {
       (cleanWord.includes('reddit.com') ||
         cleanWord.includes('www.reddit.com')) &&
       !cleanWord.includes('rxddit.com') &&
-      !cleanWord.includes('vxreddit.com') &&
-      (cleanWord.match(
-        /reddit\.com\/r\/[A-Za-z0-9_]+\/comments\/[A-Za-z0-9]+/
-      ) ||
-        cleanWord.match(
-          /reddit\.com\/u\/[A-Za-z0-9_-]+\/comments\/[A-Za-z0-9]+/
-        )) &&
-      !cleanWord.includes('rxddit.com')
+      !cleanWord.includes('vxreddit.com')
     ) {
-      socialLinks.push(cleanWord);
+      if (
+        cleanWord.match(/reddit\.com\/r\/[A-Za-z0-9_]+\/comments/) ||
+        cleanWord.match(/www\.reddit\.com\/r\/[A-Za-z0-9_]+\/comments/) ||
+        cleanWord.match(/reddit\.com\/r\/[A-Za-z0-9_]+\/s\/[A-Za-z0-9_]+/)
+      ) {
+        socialLinks.push(cleanWord);
+      }
     }
   }
 
@@ -205,7 +210,7 @@ bot.on('message', async msg => {
     const formattedMessages = fixedLinks.map(url => {
       let platform = '🔗';
       if (url.includes('kkinstagram')) platform = '📸 Instagram';
-      else if (url.includes('fixvx')) platform = '🐦 X/Twitter';
+      else if (url.includes('fxtwitter')) platform = '🐦 X/Twitter';
       else if (url.includes('vxtiktok')) platform = '🎵 TikTok';
       else if (url.includes('rxddit')) platform = '🟠 Reddit';
 
