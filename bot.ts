@@ -15,6 +15,7 @@ function convertToInstaFix(url: string): string {
     .replace(/x\.com/g, 'fxtwitter.com')
     .replace(/tiktok\.com/g, 'vxtiktok.com')
     .replace(/vt\.tiktok\.com/g, 'vxtiktok.com')
+    .replace(/vm\.tiktok\.com/g, 'vxtiktok.com')
     .replace(/reddit\.com/g, 'vxreddit.com')
     .replace(/www\.reddit\.com/g, 'vxreddit.com');
 
