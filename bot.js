@@ -48,7 +48,8 @@ function findsocialLinks(text) {
         }
         if (((cleanWord.includes('tiktok.com') &&
             cleanWord.match(/tiktok\.com\/@[A-Za-z0-9_.-]+\/video\/[0-9]+/)) ||
-            cleanWord.includes('vt.tiktok.com')) &&
+            cleanWord.includes('vt.tiktok.com') ||
+            cleanWord.includes('vm.tiktok.com')) &&
             !cleanWord.includes('vxtiktok.com')) {
             socialLinks.push(cleanWord);
         }
