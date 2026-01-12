@@ -6,13 +6,31 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const dotenv_1 = __importDefault(require("dotenv"));
 const node_telegram_bot_api_1 = __importDefault(require("node-telegram-bot-api"));
 const http_1 = __importDefault(require("http"));
+const ytdlp_nodejs_1 = require("ytdlp-nodejs");
+const fs_1 = __importDefault(require("fs"));
+const path_1 = __importDefault(require("path"));
+const os_1 = __importDefault(require("os"));
 dotenv_1.default.config();
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+const INSTA_FIX_DOMAIN = process.env.INSTA_FIX_DOMAIN || 'kkinstagram.com';
 const bot = new node_telegram_bot_api_1.default(BOT_TOKEN, { polling: true });
+const ytdlp = new ytdlp_nodejs_1.YtDlp();
+function revertUrlForDownload(url) {
+    return url
+        .replace(INSTA_FIX_DOMAIN, 'instagram.com')
+        .replace('fxtwitter.com', 'x.com')
+        .replace('vxtiktok.com', 'tiktok.com')
+        .replace('vxreddit.com', 'reddit.com')
+        .replace('vxthreads.net', 'threads.net')
+        .replace('bskx.app', 'bsky.app')
+        .replace('fxdeviantart.com', 'deviantart.com')
+        .replace('vxvk.com', 'vk.com')
+        .replace('phixiv.net', 'pixiv.net');
+}
 function convertToInstaFix(url) {
     let convertedUrl = url
-        .replace(/instagram\.com/g, 'kkinstagram.com')
-        .replace(/instagr\.am/g, 'kkinstagram.com')
+        .replace(/instagram\.com/g, INSTA_FIX_DOMAIN)
+        .replace(/instagr\.am/g, INSTA_FIX_DOMAIN)
         .replace(/x\.com/g, 'fxtwitter.com')
         .replace(/tiktok\.com/g, 'vxtiktok.com')
         .replace(/vt\.tiktok\.com/g, 'vxtiktok.com')
@@ -40,6 +58,7 @@ function findsocialLinks(text) {
                 cleanWord.includes('/tv/'))) {
             if (!cleanWord.includes('ddinstagram.com') &&
                 !cleanWord.includes('kkinstagram.com') &&
+                !cleanWord.includes(INSTA_FIX_DOMAIN) &&
                 !cleanWord.includes('vxinstagram.com')) {
                 socialLinks.push(cleanWord);
             }
@@ -178,7 +197,7 @@ bot.on('message', async (msg) => {
         const username = msg.from?.username ? `@${msg.from.username}` : 'кто-то';
         const formattedMessages = fixedLinks.map(url => {
             let platform = '🔗';
-            if (url.includes('kkinstagram'))
+            if (url.includes('kkinstagram') || url.includes(INSTA_FIX_DOMAIN))
                 platform = '📸 Instagram';
             else if (url.includes('fxtwitter'))
                 platform = '🐦 X/Twitter';
@@ -198,11 +217,19 @@ bot.on('message', async (msg) => {
                 platform = '💙 VK Video/Clip';
             return `Saved ${username} a click (${platform}):\n${url}`;
         });
+        const replyMarkup = fixedLinks.length === 1
+            ? {
+                inline_keyboard: [
+                    [{ text: '📥 Скачать видео', callback_data: 'download_video' }],
+                ],
+            }
+            : undefined;
         if (isGroup) {
             try {
                 const sendOptions = {
                     disable_web_page_preview: false,
                     reply_to_message_id: msg.message_id,
+                    reply_markup: replyMarkup,
                 };
                 await bot.sendMessage(chatId, formattedMessages.join('\n\n'), sendOptions);
                 console.log('✅ Сообщение-ответ успешно отправлено');
@@ -217,6 +244,7 @@ bot.on('message', async (msg) => {
         else {
             bot.sendMessage(chatId, formattedMessages.join('\n\n'), {
                 disable_web_page_preview: false,
+                reply_markup: replyMarkup,
             });
         }
     }
@@ -269,28 +297,82 @@ bot.onText(/\/donate/, msg => {
 bot.on('callback_query', async (query) => {
     const chatId = query.message?.chat.id;
     const data = query.data;
-    if (!chatId || !data?.startsWith('donate_'))
+    if (!query.message || !chatId || !data)
         return;
-    const amount = parseInt(data.split('_')[1]);
-    const title = 'Поддержка InstaFix Bot';
-    const description = `Добровольный донат в размере ${amount} Stars на развитие проекта.`;
-    const payload = `stars_donate_${amount}`;
-    const currency = 'XTR';
-    try {
-        await bot.sendInvoice(chatId, title, description, payload, '', currency, [{ label: 'Донат', amount: amount }], {
-            need_name: false,
-            need_phone_number: false,
-            need_email: false,
-            need_shipping_address: false,
-        });
-        await bot.answerCallbackQuery(query.id);
+    if (data === 'download_video') {
+        const messageText = query.message?.text;
+        if (!messageText)
+            return;
+        const urlMatch = messageText.match(/https?:\/\/\S+$/);
+        if (!urlMatch) {
+            await bot.answerCallbackQuery(query.id, {
+                text: '❌ Ссылка не найдена',
+                show_alert: true,
+            });
+            return;
+        }
+        const fixedUrl = urlMatch[0];
+        const originalUrl = revertUrlForDownload(fixedUrl);
+        await bot.answerCallbackQuery(query.id, { text: '⏳ Начинаю загрузку...' });
+        const loadingMsg = await bot.sendMessage(chatId, '⏳ Скачиваю видео, это может занять несколько секунд...', { reply_to_message_id: query.message.message_id });
+        const tempFilePath = path_1.default.join(os_1.default.tmpdir(), `video_${Date.now()}.mp4`);
+        try {
+            console.log(`Downloading ${originalUrl} to ${tempFilePath}`);
+            await ytdlp.download(originalUrl, {
+                output: tempFilePath,
+                format: 'best[ext=mp4]/best',
+                maxFilesize: '50M',
+            });
+            await bot.sendChatAction(chatId, 'upload_video');
+            await bot.sendVideo(chatId, tempFilePath, {
+                caption: '🎥 Ваше видео готово!',
+                reply_to_message_id: query.message.message_id,
+            });
+            await bot.deleteMessage(chatId, loadingMsg.message_id);
+        }
+        catch (error) {
+            console.error('Download error:', error);
+            let errorMsg = '❌ Ошибка при скачивании. Возможно, видео слишком большое (>50MB) или недоступно.';
+            if (error instanceof Error && error.message.includes('File is larger than')) {
+                errorMsg = '❌ Видео слишком большое для отправки через Telegram (>50MB).';
+            }
+            await bot.editMessageText(errorMsg, {
+                chat_id: chatId,
+                message_id: loadingMsg.message_id,
+            });
+        }
+        finally {
+            if (fs_1.default.existsSync(tempFilePath)) {
+                fs_1.default.unlink(tempFilePath, err => {
+                    if (err)
+                        console.error('Error deleting temp file:', err);
+                });
+            }
+        }
+        return;
     }
-    catch (error) {
-        console.error('Ошибка при отправке инвойса:', error);
-        bot.answerCallbackQuery(query.id, {
-            text: 'Произошла ошибка при формировании счета.',
-            show_alert: true,
-        });
+    if (data.startsWith('donate_')) {
+        const amount = parseInt(data.split('_')[1]);
+        const title = 'Поддержка InstaFix Bot';
+        const description = `Добровольный донат в размере ${amount} Stars на развитие проекта.`;
+        const payload = `stars_donate_${amount}`;
+        const currency = 'XTR';
+        try {
+            await bot.sendInvoice(chatId, title, description, payload, '', currency, [{ label: 'Донат', amount: amount }], {
+                need_name: false,
+                need_phone_number: false,
+                need_email: false,
+                need_shipping_address: false,
+            });
+            await bot.answerCallbackQuery(query.id);
+        }
+        catch (error) {
+            console.error('Ошибка при отправке инвойса:', error);
+            bot.answerCallbackQuery(query.id, {
+                text: 'Произошла ошибка при формировании счета.',
+                show_alert: true,
+            });
+        }
     }
 });
 bot.on('pre_checkout_query', query => {
