@@ -21,8 +21,8 @@ function convertToInstaFix(url: string): string {
     .replace(/threads\.net/g, 'vxthreads.net')
     .replace(/bsky\.app/g, 'bskx.app')
     .replace(/deviantart\.com/g, 'fxdeviantart.com')
-    .replace(/vk\.com/g, 'vxvk.com')
-    .replace(/m\.vk\.com/g, 'vxvk.com')
+    // .replace(/vk\.com/g, 'vxvk.com')
+    // .replace(/m\.vk\.com/g, 'vxvk.com')
     .replace(/pixiv\.net/g, 'phixiv.net');
 
   if (url.includes('reddit.com') && url.includes('/s/')) {
@@ -131,12 +131,13 @@ function findsocialLinks(text: string): string[] {
     }
 
     // VK Video & Clips
-    if (
-      (cleanWord.includes('vk.com/video') || cleanWord.includes('vk.com/clip')) &&
-      !cleanWord.includes('vxvk.com')
-    ) {
-      socialLinks.push(cleanWord);
-    }
+    // if (
+    //   (cleanWord.includes('vk.com/video') ||
+    //     cleanWord.includes('vk.com/clip')) &&
+    //   !cleanWord.includes('vxvk.com')
+    // ) {
+    //   socialLinks.push(cleanWord);
+    // }
   }
 
   return socialLinks;
@@ -337,16 +338,101 @@ bot.onText(/\/help/, msg => {
 });
 
 bot.onText(/\/donate/, msg => {
+  const chatId = msg.chat.id;
+  const opts: TelegramBot.SendMessageOptions = {
+    parse_mode: 'MarkdownV2',
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '⭐ 50 Stars', callback_data: 'donate_50' },
+          { text: '⭐ 100 Stars', callback_data: 'donate_100' },
+        ],
+        [
+          { text: '⭐ 250 Stars', callback_data: 'donate_250' },
+          { text: '⭐ 500 Stars', callback_data: 'donate_500' },
+        ],
+      ],
+    },
+  };
+
   bot.sendMessage(
-    msg.chat.id,
-    '❤️ Поддержать бота:\n\n' +
+    chatId,
+    '❤️ *Поддержать проект*\n\n' +
+      'Вы можете поддержать развитие бота с помощью *Telegram Stars* или напрямую:\n\n' +
       '💳 Тинь: `https://www.tinkoff.ru/rm/r_niFZCEvUVm.PQsrZmuYJc/pTW9A14929`\n' +
       '💳 BOG: `GE76BG0000000538914758`\n' +
       'USDT TRC20: `TYS2zFqnBjRtwTUyJjggFtQk9zrJX6T976`\n' +
       '₿ BTC: `bc1q3ezgkak8swygvgfcqgtcxyswfmt4dzeeu93vq5`\n\n' +
-      'Спасибо за поддержку\\! 🙏',
-    { parse_mode: 'MarkdownV2' }
+      'Выберите сумму в Stars ниже или воспользуйтесь реквизитами 🙏',
+    opts
   );
+});
+
+// Обработка выбора суммы доната
+bot.on('callback_query', async query => {
+  const chatId = query.message?.chat.id;
+  const data = query.data;
+
+  if (!chatId || !data?.startsWith('donate_')) return;
+
+  const amount = parseInt(data.split('_')[1]);
+  const title = 'Поддержка InstaFix Bot';
+  const description = `Добровольный донат в размере ${amount} Stars на развитие проекта.`;
+  const payload = `stars_donate_${amount}`;
+  const currency = 'XTR'; // XTR = Telegram Stars
+
+  try {
+    await bot.sendInvoice(
+      chatId,
+      title,
+      description,
+      payload,
+      '', // provider_token для Stars должен быть пустым
+      currency,
+      [{ label: 'Донат', amount: amount }],
+      {
+        need_name: false,
+        need_phone_number: false,
+        need_email: false,
+        need_shipping_address: false,
+      }
+    );
+
+    // Убираем уведомление о нажатии кнопки
+    await bot.answerCallbackQuery(query.id);
+  } catch (error) {
+    console.error('Ошибка при отправке инвойса:', error);
+    bot.answerCallbackQuery(query.id, {
+      text: 'Произошла ошибка при формировании счета.',
+      show_alert: true,
+    });
+  }
+});
+
+// Обязательное подтверждение перед оплатой
+bot.on('pre_checkout_query', query => {
+  bot.answerPreCheckoutQuery(query.id, true).catch(err => {
+    console.error('Ошибка pre_checkout_query:', err);
+  });
+});
+
+// Обработка успешного платежа
+bot.on('message', async msg => {
+  if (msg.successful_payment) {
+    const chatId = msg.chat.id;
+    const amount = msg.successful_payment.total_amount;
+    const username = msg.from?.username ? `@${msg.from.username}` : 'Друг';
+
+    console.log(`✅ Получен донат: ${amount} Stars от ${username}`);
+
+    await bot.sendMessage(
+      chatId,
+      `🎉 *Спасибо большое, ${username}!*\n\n` +
+        `Ваш донат в размере *${amount} Stars* успешно получен. ` +
+        'Это очень помогает поддерживать сервер и развивать бота. Вы лучший! ❤️',
+      { parse_mode: 'Markdown' }
+    );
+  }
 });
 
 bot.on('polling_error', error => {
@@ -359,7 +445,12 @@ process.on('uncaughtException', error => {
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('CRITICAL ERROR (unhandledRejection):', promise, 'reason:', reason);
+  console.error(
+    'CRITICAL ERROR (unhandledRejection):',
+    promise,
+    'reason:',
+    reason
+  );
 });
 
 const server = http.createServer((req, res) => {
