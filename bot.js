@@ -18,7 +18,13 @@ function convertToInstaFix(url) {
         .replace(/vt\.tiktok\.com/g, 'vxtiktok.com')
         .replace(/vm\.tiktok\.com/g, 'vxtiktok.com')
         .replace(/reddit\.com/g, 'vxreddit.com')
-        .replace(/www\.reddit\.com/g, 'vxreddit.com');
+        .replace(/www\.reddit\.com/g, 'vxreddit.com')
+        .replace(/threads\.net/g, 'vxthreads.net')
+        .replace(/bsky\.app/g, 'bskx.app')
+        .replace(/deviantart\.com/g, 'fxdeviantart.com')
+        .replace(/vk\.com/g, 'vxvk.com')
+        .replace(/m\.vk\.com/g, 'vxvk.com')
+        .replace(/pixiv\.net/g, 'phixiv.net');
     if (url.includes('reddit.com') && url.includes('/s/')) {
         convertedUrl += ' ⚠️ (кросспост - видео может быть в оригинальном посте)';
     }
@@ -62,6 +68,31 @@ function findsocialLinks(text) {
                 cleanWord.match(/reddit\.com\/r\/[A-Za-z0-9_]+\/s\/[A-Za-z0-9_]+/)) {
                 socialLinks.push(cleanWord);
             }
+        }
+        if (cleanWord.includes('threads.net') &&
+            cleanWord.includes('/post/') &&
+            !cleanWord.includes('vxthreads.net')) {
+            socialLinks.push(cleanWord);
+        }
+        if (cleanWord.includes('bsky.app') &&
+            cleanWord.includes('/post/') &&
+            !cleanWord.includes('bskx.app')) {
+            socialLinks.push(cleanWord);
+        }
+        if (cleanWord.includes('deviantart.com') &&
+            (cleanWord.includes('/art/') ||
+                cleanWord.match(/deviantart\.com\/[A-Za-z0-9_-]+\/art\//)) &&
+            !cleanWord.includes('fxdeviantart.com')) {
+            socialLinks.push(cleanWord);
+        }
+        if (cleanWord.includes('pixiv.net') &&
+            cleanWord.includes('/artworks/') &&
+            !cleanWord.includes('phixiv.net')) {
+            socialLinks.push(cleanWord);
+        }
+        if ((cleanWord.includes('vk.com/video') || cleanWord.includes('vk.com/clip')) &&
+            !cleanWord.includes('vxvk.com')) {
+            socialLinks.push(cleanWord);
         }
     }
     return socialLinks;
@@ -159,8 +190,18 @@ bot.on('message', async (msg) => {
                 platform = '🐦 X/Twitter';
             else if (url.includes('vxtiktok'))
                 platform = '🎵 TikTok';
-            else if (url.includes('rxddit'))
+            else if (url.includes('vxreddit'))
                 platform = '🟠 Reddit';
+            else if (url.includes('vxthreads'))
+                platform = '🧵 Threads';
+            else if (url.includes('bskx'))
+                platform = '🦋 Bluesky';
+            else if (url.includes('fxdeviantart'))
+                platform = '🎨 DeviantArt';
+            else if (url.includes('phixiv'))
+                platform = '🅿️ Pixiv';
+            else if (url.includes('vxvk'))
+                platform = '💙 VK Video/Clip';
             return `Saved ${username} a click (${platform}):\n${url}`;
         });
         if (isGroup) {
@@ -195,7 +236,16 @@ bot.onText(/\/help/, msg => {
         '4. Исправленные ссылки будут показывать нормальный предпросмотр\n' +
         '5. Вы также можете использовать меня в личных сообщениях или в режиме инлайн, ' +
         'вводя @transform_inst_link_bot в любом чате и отправляя ссылку\n' +
-        '6. Бот поддерживает ссылки на посты, reels и IGTV, TikTok, X.com (Twitter) и Reddit\n\n');
+        '6. Бот поддерживает ссылки на:\n' +
+        '   • Instagram (посты, reels, IGTV)\n' +
+        '   • X.com (Twitter)\n' +
+        '   • TikTok\n' +
+        '   • Reddit\n' +
+        '   • Threads\n' +
+        '   • Bluesky\n' +
+        '   • DeviantArt\n' +
+        '   • Pixiv\n' +
+        '   • VK Video/Clip\n\n');
 });
 bot.onText(/\/donate/, msg => {
     bot.sendMessage(msg.chat.id, '❤️ Поддержать бота:\n\n' +
