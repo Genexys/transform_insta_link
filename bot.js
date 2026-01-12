@@ -12,7 +12,7 @@ const path_1 = __importDefault(require("path"));
 const os_1 = __importDefault(require("os"));
 dotenv_1.default.config();
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
-const INSTA_FIX_DOMAIN = process.env.INSTA_FIX_DOMAIN || 'kkinstagram.com';
+const INSTA_FIX_DOMAIN = 'kkinstagram.com';
 const bot = new node_telegram_bot_api_1.default(BOT_TOKEN, { polling: true });
 const ytdlp = new ytdlp_nodejs_1.YtDlp();
 function revertUrlForDownload(url) {
@@ -333,8 +333,10 @@ bot.on('callback_query', async (query) => {
         catch (error) {
             console.error('Download error:', error);
             let errorMsg = '❌ Ошибка при скачивании. Возможно, видео слишком большое (>50MB) или недоступно.';
-            if (error instanceof Error && error.message.includes('File is larger than')) {
-                errorMsg = '❌ Видео слишком большое для отправки через Telegram (>50MB).';
+            if (error instanceof Error &&
+                error.message.includes('File is larger than')) {
+                errorMsg =
+                    '❌ Видео слишком большое для отправки через Telegram (>50MB).';
             }
             await bot.editMessageText(errorMsg, {
                 chat_id: chatId,

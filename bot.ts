@@ -10,7 +10,7 @@ dotenv.config();
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 // Домен для фикса Instagram (по умолчанию kkinstagram.com, но можно заменить на свой)
-const INSTA_FIX_DOMAIN = process.env.INSTA_FIX_DOMAIN || 'kkinstagram.com';
+const INSTA_FIX_DOMAIN = 'kkinstagram.com';
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 const ytdlp = new YtDlp();
@@ -457,9 +457,13 @@ bot.on('callback_query', async query => {
       console.error('Download error:', error);
       let errorMsg =
         '❌ Ошибка при скачивании. Возможно, видео слишком большое (>50MB) или недоступно.';
-      
-      if (error instanceof Error && error.message.includes('File is larger than')) {
-          errorMsg = '❌ Видео слишком большое для отправки через Telegram (>50MB).';
+
+      if (
+        error instanceof Error &&
+        error.message.includes('File is larger than')
+      ) {
+        errorMsg =
+          '❌ Видео слишком большое для отправки через Telegram (>50MB).';
       }
 
       await bot.editMessageText(errorMsg, {
