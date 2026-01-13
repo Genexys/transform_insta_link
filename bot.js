@@ -10,11 +10,70 @@ const ytdlp_nodejs_1 = require("ytdlp-nodejs");
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const os_1 = __importDefault(require("os"));
+const pg_1 = require("pg");
 dotenv_1.default.config();
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+const DATABASE_URL = process.env.DATABASE_URL;
 const INSTA_FIX_DOMAIN = 'kkinstagram.com';
 const bot = new node_telegram_bot_api_1.default(BOT_TOKEN, { polling: true });
 const ytdlp = new ytdlp_nodejs_1.YtDlp();
+const dbClient = new pg_1.Client({
+    connectionString: DATABASE_URL,
+    ssl: {
+        rejectUnauthorized: false,
+    },
+});
+async function initDB() {
+    if (!DATABASE_URL) {
+        console.warn('⚠️ DATABASE_URL не найден. Работа без базы данных (лимиты отключены).');
+        return;
+    }
+    try {
+        await dbClient.connect();
+        console.log('✅ Подключено к PostgreSQL');
+        await dbClient.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        telegram_id BIGINT UNIQUE NOT NULL,
+        username TEXT,
+        downloads_count INTEGER DEFAULT 0,
+        is_premium BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+        console.log('✅ Таблица users проверена/создана');
+    }
+    catch (err) {
+        console.error('❌ Ошибка подключения к БД:', err);
+    }
+}
+initDB();
+async function getUser(telegramId) {
+    if (!DATABASE_URL)
+        return null;
+    const res = await dbClient.query('SELECT * FROM users WHERE telegram_id = $1', [telegramId]);
+    return res.rows[0];
+}
+async function createUser(telegramId, username = '') {
+    if (!DATABASE_URL)
+        return;
+    try {
+        await dbClient.query('INSERT INTO users (telegram_id, username) VALUES ($1, $2) ON CONFLICT (telegram_id) DO NOTHING', [telegramId, username]);
+    }
+    catch (err) {
+        console.error('Error creating user:', err);
+    }
+}
+async function incrementDownloads(telegramId) {
+    if (!DATABASE_URL)
+        return;
+    await dbClient.query('UPDATE users SET downloads_count = downloads_count + 1 WHERE telegram_id = $1', [telegramId]);
+}
+async function setPremium(telegramId) {
+    if (!DATABASE_URL)
+        return;
+    await dbClient.query('UPDATE users SET is_premium = TRUE WHERE telegram_id = $1', [telegramId]);
+}
 function revertUrlForDownload(url) {
     return url
         .replace(INSTA_FIX_DOMAIN, 'instagram.com')
@@ -296,10 +355,36 @@ bot.onText(/\/donate/, msg => {
 });
 bot.on('callback_query', async (query) => {
     const chatId = query.message?.chat.id;
+    const telegramId = query.from.id;
+    const username = query.from.username;
     const data = query.data;
     if (!query.message || !chatId || !data)
         return;
     if (data === 'download_video') {
+        if (DATABASE_URL) {
+            await createUser(telegramId, username);
+            const user = await getUser(telegramId);
+            if (user && !user.is_premium && user.downloads_count >= 10) {
+                await bot.answerCallbackQuery(query.id, {
+                    text: '⛔ Лимит бесплатных скачиваний исчерпан!',
+                    show_alert: true,
+                });
+                const opts = {
+                    parse_mode: 'MarkdownV2',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [
+                                { text: '⭐ Поддержать (50 Stars)', callback_data: 'donate_50' },
+                            ],
+                        ],
+                    },
+                };
+                await bot.sendMessage(chatId, '🛑 *Бесплатный лимит исчерпан*\n\n' +
+                    'Вы скачали 10 видео. Чтобы снять лимит и качать без ограничений, пожалуйста, поддержите проект донатом (любая сумма от 50 Stars).\n\n' +
+                    'Это помогает оплачивать серверы и поддерживать бота! ❤️', opts);
+                return;
+            }
+        }
         const messageText = query.message?.text;
         if (!messageText)
             return;
@@ -327,7 +412,11 @@ bot.on('callback_query', async (query) => {
             await bot.sendVideo(chatId, tempFilePath, {
                 caption: '🎥 Ваше видео готово!',
                 reply_to_message_id: query.message.message_id,
+                protect_content: true,
             });
+            if (DATABASE_URL) {
+                await incrementDownloads(telegramId);
+            }
             await bot.deleteMessage(chatId, loadingMsg.message_id);
         }
         catch (error) {
@@ -385,12 +474,17 @@ bot.on('pre_checkout_query', query => {
 bot.on('message', async (msg) => {
     if (msg.successful_payment) {
         const chatId = msg.chat.id;
+        const telegramId = msg.from?.id;
         const amount = msg.successful_payment.total_amount;
         const username = msg.from?.username ? `@${msg.from.username}` : 'Друг';
         console.log(`✅ Получен донат: ${amount} Stars от ${username}`);
+        if (DATABASE_URL && telegramId) {
+            await createUser(telegramId, msg.from?.username);
+            await setPremium(telegramId);
+        }
         await bot.sendMessage(chatId, `🎉 *Спасибо большое, ${username}!*\n\n` +
-            `Ваш донат в размере *${amount} Stars* успешно получен. ` +
-            'Это очень помогает поддерживать сервер и развивать бота. Вы лучший! ❤️', { parse_mode: 'Markdown' });
+            `Ваш донат в размере *${amount} Stars* успешно получен.\n` +
+            `✅ Теперь у вас *БЕЗЛИМИТНОЕ* скачивание видео!`, { parse_mode: 'Markdown' });
     }
 });
 bot.on('polling_error', error => {

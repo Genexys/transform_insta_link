@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__filesystem__read_multiple_files",
+      "Bash(cat:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(xargs:*)",
+      "mcp__filesystem__directory_tree",
+      "Bash(npx tsc:*)",
+      "mcp__ide__getDiagnostics",
+      "Bash(npx tsx:*)",
+      "Bash(open:*)",
+      "Bash(node src/scripts/test-gift-card.js:*)",
+      "Bash(lsof:*)",
+      "Bash(npm rebuild:*)",
+      "Bash(npm install:*)",
+      "Bash(yarn workspace:*)",
+      "Bash(stripe config:*)",
+      "Bash(curl:*)",
+      "Bash(node:*)",
+      "Bash(mongosh:*)",
+      "Bash(yarn remove:*)",
+      "Bash(yarn add:*)",
+      "Bash(yarn build)",
+      "Bash(yarn install)",
+      "Bash(npm uninstall:*)",
+      "Bash(npm run build:*)",
+      "Bash(yarn:*)"
+    ]
+  }
+}
