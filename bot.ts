@@ -129,7 +129,7 @@ function convertToInstaFix(url: string): string {
 }
 
 function findsocialLinks(text: string): string[] {
-  const words = text.split(' ');
+  const words = text.split(/\s+/); // Разбиваем по любым пробельным символам
   const socialLinks: string[] = [];
 
   for (let word of words) {
@@ -227,6 +227,24 @@ function findsocialLinks(text: string): string[] {
       socialLinks.push(cleanWord);
     }
 
+    // Pinterest
+    if (
+      cleanWord.includes('pinterest.com/pin/') ||
+      cleanWord.includes('pin.it/')
+    ) {
+      socialLinks.push(cleanWord);
+    }
+
+    // YouTube Shorts
+    if (
+      cleanWord.includes('youtube.com/shorts/') ||
+      (cleanWord.includes('youtu.be/') && !cleanWord.includes('youtube.com/watch')) 
+    ) {
+      // youtu.be часто используется для обычных видео, но иногда и для шортсов. 
+      // yt-dlp справится с обоими, добавим в поддержку.
+       socialLinks.push(cleanWord);
+    }
+
     // VK Video & Clips
     // if (
     //   (cleanWord.includes('vk.com/video') ||
@@ -280,6 +298,11 @@ bot.on('inline_query', async query => {
 
   const fixedLinks = socialLinks.map(link => {
     const fullLink = link.startsWith('http') ? link : `https://${link}`;
+    // Для Pinterest и YouTube просто возвращаем оригинал, так как фиксеров домена для них нет,
+    // но бот предложит кнопку скачивания.
+    if (fullLink.includes('pinterest') || fullLink.includes('pin.it') || fullLink.includes('youtube') || fullLink.includes('youtu.be')) {
+        return fullLink; 
+    }
     return convertToInstaFix(fullLink);
   });
 
@@ -294,8 +317,8 @@ bot.on('inline_query', async query => {
     {
       type: 'article' as const,
       id: 'fixed_message',
-      title: '✅ ссылки исправлены',
-      description: `${fixedLinks.length} ссылок исправлено`,
+      title: '✅ ссылки обработаны',
+      description: `${fixedLinks.length} ссылок найдено`,
       input_message_content: {
         message_text: fixedText,
         disable_web_page_preview: false,
@@ -304,8 +327,8 @@ bot.on('inline_query', async query => {
     {
       type: 'article' as const,
       id: 'links_only',
-      title: 'ℹ️ Только исправленные ссылки',
-      description: 'Отправить только ссылки без текста',
+      title: 'ℹ️ Только ссылки',
+      description: 'Отправить только ссылки',
       input_message_content: {
         message_text: fixedLinks.join('\n'),
         disable_web_page_preview: false,
@@ -352,6 +375,10 @@ bot.on('message', async msg => {
   if (socialLinks.length > 0) {
     const fixedLinks = socialLinks.map(link => {
       const fullLink = link.startsWith('http') ? link : `https://${link}`;
+      // Аналогично для сообщений: не меняем домен для Pinterest/YouTube
+      if (fullLink.includes('pinterest') || fullLink.includes('pin.it') || fullLink.includes('youtube') || fullLink.includes('youtu.be')) {
+        return fullLink;
+      }
       return convertToInstaFix(fullLink);
     });
 
@@ -370,6 +397,8 @@ bot.on('message', async msg => {
       else if (url.includes('fxdeviantart')) platform = '🎨 DeviantArt';
       else if (url.includes('phixiv')) platform = '🅿️ Pixiv';
       else if (url.includes('vxvk')) platform = '💙 VK Video/Clip';
+      else if (url.includes('pinterest') || url.includes('pin.it')) platform = '📌 Pinterest';
+      else if (url.includes('youtube') || url.includes('youtu.be')) platform = '📺 YouTube';
 
       return `Saved ${username} a click (${platform}):\n${url}`;
     });
@@ -378,7 +407,7 @@ bot.on('message', async msg => {
       fixedLinks.length === 1
         ? {
             inline_keyboard: [
-              [{ text: '📥 Скачать видео', callback_data: 'download_video' }],
+              [{ text: '📥 Скачать видео/фото', callback_data: 'download_video' }],
             ],
           }
         : undefined;

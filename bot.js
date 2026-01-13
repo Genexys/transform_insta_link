@@ -106,7 +106,7 @@ function convertToInstaFix(url) {
     return convertedUrl;
 }
 function findsocialLinks(text) {
-    const words = text.split(' ');
+    const words = text.split(/\s+/);
     const socialLinks = [];
     for (let word of words) {
         const cleanWord = word.replace(/[.,!?;)]*$/, '');
@@ -166,6 +166,14 @@ function findsocialLinks(text) {
             !cleanWord.includes('phixiv.net')) {
             socialLinks.push(cleanWord);
         }
+        if (cleanWord.includes('pinterest.com/pin/') ||
+            cleanWord.includes('pin.it/')) {
+            socialLinks.push(cleanWord);
+        }
+        if (cleanWord.includes('youtube.com/shorts/') ||
+            (cleanWord.includes('youtu.be/') && !cleanWord.includes('youtube.com/watch'))) {
+            socialLinks.push(cleanWord);
+        }
     }
     return socialLinks;
 }
@@ -204,6 +212,9 @@ bot.on('inline_query', async (query) => {
     }
     const fixedLinks = socialLinks.map(link => {
         const fullLink = link.startsWith('http') ? link : `https://${link}`;
+        if (fullLink.includes('pinterest') || fullLink.includes('pin.it') || fullLink.includes('youtube') || fullLink.includes('youtu.be')) {
+            return fullLink;
+        }
         return convertToInstaFix(fullLink);
     });
     let fixedText = queryText;
@@ -215,8 +226,8 @@ bot.on('inline_query', async (query) => {
         {
             type: 'article',
             id: 'fixed_message',
-            title: '✅ ссылки исправлены',
-            description: `${fixedLinks.length} ссылок исправлено`,
+            title: '✅ ссылки обработаны',
+            description: `${fixedLinks.length} ссылок найдено`,
             input_message_content: {
                 message_text: fixedText,
                 disable_web_page_preview: false,
@@ -225,8 +236,8 @@ bot.on('inline_query', async (query) => {
         {
             type: 'article',
             id: 'links_only',
-            title: 'ℹ️ Только исправленные ссылки',
-            description: 'Отправить только ссылки без текста',
+            title: 'ℹ️ Только ссылки',
+            description: 'Отправить только ссылки',
             input_message_content: {
                 message_text: fixedLinks.join('\n'),
                 disable_web_page_preview: false,
@@ -250,6 +261,9 @@ bot.on('message', async (msg) => {
     if (socialLinks.length > 0) {
         const fixedLinks = socialLinks.map(link => {
             const fullLink = link.startsWith('http') ? link : `https://${link}`;
+            if (fullLink.includes('pinterest') || fullLink.includes('pin.it') || fullLink.includes('youtube') || fullLink.includes('youtu.be')) {
+                return fullLink;
+            }
             return convertToInstaFix(fullLink);
         });
         console.log('Исправленные ссылки:', fixedLinks);
@@ -274,12 +288,16 @@ bot.on('message', async (msg) => {
                 platform = '🅿️ Pixiv';
             else if (url.includes('vxvk'))
                 platform = '💙 VK Video/Clip';
+            else if (url.includes('pinterest') || url.includes('pin.it'))
+                platform = '📌 Pinterest';
+            else if (url.includes('youtube') || url.includes('youtu.be'))
+                platform = '📺 YouTube';
             return `Saved ${username} a click (${platform}):\n${url}`;
         });
         const replyMarkup = fixedLinks.length === 1
             ? {
                 inline_keyboard: [
-                    [{ text: '📥 Скачать видео', callback_data: 'download_video' }],
+                    [{ text: '📥 Скачать видео/фото', callback_data: 'download_video' }],
                 ],
             }
             : undefined;
