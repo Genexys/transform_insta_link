@@ -45,7 +45,18 @@ async function initDB() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-    console.log('✅ Таблица users проверена/создана');
+    
+    await dbClient.query(`
+      CREATE TABLE IF NOT EXISTS error_logs (
+        id SERIAL PRIMARY KEY,
+        telegram_id BIGINT,
+        error_message TEXT,
+        stack_trace TEXT,
+        url TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    console.log('✅ Таблицы users и error_logs проверены/созданы');
   } catch (err) {
     console.error('❌ Ошибка подключения к БД:', err);
   }
@@ -54,6 +65,18 @@ async function initDB() {
 initDB();
 
 // --- DB Helpers ---
+
+async function saveErrorLog(telegramId: number | null, message: string, stack: string = '', url: string = '') {
+  if (!DATABASE_URL) return;
+  try {
+    await dbClient.query(
+      'INSERT INTO error_logs (telegram_id, error_message, stack_trace, url) VALUES ($1, $2, $3, $4)',
+      [telegramId, message, stack, url]
+    );
+  } catch (err) {
+    console.error('Failed to save error log to DB:', err);
+  }
+}
 
 async function getUser(telegramId: number) {
   if (!DATABASE_URL) return null;
@@ -580,11 +603,20 @@ bot.on('callback_query', async query => {
     try {
       console.log(`Downloading ${originalUrl} to ${tempFilePath}`);
 
+      // Пробуем скачать
       await ytdlp.download(originalUrl, {
         output: tempFilePath,
         format: 'best[ext=mp4]/best',
-        maxFilesize: '50M', // Ограничение для Telegram Bot API
+        maxFilesize: '50M', 
       });
+
+      // Проверяем, создался ли файл
+      if (!fs.existsSync(tempFilePath)) {
+        throw new Error('Файл не был создан после загрузки. Возможно, yt-dlp не установлен или ссылка не поддерживается.');
+      }
+
+      const stats = fs.statSync(tempFilePath);
+      console.log(`File downloaded successfully: ${stats.size} bytes`);
 
       await bot.sendChatAction(chatId, 'upload_video');
 
@@ -600,17 +632,18 @@ bot.on('callback_query', async query => {
       }
 
       await bot.deleteMessage(chatId, loadingMsg.message_id);
-    } catch (error) {
-      console.error('Download error:', error);
-      let errorMsg =
-        '❌ Ошибка при скачивании. Возможно, видео слишком большое (>50MB) или недоступно.';
+    } catch (error: any) {
+      console.error('Download error full details:', error);
+      
+      // Сохраняем ошибку в базу данных для админа
+      await saveErrorLog(telegramId, error.message || 'Unknown error', error.stack || '', originalUrl);
 
-      if (
-        error instanceof Error &&
-        error.message.includes('File is larger than')
-      ) {
-        errorMsg =
-          '❌ Видео слишком большое для отправки через Telegram (>50MB).';
+      let errorMsg = '❌ Ошибка при скачивании.';
+      
+      if (error.message && error.message.includes('File is larger than')) {
+          errorMsg = '❌ Видео слишком большое для отправки через Telegram (>50MB).';
+      } else {
+          errorMsg = '❌ Произошла ошибка на сервере. Попробуйте позже или используйте другую ссылку.';
       }
 
       await bot.editMessageText(errorMsg, {
