@@ -190,10 +190,6 @@ function findsocialLinks(text) {
             cleanWord.includes('pin.it/')) {
             socialLinks.push(cleanWord);
         }
-        if (cleanWord.includes('youtube.com/shorts/') ||
-            (cleanWord.includes('youtu.be/') && !cleanWord.includes('youtube.com/watch'))) {
-            socialLinks.push(cleanWord);
-        }
     }
     return socialLinks;
 }
@@ -232,7 +228,8 @@ bot.on('inline_query', async (query) => {
     }
     const fixedLinks = socialLinks.map(link => {
         const fullLink = link.startsWith('http') ? link : `https://${link}`;
-        if (fullLink.includes('pinterest') || fullLink.includes('pin.it') || fullLink.includes('youtube') || fullLink.includes('youtu.be')) {
+        if (fullLink.includes('pinterest') ||
+            fullLink.includes('pin.it')) {
             return fullLink;
         }
         return convertToInstaFix(fullLink);
@@ -281,7 +278,8 @@ bot.on('message', async (msg) => {
     if (socialLinks.length > 0) {
         const fixedLinks = socialLinks.map(link => {
             const fullLink = link.startsWith('http') ? link : `https://${link}`;
-            if (fullLink.includes('pinterest') || fullLink.includes('pin.it') || fullLink.includes('youtube') || fullLink.includes('youtu.be')) {
+            if (fullLink.includes('pinterest') ||
+                fullLink.includes('pin.it')) {
                 return fullLink;
             }
             return convertToInstaFix(fullLink);
@@ -310,14 +308,17 @@ bot.on('message', async (msg) => {
                 platform = '💙 VK Video/Clip';
             else if (url.includes('pinterest') || url.includes('pin.it'))
                 platform = '📌 Pinterest';
-            else if (url.includes('youtube') || url.includes('youtu.be'))
-                platform = '📺 YouTube';
             return `Saved ${username} a click (${platform}):\n${url}`;
         });
         const replyMarkup = fixedLinks.length === 1
             ? {
                 inline_keyboard: [
-                    [{ text: '📥 Скачать видео/фото', callback_data: 'download_video' }],
+                    [
+                        {
+                            text: '📥 Скачать видео/фото',
+                            callback_data: 'download_video',
+                        },
+                    ],
                 ],
             }
             : undefined;
@@ -412,7 +413,10 @@ bot.on('callback_query', async (query) => {
                     reply_markup: {
                         inline_keyboard: [
                             [
-                                { text: '⭐ Поддержать (50 Stars)', callback_data: 'donate_50' },
+                                {
+                                    text: '⭐ Поддержать (50 Stars)',
+                                    callback_data: 'donate_50',
+                                },
                             ],
                         ],
                     },
@@ -467,10 +471,12 @@ bot.on('callback_query', async (query) => {
             await saveErrorLog(telegramId, error.message || 'Unknown error', error.stack || '', originalUrl);
             let errorMsg = '❌ Ошибка при скачивании.';
             if (error.message && error.message.includes('File is larger than')) {
-                errorMsg = '❌ Видео слишком большое для отправки через Telegram (>50MB).';
+                errorMsg =
+                    '❌ Видео слишком большое для отправки через Telegram (>50MB).';
             }
             else {
-                errorMsg = '❌ Произошла ошибка на сервере. Попробуйте позже или используйте другую ссылку.';
+                errorMsg =
+                    '❌ Произошла ошибка на сервере. Попробуйте позже или используйте другую ссылку.';
             }
             await bot.editMessageText(errorMsg, {
                 chat_id: chatId,

@@ -28,7 +28,9 @@ const dbClient = new Client({
 
 async function initDB() {
   if (!DATABASE_URL) {
-    console.warn('⚠️ DATABASE_URL не найден. Работа без базы данных (лимиты отключены).');
+    console.warn(
+      '⚠️ DATABASE_URL не найден. Работа без базы данных (лимиты отключены).'
+    );
     return;
   }
   try {
@@ -45,7 +47,7 @@ async function initDB() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-    
+
     await dbClient.query(`
       CREATE TABLE IF NOT EXISTS error_logs (
         id SERIAL PRIMARY KEY,
@@ -66,7 +68,12 @@ initDB();
 
 // --- DB Helpers ---
 
-async function saveErrorLog(telegramId: number | null, message: string, stack: string = '', url: string = '') {
+async function saveErrorLog(
+  telegramId: number | null,
+  message: string,
+  stack: string = '',
+  url: string = ''
+) {
   if (!DATABASE_URL) return;
   try {
     await dbClient.query(
@@ -80,7 +87,10 @@ async function saveErrorLog(telegramId: number | null, message: string, stack: s
 
 async function getUser(telegramId: number) {
   if (!DATABASE_URL) return null;
-  const res = await dbClient.query('SELECT * FROM users WHERE telegram_id = $1', [telegramId]);
+  const res = await dbClient.query(
+    'SELECT * FROM users WHERE telegram_id = $1',
+    [telegramId]
+  );
   return res.rows[0];
 }
 
@@ -259,14 +269,14 @@ function findsocialLinks(text: string): string[] {
     }
 
     // YouTube Shorts
-    if (
-      cleanWord.includes('youtube.com/shorts/') ||
-      (cleanWord.includes('youtu.be/') && !cleanWord.includes('youtube.com/watch')) 
-    ) {
-      // youtu.be часто используется для обычных видео, но иногда и для шортсов. 
-      // yt-dlp справится с обоими, добавим в поддержку.
-       socialLinks.push(cleanWord);
-    }
+    // if (
+    //   cleanWord.includes('youtube.com/shorts/') ||
+    //   (cleanWord.includes('youtu.be/') && !cleanWord.includes('youtube.com/watch'))
+    // ) {
+    //   // youtu.be часто используется для обычных видео, но иногда и для шортсов.
+    //   // yt-dlp справится с обоими, добавим в поддержку.
+    //    socialLinks.push(cleanWord);
+    // }
 
     // VK Video & Clips
     // if (
@@ -323,8 +333,13 @@ bot.on('inline_query', async query => {
     const fullLink = link.startsWith('http') ? link : `https://${link}`;
     // Для Pinterest и YouTube просто возвращаем оригинал, так как фиксеров домена для них нет,
     // но бот предложит кнопку скачивания.
-    if (fullLink.includes('pinterest') || fullLink.includes('pin.it') || fullLink.includes('youtube') || fullLink.includes('youtu.be')) {
-        return fullLink; 
+    if (
+      fullLink.includes('pinterest') ||
+      fullLink.includes('pin.it')
+      // fullLink.includes('youtube') ||
+      // fullLink.includes('youtu.be')
+    ) {
+      return fullLink;
     }
     return convertToInstaFix(fullLink);
   });
@@ -399,7 +414,12 @@ bot.on('message', async msg => {
     const fixedLinks = socialLinks.map(link => {
       const fullLink = link.startsWith('http') ? link : `https://${link}`;
       // Аналогично для сообщений: не меняем домен для Pinterest/YouTube
-      if (fullLink.includes('pinterest') || fullLink.includes('pin.it') || fullLink.includes('youtube') || fullLink.includes('youtu.be')) {
+      if (
+        fullLink.includes('pinterest') ||
+        fullLink.includes('pin.it')
+        // fullLink.includes('youtube') ||
+        // fullLink.includes('youtu.be')
+      ) {
         return fullLink;
       }
       return convertToInstaFix(fullLink);
@@ -420,8 +440,10 @@ bot.on('message', async msg => {
       else if (url.includes('fxdeviantart')) platform = '🎨 DeviantArt';
       else if (url.includes('phixiv')) platform = '🅿️ Pixiv';
       else if (url.includes('vxvk')) platform = '💙 VK Video/Clip';
-      else if (url.includes('pinterest') || url.includes('pin.it')) platform = '📌 Pinterest';
-      else if (url.includes('youtube') || url.includes('youtu.be')) platform = '📺 YouTube';
+      else if (url.includes('pinterest') || url.includes('pin.it'))
+        platform = '📌 Pinterest';
+      // else if (url.includes('youtube') || url.includes('youtu.be'))
+      //   platform = '📺 YouTube';
 
       return `Saved ${username} a click (${platform}):\n${url}`;
     });
@@ -430,7 +452,12 @@ bot.on('message', async msg => {
       fixedLinks.length === 1
         ? {
             inline_keyboard: [
-              [{ text: '📥 Скачать видео/фото', callback_data: 'download_video' }],
+              [
+                {
+                  text: '📥 Скачать видео/фото',
+                  callback_data: 'download_video',
+                },
+              ],
             ],
           }
         : undefined;
@@ -544,31 +571,34 @@ bot.on('callback_query', async query => {
     if (DATABASE_URL) {
       await createUser(telegramId, username);
       const user = await getUser(telegramId);
-      
+
       // 2. Лимит: 10 скачиваний для бесплатных пользователей
       if (user && !user.is_premium && user.downloads_count >= 10) {
         await bot.answerCallbackQuery(query.id, {
           text: '⛔ Лимит бесплатных скачиваний исчерпан!',
           show_alert: true,
         });
-        
+
         const opts: TelegramBot.SendMessageOptions = {
           parse_mode: 'MarkdownV2',
           reply_markup: {
             inline_keyboard: [
               [
-                { text: '⭐ Поддержать (50 Stars)', callback_data: 'donate_50' },
+                {
+                  text: '⭐ Поддержать (50 Stars)',
+                  callback_data: 'donate_50',
+                },
               ],
             ],
           },
         };
 
         await bot.sendMessage(
-            chatId,
-            '🛑 *Бесплатный лимит исчерпан*\n\n' +
+          chatId,
+          '🛑 *Бесплатный лимит исчерпан*\n\n' +
             'Вы скачали 10 видео. Чтобы снять лимит и качать без ограничений, пожалуйста, поддержите проект донатом (любая сумма от 50 Stars).\n\n' +
             'Это помогает оплачивать серверы и поддерживать бота! ❤️',
-            opts
+          opts
         );
         return;
       }
@@ -607,12 +637,14 @@ bot.on('callback_query', async query => {
       await ytdlp.download(originalUrl, {
         output: tempFilePath,
         format: 'best[ext=mp4]/best',
-        maxFilesize: '50M', 
+        maxFilesize: '50M',
       });
 
       // Проверяем, создался ли файл
       if (!fs.existsSync(tempFilePath)) {
-        throw new Error('Файл не был создан после загрузки. Возможно, yt-dlp не установлен или ссылка не поддерживается.');
+        throw new Error(
+          'Файл не был создан после загрузки. Возможно, yt-dlp не установлен или ссылка не поддерживается.'
+        );
       }
 
       const stats = fs.statSync(tempFilePath);
@@ -628,22 +660,29 @@ bot.on('callback_query', async query => {
 
       // Увеличиваем счетчик скачиваний
       if (DATABASE_URL) {
-          await incrementDownloads(telegramId);
+        await incrementDownloads(telegramId);
       }
 
       await bot.deleteMessage(chatId, loadingMsg.message_id);
     } catch (error: any) {
       console.error('Download error full details:', error);
-      
+
       // Сохраняем ошибку в базу данных для админа
-      await saveErrorLog(telegramId, error.message || 'Unknown error', error.stack || '', originalUrl);
+      await saveErrorLog(
+        telegramId,
+        error.message || 'Unknown error',
+        error.stack || '',
+        originalUrl
+      );
 
       let errorMsg = '❌ Ошибка при скачивании.';
-      
+
       if (error.message && error.message.includes('File is larger than')) {
-          errorMsg = '❌ Видео слишком большое для отправки через Telegram (>50MB).';
+        errorMsg =
+          '❌ Видео слишком большое для отправки через Telegram (>50MB).';
       } else {
-          errorMsg = '❌ Произошла ошибка на сервере. Попробуйте позже или используйте другую ссылку.';
+        errorMsg =
+          '❌ Произошла ошибка на сервере. Попробуйте позже или используйте другую ссылку.';
       }
 
       await bot.editMessageText(errorMsg, {
@@ -716,8 +755,8 @@ bot.on('message', async msg => {
     console.log(`✅ Получен донат: ${amount} Stars от ${username}`);
 
     if (DATABASE_URL && telegramId) {
-        await createUser(telegramId, msg.from?.username);
-        await setPremium(telegramId);
+      await createUser(telegramId, msg.from?.username);
+      await setPremium(telegramId);
     }
 
     await bot.sendMessage(
