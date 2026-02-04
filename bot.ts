@@ -428,39 +428,47 @@ bot.on('message', async msg => {
     console.log('Исправленные ссылки:', fixedLinks);
 
     const username = msg.from?.username ? `@${msg.from.username}` : 'кто-то';
-    const formattedMessages = fixedLinks.map(url => {
-      let platform = '🔗';
+
+    let finalText = messageText;
+    const platforms = new Set<string>();
+
+    fixedLinks.forEach((url, index) => {
+      finalText = finalText.replace(socialLinks[index], url);
+
       if (url.includes('kkinstagram') || url.includes(INSTA_FIX_DOMAIN))
-        platform = '📸 Instagram';
-      else if (url.includes('fxtwitter')) platform = '🐦 X/Twitter';
-      else if (url.includes('vxtiktok')) platform = '🎵 TikTok';
-      else if (url.includes('vxreddit')) platform = '🟠 Reddit';
-      else if (url.includes('vxthreads')) platform = '🧵 Threads';
-      else if (url.includes('bskx')) platform = '🦋 Bluesky';
-      else if (url.includes('fxdeviantart')) platform = '🎨 DeviantArt';
-      else if (url.includes('phixiv')) platform = '🅿️ Pixiv';
-      else if (url.includes('vxvk')) platform = '💙 VK Video/Clip';
+        platforms.add('📸 Instagram');
+      else if (url.includes('fxtwitter')) platforms.add('🐦 X/Twitter');
+      else if (url.includes('vxtiktok')) platforms.add('🎵 TikTok');
+      else if (url.includes('vxreddit')) platforms.add('🟠 Reddit');
+      else if (url.includes('vxthreads')) platforms.add('🧵 Threads');
+      else if (url.includes('bskx')) platforms.add('🦋 Bluesky');
+      else if (url.includes('fxdeviantart')) platforms.add('🎨 DeviantArt');
+      else if (url.includes('phixiv')) platforms.add('🅿️ Pixiv');
+      else if (url.includes('vxvk')) platforms.add('💙 VK Video/Clip');
       else if (url.includes('pinterest') || url.includes('pin.it'))
-        platform = '📌 Pinterest';
+        platforms.add('📌 Pinterest');
       // else if (url.includes('youtube') || url.includes('youtu.be'))
       //   platform = '📺 YouTube';
-
-      return `Saved ${username} a click (${platform}):\n${url}`;
     });
 
-    const replyMarkup =
-      fixedLinks.length === 1
-        ? {
-            inline_keyboard: [
-              [
-                {
-                  text: '📥 Скачать видео/фото',
-                  callback_data: 'download_video',
-                },
-              ],
-            ],
-          }
-        : undefined;
+    const platformStr =
+      platforms.size > 0 ? `(${Array.from(platforms).join(', ')})` : '';
+    const finalMessage = `Saved ${username} a click ${platformStr}:\n\n${finalText}`;
+
+    // const replyMarkup =
+    //   fixedLinks.length === 1
+    //     ? {
+    //         inline_keyboard: [
+    //           [
+    //             {
+    //               text: '📥 Скачать видео/фото',
+    //               callback_data: 'download_video',
+    //             },
+    //           ],
+    //         ],
+    //       }
+    //     : undefined;
+    const replyMarkup = undefined;
 
     if (isGroup) {
       try {
@@ -469,11 +477,7 @@ bot.on('message', async msg => {
           reply_to_message_id: msg.message_id,
           reply_markup: replyMarkup,
         };
-        await bot.sendMessage(
-          chatId,
-          formattedMessages.join('\n\n'),
-          sendOptions
-        );
+        await bot.sendMessage(chatId, finalMessage, sendOptions);
         console.log('✅ Сообщение-ответ успешно отправлено');
         await bot.deleteMessage(chatId, msg.message_id);
       } catch (error) {
@@ -482,7 +486,7 @@ bot.on('message', async msg => {
         }
       }
     } else {
-      bot.sendMessage(chatId, formattedMessages.join('\n\n'), {
+      bot.sendMessage(chatId, finalMessage, {
         disable_web_page_preview: false,
         reply_markup: replyMarkup,
       });
