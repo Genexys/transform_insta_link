@@ -26,7 +26,25 @@
       "Bash(yarn install)",
       "Bash(npm uninstall:*)",
       "Bash(npm run build:*)",
-      "Bash(yarn:*)"
+      "Bash(yarn:*)",
+      "WebFetch(domain:www.kkinstagram.com)",
+      "WebFetch(domain:kkscript.com)",
+      "WebFetch(domain:kkinstagram.com)",
+      "WebFetch(domain:ddinstagram.com)",
+      "WebFetch(domain:d.ddinstagram.com)",
+      "WebSearch",
+      "WebFetch(domain:www.instagramez.com)",
+      "WebFetch(domain:www.uuinstagram.com)",
+      "WebFetch(domain:toinstagram.com)",
+      "WebFetch(domain:gist.github.com)",
+      "WebFetch(domain:eeinstagram.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:instafix-production-c2e8.up.railway.app)",
+      "Bash(railway:*)",
+      "Bash(gh api:*)",
+      "Bash(python3:*)"
     ]
   }
 }

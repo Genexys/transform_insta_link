@@ -12,8 +12,9 @@ dotenv.config();
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const DATABASE_URL = process.env.DATABASE_URL;
 
-// Домен для фикса Instagram (по умолчанию kkinstagram.com, но можно заменить на свой)
-const INSTA_FIX_DOMAIN = 'kkinstagram.com';
+// Self-hosted InstaFix (приоритет) + публичный фоллбэк
+const INSTA_FIX_DOMAIN = 'instafix-production-c2e8.up.railway.app';
+const INSTA_FIX_FALLBACK = 'kkinstagram.com';
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 const ytdlp = new YtDlp();
@@ -127,6 +128,7 @@ async function setPremium(telegramId: number) {
 function revertUrlForDownload(url: string): string {
   return url
     .replace(INSTA_FIX_DOMAIN, 'instagram.com')
+    .replace(INSTA_FIX_FALLBACK, 'instagram.com')
     .replace('fxtwitter.com', 'x.com')
     .replace('vxtiktok.com', 'tiktok.com')
     .replace('vxreddit.com', 'reddit.com')
@@ -139,8 +141,8 @@ function revertUrlForDownload(url: string): string {
 
 function convertToInstaFix(url: string): string {
   let convertedUrl = url
-    .replace(/instagram\.com/g, INSTA_FIX_DOMAIN)
-    .replace(/instagr\.am/g, INSTA_FIX_DOMAIN)
+    .replace(/(?:www\.)?instagram\.com/g, INSTA_FIX_DOMAIN)
+    .replace(/(?:www\.)?instagr\.am/g, INSTA_FIX_DOMAIN)
     .replace(/x\.com/g, 'fxtwitter.com')
     .replace(/tiktok\.com/g, 'vxtiktok.com')
     .replace(/vt\.tiktok\.com/g, 'vxtiktok.com')
@@ -159,6 +161,22 @@ function convertToInstaFix(url: string): string {
   }
 
   return convertedUrl;
+}
+
+const instaRegex = /(?:www\.)?(?:instagram\.com|instagr\.am)/;
+
+async function getWorkingInstaFixUrl(originalUrl: string): Promise<string> {
+  const selfHostedUrl = originalUrl.replace(instaRegex, INSTA_FIX_DOMAIN);
+  try {
+    const res = await fetch(selfHostedUrl, {
+      method: 'HEAD',
+      redirect: 'manual',
+      signal: AbortSignal.timeout(3000),
+    });
+    if (res.status === 200) return selfHostedUrl;
+  } catch {}
+  // Self-hosted не смог — фоллбэк на публичный сервис
+  return originalUrl.replace(instaRegex, INSTA_FIX_FALLBACK);
 }
 
 function findsocialLinks(text: string): string[] {
@@ -329,20 +347,19 @@ bot.on('inline_query', async query => {
     return;
   }
 
-  const fixedLinks = socialLinks.map(link => {
+  const fixedLinks = await Promise.all(socialLinks.map(async link => {
     const fullLink = link.startsWith('http') ? link : `https://${link}`;
-    // Для Pinterest и YouTube просто возвращаем оригинал, так как фиксеров домена для них нет,
-    // но бот предложит кнопку скачивания.
     if (
       fullLink.includes('pinterest') ||
       fullLink.includes('pin.it')
-      // fullLink.includes('youtube') ||
-      // fullLink.includes('youtu.be')
     ) {
       return fullLink;
     }
+    if (fullLink.includes('instagram.com') || fullLink.includes('instagr.am')) {
+      return getWorkingInstaFixUrl(fullLink);
+    }
     return convertToInstaFix(fullLink);
-  });
+  }));
 
   let fixedText = queryText;
   socialLinks.forEach((originalLink, index) => {
@@ -411,19 +428,19 @@ bot.on('message', async msg => {
   console.log('Найденные ссылки:', socialLinks);
 
   if (socialLinks.length > 0) {
-    const fixedLinks = socialLinks.map(link => {
+    const fixedLinks = await Promise.all(socialLinks.map(async link => {
       const fullLink = link.startsWith('http') ? link : `https://${link}`;
-      // Аналогично для сообщений: не меняем домен для Pinterest/YouTube
       if (
         fullLink.includes('pinterest') ||
         fullLink.includes('pin.it')
-        // fullLink.includes('youtube') ||
-        // fullLink.includes('youtu.be')
       ) {
         return fullLink;
       }
+      if (fullLink.includes('instagram.com') || fullLink.includes('instagr.am')) {
+        return getWorkingInstaFixUrl(fullLink);
+      }
       return convertToInstaFix(fullLink);
-    });
+    }));
 
     console.log('Исправленные ссылки:', fixedLinks);
 
@@ -435,7 +452,7 @@ bot.on('message', async msg => {
     fixedLinks.forEach((url, index) => {
       finalText = finalText.replace(socialLinks[index], url);
 
-      if (url.includes('kkinstagram') || url.includes(INSTA_FIX_DOMAIN))
+      if (url.includes(INSTA_FIX_DOMAIN) || url.includes(INSTA_FIX_FALLBACK))
         platforms.add('📸 Instagram');
       else if (url.includes('fxtwitter')) platforms.add('🐦 X/Twitter');
       else if (url.includes('vxtiktok')) platforms.add('🎵 TikTok');

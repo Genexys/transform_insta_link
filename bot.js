@@ -14,7 +14,8 @@ const pg_1 = require("pg");
 dotenv_1.default.config();
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const DATABASE_URL = process.env.DATABASE_URL;
-const INSTA_FIX_DOMAIN = 'kkinstagram.com';
+const INSTA_FIX_DOMAIN = 'instafix-production-c2e8.up.railway.app';
+const INSTA_FIX_FALLBACK = 'kkinstagram.com';
 const bot = new node_telegram_bot_api_1.default(BOT_TOKEN, { polling: true });
 const ytdlp = new ytdlp_nodejs_1.YtDlp();
 const dbClient = new pg_1.Client({
@@ -97,6 +98,7 @@ async function setPremium(telegramId) {
 function revertUrlForDownload(url) {
     return url
         .replace(INSTA_FIX_DOMAIN, 'instagram.com')
+        .replace(INSTA_FIX_FALLBACK, 'instagram.com')
         .replace('fxtwitter.com', 'x.com')
         .replace('vxtiktok.com', 'tiktok.com')
         .replace('vxreddit.com', 'reddit.com')
@@ -108,8 +110,8 @@ function revertUrlForDownload(url) {
 }
 function convertToInstaFix(url) {
     let convertedUrl = url
-        .replace(/instagram\.com/g, INSTA_FIX_DOMAIN)
-        .replace(/instagr\.am/g, INSTA_FIX_DOMAIN)
+        .replace(/(?:www\.)?instagram\.com/g, INSTA_FIX_DOMAIN)
+        .replace(/(?:www\.)?instagr\.am/g, INSTA_FIX_DOMAIN)
         .replace(/x\.com/g, 'fxtwitter.com')
         .replace(/tiktok\.com/g, 'vxtiktok.com')
         .replace(/vt\.tiktok\.com/g, 'vxtiktok.com')
@@ -124,6 +126,21 @@ function convertToInstaFix(url) {
         convertedUrl += ' ⚠️ (кросспост - видео может быть в оригинальном посте)';
     }
     return convertedUrl;
+}
+const instaRegex = /(?:www\.)?(?:instagram\.com|instagr\.am)/;
+async function getWorkingInstaFixUrl(originalUrl) {
+    const selfHostedUrl = originalUrl.replace(instaRegex, INSTA_FIX_DOMAIN);
+    try {
+        const res = await fetch(selfHostedUrl, {
+            method: 'HEAD',
+            redirect: 'manual',
+            signal: AbortSignal.timeout(3000),
+        });
+        if (res.status === 200)
+            return selfHostedUrl;
+    }
+    catch { }
+    return originalUrl.replace(instaRegex, INSTA_FIX_FALLBACK);
 }
 function findsocialLinks(text) {
     const words = text.split(/\s+/);
@@ -226,14 +243,17 @@ bot.on('inline_query', async (query) => {
         ]);
         return;
     }
-    const fixedLinks = socialLinks.map(link => {
+    const fixedLinks = await Promise.all(socialLinks.map(async (link) => {
         const fullLink = link.startsWith('http') ? link : `https://${link}`;
         if (fullLink.includes('pinterest') ||
             fullLink.includes('pin.it')) {
             return fullLink;
         }
+        if (fullLink.includes('instagram.com') || fullLink.includes('instagr.am')) {
+            return getWorkingInstaFixUrl(fullLink);
+        }
         return convertToInstaFix(fullLink);
-    });
+    }));
     let fixedText = queryText;
     socialLinks.forEach((originalLink, index) => {
         fixedText = fixedText.replace(originalLink, fixedLinks[index]);
@@ -276,21 +296,24 @@ bot.on('message', async (msg) => {
     const socialLinks = findsocialLinks(messageText);
     console.log('Найденные ссылки:', socialLinks);
     if (socialLinks.length > 0) {
-        const fixedLinks = socialLinks.map(link => {
+        const fixedLinks = await Promise.all(socialLinks.map(async (link) => {
             const fullLink = link.startsWith('http') ? link : `https://${link}`;
             if (fullLink.includes('pinterest') ||
                 fullLink.includes('pin.it')) {
                 return fullLink;
             }
+            if (fullLink.includes('instagram.com') || fullLink.includes('instagr.am')) {
+                return getWorkingInstaFixUrl(fullLink);
+            }
             return convertToInstaFix(fullLink);
-        });
+        }));
         console.log('Исправленные ссылки:', fixedLinks);
         const username = msg.from?.username ? `@${msg.from.username}` : 'кто-то';
         let finalText = messageText;
         const platforms = new Set();
         fixedLinks.forEach((url, index) => {
             finalText = finalText.replace(socialLinks[index], url);
-            if (url.includes('kkinstagram') || url.includes(INSTA_FIX_DOMAIN))
+            if (url.includes(INSTA_FIX_DOMAIN) || url.includes(INSTA_FIX_FALLBACK))
                 platforms.add('📸 Instagram');
             else if (url.includes('fxtwitter'))
                 platforms.add('🐦 X/Twitter');
