@@ -23,6 +23,7 @@ const log = {
 const INSTA_FIX_DOMAIN = 'instafix-production-c2e8.up.railway.app';
 const INSTA_FIX_FALLBACK = 'kkinstagram.com';
 const TIKTOK_FIXERS = ['tnktok.com'];
+const REDDIT_EMBED_DOMAIN = 'transforminstalink-production.up.railway.app';
 const bot = new node_telegram_bot_api_1.default(BOT_TOKEN, { polling: true });
 const ytdlp = new ytdlp_nodejs_1.YtDlp();
 async function sendAdminAlert(message) {
@@ -136,7 +137,7 @@ function revertUrlForDownload(url) {
         .replace(INSTA_FIX_DOMAIN, 'instagram.com')
         .replace(INSTA_FIX_FALLBACK, 'instagram.com')
         .replace('fxtwitter.com', 'x.com')
-        .replace('vxreddit.com', 'reddit.com')
+        .replace(REDDIT_EMBED_DOMAIN, 'reddit.com')
         .replace('vxthreads.net', 'threads.net')
         .replace('bskx.app', 'bsky.app')
         .replace('fixdeviantart.com', 'deviantart.com')
@@ -152,8 +153,7 @@ function convertToInstaFix(url) {
         .replace(/(?:www\.)?instagram\.com/g, INSTA_FIX_DOMAIN)
         .replace(/(?:www\.)?instagr\.am/g, INSTA_FIX_DOMAIN)
         .replace(/x\.com/g, 'fxtwitter.com')
-        .replace(/reddit\.com/g, 'vxreddit.com')
-        .replace(/www\.reddit\.com/g, 'vxreddit.com')
+        .replace(/(?:www\.)?reddit\.com/g, REDDIT_EMBED_DOMAIN)
         .replace(/bsky\.app/g, 'bskx.app')
         .replace(/deviantart\.com/g, 'fixdeviantart.com')
         .replace(/pixiv\.net/g, 'phixiv.net');
@@ -248,10 +248,8 @@ function findsocialLinks(text) {
             !cleanWord.includes('vxtiktok.com')) {
             socialLinks.push(cleanWord);
         }
-        if ((cleanWord.includes('reddit.com') ||
-            cleanWord.includes('www.reddit.com')) &&
-            !cleanWord.includes('rxddit.com') &&
-            !cleanWord.includes('vxreddit.com')) {
+        if (cleanWord.includes('reddit.com') &&
+            !cleanWord.includes(REDDIT_EMBED_DOMAIN)) {
             if (cleanWord.match(/reddit\.com\/r\/[A-Za-z0-9_]+\/comments/) ||
                 cleanWord.match(/www\.reddit\.com\/r\/[A-Za-z0-9_]+\/comments/) ||
                 cleanWord.match(/reddit\.com\/r\/[A-Za-z0-9_]+\/s\/[A-Za-z0-9_]+/)) {
@@ -397,7 +395,7 @@ bot.on('message', async (msg) => {
                 platforms.add('🐦 X/Twitter');
             else if (TIKTOK_FIXERS.some(f => url.includes(f)))
                 platforms.add('🎵 TikTok');
-            else if (url.includes('vxreddit'))
+            else if (url.includes(REDDIT_EMBED_DOMAIN))
                 platforms.add('🟠 Reddit');
             else if (url.includes('bskx'))
                 platforms.add('🦋 Bluesky');
@@ -664,8 +662,79 @@ async function checkService(url) {
         return 'down';
     }
 }
+function escapeHtml(str) {
+    return str
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+async function handleRedditEmbed(path, res) {
+    const redditUrl = `https://www.reddit.com${path}`;
+    const match = path.match(/^\/r\/([^/]+)\/comments\/([^/]+)/);
+    if (!match) {
+        res.writeHead(302, { Location: redditUrl });
+        res.end();
+        return;
+    }
+    const [, subreddit, postId] = match;
+    try {
+        const apiUrl = `https://www.reddit.com/r/${subreddit}/comments/${postId}/.json`;
+        const apiRes = await fetch(apiUrl, {
+            headers: { 'User-Agent': 'TelegramBot:transform_insta_link:v1.0' },
+            signal: AbortSignal.timeout(5000),
+        });
+        if (!apiRes.ok)
+            throw new Error(`Reddit API ${apiRes.status}`);
+        const data = await apiRes.json();
+        const post = data[0]?.data?.children?.[0]?.data;
+        if (!post)
+            throw new Error('No post data');
+        const title = post.title || 'Reddit post';
+        const author = post.author || '';
+        const subredditPrefixed = post.subreddit_name_prefixed || `r/${subreddit}`;
+        const score = post.score ?? 0;
+        const numComments = post.num_comments ?? 0;
+        const selftext = (post.selftext || '').substring(0, 200);
+        const description = selftext ||
+            `by u/${author} in ${subredditPrefixed} · ${score} pts · ${numComments} comments`;
+        let ogImage = '';
+        if (post.preview?.images?.[0]?.source?.url) {
+            ogImage = post.preview.images[0].source.url.replace(/&amp;/g, '&');
+        }
+        else if (post.thumbnail?.startsWith('http')) {
+            ogImage = post.thumbnail;
+        }
+        let ogVideo = '';
+        if (post.is_video && post.media?.reddit_video?.fallback_url) {
+            ogVideo = post.media.reddit_video.fallback_url;
+        }
+        const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta property="og:site_name" content="Reddit">
+<meta property="og:title" content="${escapeHtml(title)}">
+<meta property="og:description" content="${escapeHtml(description)}">
+<meta property="og:url" content="${redditUrl}">
+${ogImage ? `<meta property="og:image" content="${escapeHtml(ogImage)}">` : ''}
+${ogVideo ? `<meta property="og:video" content="${escapeHtml(ogVideo)}"><meta property="og:video:type" content="video/mp4">` : ''}
+<meta http-equiv="refresh" content="0; url=${redditUrl}">
+</head><body>Redirecting to <a href="${redditUrl}">Reddit post</a></body></html>`;
+        logLinkEvent('reddit', REDDIT_EMBED_DOMAIN, false);
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(html);
+    }
+    catch (err) {
+        log.error('Reddit embed failed', { path, err: String(err) });
+        res.writeHead(302, { Location: redditUrl });
+        res.end();
+    }
+}
 const server = http_1.default.createServer(async (req, res) => {
-    if (req.url === '/health') {
+    const urlPath = req.url || '';
+    if (urlPath.startsWith('/r/')) {
+        await handleRedditEmbed(urlPath, res);
+        return;
+    }
+    if (urlPath === '/health') {
         const [instaMain, instaFallback, ...tiktokResults] = await Promise.all([
             checkService(`https://${INSTA_FIX_DOMAIN}/`),
             checkService(`https://${INSTA_FIX_FALLBACK}/`),
