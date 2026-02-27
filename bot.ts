@@ -211,50 +211,35 @@ const instaRegex = /(?:www\.)?(?:instagram\.com|instagr\.am)/;
 
 async function getWorkingInstaFixUrl(originalUrl: string): Promise<string> {
   const selfHostedUrl = originalUrl.replace(instaRegex, INSTA_FIX_DOMAIN);
-  let selfHostedDown = false;
   try {
-    const res = await fetch(selfHostedUrl, {
+    // Проверяем только достижимость сервиса (не конкретного поста) —
+    // HEAD может вернуть 302 даже когда GET отдаёт 200 с OG-тегами
+    await fetch(`https://${INSTA_FIX_DOMAIN}/`, {
       method: 'HEAD',
       redirect: 'manual',
       signal: AbortSignal.timeout(3000),
     });
-    if (res.status === 200) {
-      logLinkEvent('instagram', INSTA_FIX_DOMAIN, false);
-      return selfHostedUrl;
-    }
-    // 302 = сервис работает, но Instagram не отдал этот пост
+    logLinkEvent('instagram', INSTA_FIX_DOMAIN, false);
+    return selfHostedUrl;
   } catch {
-    selfHostedDown = true; // сетевая ошибка = сервис реально недоступен
+    // Сервис сетево недоступен — переходим на фоллбэк
   }
 
-  // Self-hosted не смог — пробуем фоллбэк
+  log.warn('Instagram self-hosted unreachable, using fallback', { url: originalUrl });
   const fallbackUrl = originalUrl.replace(instaRegex, INSTA_FIX_FALLBACK);
-  log.warn('Instagram self-hosted did not return 200, trying fallback', { url: originalUrl, selfHostedDown });
-  let fallbackDown = false;
   try {
-    const res = await fetch(fallbackUrl, {
+    await fetch(`https://${INSTA_FIX_FALLBACK}/`, {
       method: 'HEAD',
       redirect: 'manual',
       signal: AbortSignal.timeout(3000),
     });
-    if (res.status === 200) {
-      logLinkEvent('instagram', INSTA_FIX_FALLBACK, true);
-      return fallbackUrl;
-    }
-    // 302 = сервис работает, но пост недоступен
-  } catch {
-    fallbackDown = true;
-  }
+    logLinkEvent('instagram', INSTA_FIX_FALLBACK, true);
+    return fallbackUrl;
+  } catch {}
 
+  log.error('Both Instagram services are unreachable', { url: originalUrl });
   logLinkEvent('instagram', 'none', true);
-  if (selfHostedDown && fallbackDown) {
-    // Оба сервиса реально упали (сетевые ошибки)
-    log.error('Both Instagram services are down (network errors)', { url: originalUrl });
-    sendAdminAlert(`[INSTAGRAM] Оба сервиса недоступны\nURL: ${originalUrl}`).catch(() => {});
-  } else {
-    // Сервисы работают, но Instagram не даёт фетчить этот конкретный пост
-    log.warn('Instagram services up but could not fetch this post', { url: originalUrl, selfHostedDown, fallbackDown });
-  }
+  sendAdminAlert(`[INSTAGRAM] Оба сервиса недоступны\nURL: ${originalUrl}`).catch(() => {});
   return fallbackUrl;
 }
 
