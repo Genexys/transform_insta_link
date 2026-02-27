@@ -27,8 +27,8 @@ const log = {
 const INSTA_FIX_DOMAIN = 'instafix-production-c2e8.up.railway.app';
 const INSTA_FIX_FALLBACK = 'kkinstagram.com';
 
-// TikTok фоллбэк-цепочка (параллельная проверка, первый рабочий побеждает)
-const TIKTOK_FIXERS = ['tnktok.com', 'tiktxk.com', 'tiktokez.com'];
+// TikTok: tiktxk.com и tiktokez.com мертвы (2026), используем только tnktok.com
+const TIKTOK_FIXERS = ['tnktok.com'];
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 const ytdlp = new YtDlp();

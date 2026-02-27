@@ -22,7 +22,7 @@ const log = {
 };
 const INSTA_FIX_DOMAIN = 'instafix-production-c2e8.up.railway.app';
 const INSTA_FIX_FALLBACK = 'kkinstagram.com';
-const TIKTOK_FIXERS = ['tnktok.com', 'tiktxk.com', 'tiktokez.com'];
+const TIKTOK_FIXERS = ['tnktok.com'];
 const bot = new node_telegram_bot_api_1.default(BOT_TOKEN, { polling: true });
 const ytdlp = new ytdlp_nodejs_1.YtDlp();
 async function sendAdminAlert(message) {
