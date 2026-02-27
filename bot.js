@@ -16,6 +16,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const DATABASE_URL = process.env.DATABASE_URL;
 const INSTA_FIX_DOMAIN = 'instafix-production-c2e8.up.railway.app';
 const INSTA_FIX_FALLBACK = 'kkinstagram.com';
+const TIKTOK_FIXERS = ['tnktok.com', 'tiktxk.com', 'tiktokez.com'];
 const bot = new node_telegram_bot_api_1.default(BOT_TOKEN, { polling: true });
 const ytdlp = new ytdlp_nodejs_1.YtDlp();
 const dbClient = new pg_1.Client({
@@ -96,26 +97,26 @@ async function setPremium(telegramId) {
     await dbClient.query('UPDATE users SET is_premium = TRUE WHERE telegram_id = $1', [telegramId]);
 }
 function revertUrlForDownload(url) {
-    return url
+    let result = url
         .replace(INSTA_FIX_DOMAIN, 'instagram.com')
         .replace(INSTA_FIX_FALLBACK, 'instagram.com')
         .replace('fxtwitter.com', 'x.com')
-        .replace('vxtiktok.com', 'tiktok.com')
         .replace('vxreddit.com', 'reddit.com')
         .replace('vxthreads.net', 'threads.net')
         .replace('bskx.app', 'bsky.app')
         .replace('fxdeviantart.com', 'deviantart.com')
         .replace('vxvk.com', 'vk.com')
         .replace('phixiv.net', 'pixiv.net');
+    for (const fixer of TIKTOK_FIXERS) {
+        result = result.replace(fixer, 'tiktok.com');
+    }
+    return result;
 }
 function convertToInstaFix(url) {
     let convertedUrl = url
         .replace(/(?:www\.)?instagram\.com/g, INSTA_FIX_DOMAIN)
         .replace(/(?:www\.)?instagr\.am/g, INSTA_FIX_DOMAIN)
         .replace(/x\.com/g, 'fxtwitter.com')
-        .replace(/tiktok\.com/g, 'vxtiktok.com')
-        .replace(/vt\.tiktok\.com/g, 'vxtiktok.com')
-        .replace(/vm\.tiktok\.com/g, 'vxtiktok.com')
         .replace(/reddit\.com/g, 'vxreddit.com')
         .replace(/www\.reddit\.com/g, 'vxreddit.com')
         .replace(/threads\.net/g, 'vxthreads.net')
@@ -141,6 +142,26 @@ async function getWorkingInstaFixUrl(originalUrl) {
     }
     catch { }
     return originalUrl.replace(instaRegex, INSTA_FIX_FALLBACK);
+}
+const tiktokRegex = /(?:(?:www|vm|vt)\.)?tiktok\.com/;
+async function getWorkingTikTokUrl(originalUrl) {
+    const checks = TIKTOK_FIXERS.map(async (fixer) => {
+        const fixedUrl = originalUrl.replace(tiktokRegex, fixer);
+        const res = await fetch(fixedUrl, {
+            method: 'HEAD',
+            redirect: 'manual',
+            signal: AbortSignal.timeout(3000),
+        });
+        if (res.status !== 200)
+            throw new Error(`${fixer}: ${res.status}`);
+        return fixedUrl;
+    });
+    try {
+        return await Promise.any(checks);
+    }
+    catch {
+        return originalUrl.replace(tiktokRegex, TIKTOK_FIXERS[0]);
+    }
 }
 function findsocialLinks(text) {
     const words = text.split(/\s+/);
@@ -252,6 +273,9 @@ bot.on('inline_query', async (query) => {
         if (fullLink.includes('instagram.com') || fullLink.includes('instagr.am')) {
             return getWorkingInstaFixUrl(fullLink);
         }
+        if (fullLink.includes('tiktok.com')) {
+            return getWorkingTikTokUrl(fullLink);
+        }
         return convertToInstaFix(fullLink);
     }));
     let fixedText = queryText;
@@ -317,7 +341,7 @@ bot.on('message', async (msg) => {
                 platforms.add('📸 Instagram');
             else if (url.includes('fxtwitter'))
                 platforms.add('🐦 X/Twitter');
-            else if (url.includes('vxtiktok'))
+            else if (TIKTOK_FIXERS.some(f => url.includes(f)))
                 platforms.add('🎵 TikTok');
             else if (url.includes('vxreddit'))
                 platforms.add('🟠 Reddit');
