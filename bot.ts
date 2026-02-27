@@ -85,8 +85,12 @@ async function initDB() {
         username TEXT,
         downloads_count INTEGER DEFAULT 0,
         is_premium BOOLEAN DEFAULT FALSE,
+        referred_by BIGINT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+    `);
+    await dbClient.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by BIGINT;
     `);
 
     await dbClient.query(`
@@ -185,6 +189,31 @@ async function setPremium(telegramId: number) {
     'UPDATE users SET is_premium = TRUE WHERE telegram_id = $1',
     [telegramId]
   );
+}
+
+async function setReferredBy(telegramId: number, referrerId: number): Promise<void> {
+  if (!DATABASE_URL) return;
+  try {
+    await dbClient.query(
+      'UPDATE users SET referred_by = $1 WHERE telegram_id = $2 AND referred_by IS NULL',
+      [referrerId, telegramId]
+    );
+  } catch (err) {
+    log.error('setReferredBy failed', { err: String(err) });
+  }
+}
+
+async function getReferralCount(telegramId: number): Promise<number> {
+  if (!DATABASE_URL) return 0;
+  try {
+    const res = await dbClient.query(
+      'SELECT COUNT(*) FROM users WHERE referred_by = $1',
+      [telegramId]
+    );
+    return parseInt(res.rows[0].count);
+  } catch {
+    return 0;
+  }
 }
 
 async function logLinkEvent(platform: string, service: string, isFallback: boolean, chatId?: number, userId?: number) {
@@ -521,10 +550,7 @@ bot.on('inline_query', async query => {
 
   const fixedLinks = await Promise.all(socialLinks.map(async link => {
     const fullLink = link.startsWith('http') ? link : `https://${link}`;
-    if (
-      fullLink.includes('pinterest') ||
-      fullLink.includes('pin.it')
-    ) {
+    if (fullLink.includes('pinterest') || fullLink.includes('pin.it')) {
       return fullLink;
     }
     if (fullLink.includes('instagram.com') || fullLink.includes('instagr.am')) {
@@ -532,6 +558,9 @@ bot.on('inline_query', async query => {
     }
     if (fullLink.includes('tiktok.com')) {
       return getWorkingTikTokUrl(fullLink);
+    }
+    if (fullLink.includes('x.com') || fullLink.includes('twitter.com')) {
+      return getWorkingTwitterUrl(fullLink);
     }
     return convertToInstaFix(fullLink);
   }));
@@ -541,14 +570,24 @@ bot.on('inline_query', async query => {
     fixedText = fixedText.replace(originalLink, fixedLinks[index]);
   });
 
-  console.log('Исправленный текст:', fixedText);
+  const platforms = new Set<string>();
+  fixedLinks.forEach(url => {
+    if (url.includes(INSTA_FIX_DOMAIN) || url.includes(INSTA_FIX_FALLBACK)) platforms.add('📸 Instagram');
+    else if (TIKTOK_FIXERS.some(f => url.includes(f))) platforms.add('🎵 TikTok');
+    else if (TWITTER_FIXERS.some(f => url.includes(f))) platforms.add('🐦 Twitter');
+    else if (url.includes(REDDIT_EMBED_DOMAIN)) platforms.add('🟠 Reddit');
+    else if (url.includes('bskx')) platforms.add('🦋 Bluesky');
+    else if (url.includes('fixdeviantart')) platforms.add('🎨 DeviantArt');
+    else if (url.includes('phixiv')) platforms.add('🅿️ Pixiv');
+  });
+  const platformStr = platforms.size > 0 ? Array.from(platforms).join(' · ') : 'ссылка';
 
   const results = [
     {
       type: 'article' as const,
       id: 'fixed_message',
-      title: '✅ ссылки обработаны',
-      description: `${fixedLinks.length} ссылок найдено`,
+      title: `✅ ${platformStr}`,
+      description: fixedLinks.length === 1 ? fixedLinks[0] : `${fixedLinks.length} ссылок исправлено`,
       input_message_content: {
         message_text: fixedText,
         disable_web_page_preview: false,
@@ -558,7 +597,7 @@ bot.on('inline_query', async query => {
       type: 'article' as const,
       id: 'links_only',
       title: 'ℹ️ Только ссылки',
-      description: 'Отправить только ссылки',
+      description: fixedLinks.join(' '),
       input_message_content: {
         message_text: fixedLinks.join('\n'),
         disable_web_page_preview: false,
@@ -702,16 +741,55 @@ bot.on('message', async msg => {
   }
 });
 
-// bot.onText(/\/start/, msg => {
-//   const chatId = msg.chat.id;
-//   bot.sendMessage(
-//     chatId,
-//     '👋 Привет! Я бот для исправления ссылок.\n\n' +
-//       'Просто отправьте или перешлите сообщение с ссылкой, ' +
-//       'и я покажу рабочую версию с предпросмотром!\n\n' +
-//       'Добавьте меня в групповой чат, чтобы исправлять ссылки для всех участников.'
-//   );
-// });
+bot.onText(/\/start(?:\s+(.+))?/, async msg => {
+  const chatId = msg.chat.id;
+  const telegramId = msg.from?.id;
+  const param = msg.text?.split(' ')[1];
+
+  if (telegramId && param?.startsWith('ref_')) {
+    const referrerId = parseInt(param.replace('ref_', ''));
+    if (!isNaN(referrerId) && referrerId !== telegramId) {
+      await createUser(telegramId, msg.from?.username);
+      await setReferredBy(telegramId, referrerId);
+    }
+  }
+
+  await bot.sendMessage(
+    chatId,
+    '👋 Привет! Я автоматически исправляю ссылки соцсетей, чтобы они показывали превью прямо в Telegram.\n\n' +
+    'Поддерживаю: Instagram, TikTok, Twitter/X, Reddit, Bluesky, Pixiv, DeviantArt\n\n' +
+    'Добавь меня в групповой чат — и я буду исправлять ссылки автоматически.',
+    {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '➕ Добавить в чат', url: 'https://t.me/transform_inst_link_bot?startgroup=true' },
+        ]],
+      },
+    }
+  );
+});
+
+bot.onText(/\/invite/, async msg => {
+  const chatId = msg.chat.id;
+  const telegramId = msg.from?.id;
+  if (!telegramId) return;
+
+  await createUser(telegramId, msg.from?.username);
+  const count = await getReferralCount(telegramId);
+
+  const pluralize = (n: number) => {
+    if (n % 10 === 1 && n % 100 !== 11) return 'пользователь';
+    if ([2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100)) return 'пользователя';
+    return 'пользователей';
+  };
+
+  await bot.sendMessage(
+    chatId,
+    `🔗 Твоя реферальная ссылка:\nhttps://t.me/transform_inst_link_bot?start=ref_${telegramId}\n\n` +
+    `Ты пригласил: ${count} ${pluralize(count)}`,
+    { disable_web_page_preview: true }
+  );
+});
 
 bot.onText(/\/help/, msg => {
   const chatId = msg.chat.id;
