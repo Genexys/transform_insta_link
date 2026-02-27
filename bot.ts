@@ -836,7 +836,41 @@ process.on('unhandledRejection', (reason, promise) => {
   );
 });
 
-const server = http.createServer((req, res) => {
+async function checkService(url: string): Promise<'ok' | 'down'> {
+  try {
+    const res = await fetch(url, {
+      method: 'HEAD',
+      redirect: 'manual',
+      signal: AbortSignal.timeout(3000),
+    });
+    return res.status < 500 ? 'ok' : 'down';
+  } catch {
+    return 'down';
+  }
+}
+
+const server = http.createServer(async (req, res) => {
+  if (req.url === '/health') {
+    const [instaMain, instaFallback, ...tiktokResults] = await Promise.all([
+      checkService(`https://${INSTA_FIX_DOMAIN}/`),
+      checkService(`https://${INSTA_FIX_FALLBACK}/`),
+      ...TIKTOK_FIXERS.map(f => checkService(`https://${f}/`)),
+    ]);
+
+    const tiktok = Object.fromEntries(
+      TIKTOK_FIXERS.map((f, i) => [f, tiktokResults[i]])
+    );
+    const allOk = instaMain === 'ok' || instaFallback === 'ok';
+
+    res.writeHead(allOk ? 200 : 503, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: allOk ? 'ok' : 'degraded',
+      instagram: { [INSTA_FIX_DOMAIN]: instaMain, [INSTA_FIX_FALLBACK]: instaFallback },
+      tiktok,
+    }, null, 2));
+    return;
+  }
+
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('🤖 Fix Bot is running!');
 });
