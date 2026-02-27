@@ -622,11 +622,10 @@ bot.on('message', async msg => {
       ? finalText
       : `Saved ${username} a click ${platformStr}:\n\n${finalText}`;
 
+    // TikTok — единственная платформа где yt-dlp работает без авторизации (2026).
+    // Instagram/Reddit/Twitter требуют куки или заблокировали API.
     const isDownloadable = (url: string) =>
-      url.includes(INSTA_FIX_DOMAIN) || url.includes(INSTA_FIX_FALLBACK) ||
-      TIKTOK_FIXERS.some(f => url.includes(f)) ||
-      url.includes('fxtwitter.com') ||
-      url.includes(REDDIT_EMBED_DOMAIN);
+      TIKTOK_FIXERS.some(f => url.includes(f));
 
     const replyMarkup =
       fixedLinks.length === 1 && isDownloadable(fixedLinks[0])
