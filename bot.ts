@@ -11,6 +11,17 @@ dotenv.config();
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const DATABASE_URL = process.env.DATABASE_URL;
+const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID;
+
+// --- Structured logger ---
+const log = {
+  info: (msg: string, meta?: object) =>
+    console.log(JSON.stringify({ level: 'info', msg, ...meta, ts: new Date().toISOString() })),
+  warn: (msg: string, meta?: object) =>
+    console.warn(JSON.stringify({ level: 'warn', msg, ...meta, ts: new Date().toISOString() })),
+  error: (msg: string, meta?: object) =>
+    console.error(JSON.stringify({ level: 'error', msg, ...meta, ts: new Date().toISOString() })),
+};
 
 // Self-hosted InstaFix (приоритет) + публичный фоллбэк
 const INSTA_FIX_DOMAIN = 'instafix-production-c2e8.up.railway.app';
@@ -21,6 +32,15 @@ const TIKTOK_FIXERS = ['tnktok.com', 'tiktxk.com', 'tiktokez.com'];
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 const ytdlp = new YtDlp();
+
+async function sendAdminAlert(message: string) {
+  if (!ADMIN_CHAT_ID) return;
+  try {
+    await bot.sendMessage(ADMIN_CHAT_ID, `🚨 ${message}`);
+  } catch (err) {
+    log.error('Failed to send admin alert', { err: String(err) });
+  }
+}
 
 // --- PostgreSQL Setup ---
 const dbClient = new Client({
@@ -62,9 +82,18 @@ async function initDB() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-    console.log('✅ Таблицы users и error_logs проверены/созданы');
+    await dbClient.query(`
+      CREATE TABLE IF NOT EXISTS link_events (
+        id SERIAL PRIMARY KEY,
+        platform TEXT,
+        service TEXT,
+        is_fallback BOOLEAN,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+    log.info('DB tables ready');
   } catch (err) {
-    console.error('❌ Ошибка подключения к БД:', err);
+    log.error('DB connection failed', { err: String(err) });
   }
 }
 
@@ -126,6 +155,18 @@ async function setPremium(telegramId: number) {
   );
 }
 
+async function logLinkEvent(platform: string, service: string, isFallback: boolean) {
+  if (!DATABASE_URL) return;
+  try {
+    await dbClient.query(
+      'INSERT INTO link_events (platform, service, is_fallback) VALUES ($1, $2, $3)',
+      [platform, service, isFallback]
+    );
+  } catch (err) {
+    log.error('Failed to log link event', { err: String(err) });
+  }
+}
+
 // --- Logic ---
 
 function revertUrlForDownload(url: string): string {
@@ -176,10 +217,32 @@ async function getWorkingInstaFixUrl(originalUrl: string): Promise<string> {
       redirect: 'manual',
       signal: AbortSignal.timeout(3000),
     });
-    if (res.status === 200) return selfHostedUrl;
+    if (res.status === 200) {
+      logLinkEvent('instagram', INSTA_FIX_DOMAIN, false);
+      return selfHostedUrl;
+    }
   } catch {}
-  // Self-hosted не смог — фоллбэк на публичный сервис
-  return originalUrl.replace(instaRegex, INSTA_FIX_FALLBACK);
+
+  // Self-hosted не смог — пробуем фоллбэк
+  const fallbackUrl = originalUrl.replace(instaRegex, INSTA_FIX_FALLBACK);
+  log.warn('Instagram self-hosted failed, trying fallback', { url: originalUrl });
+  try {
+    const res = await fetch(fallbackUrl, {
+      method: 'HEAD',
+      redirect: 'manual',
+      signal: AbortSignal.timeout(3000),
+    });
+    if (res.status === 200) {
+      logLinkEvent('instagram', INSTA_FIX_FALLBACK, true);
+      return fallbackUrl;
+    }
+  } catch {}
+
+  // Оба упали
+  log.error('Both Instagram services failed', { url: originalUrl });
+  logLinkEvent('instagram', 'none', true);
+  sendAdminAlert(`[INSTAGRAM] Оба сервиса недоступны\nURL: ${originalUrl}`).catch(() => {});
+  return fallbackUrl;
 }
 
 const tiktokRegex = /(?:(?:www|vm|vt)\.)?tiktok\.com/;
@@ -197,9 +260,14 @@ async function getWorkingTikTokUrl(originalUrl: string): Promise<string> {
     return fixedUrl;
   });
   try {
-    return await Promise.any(checks);
+    const result = await Promise.any(checks);
+    const service = TIKTOK_FIXERS.find(f => result.includes(f)) ?? TIKTOK_FIXERS[0];
+    logLinkEvent('tiktok', service, service !== TIKTOK_FIXERS[0]);
+    return result;
   } catch {
     // Все недоступны — используем первый как best effort
+    log.warn('All TikTok fixers failed', { url: originalUrl });
+    logLinkEvent('tiktok', 'none', true);
     return originalUrl.replace(tiktokRegex, TIKTOK_FIXERS[0]);
   }
 }
@@ -467,6 +535,10 @@ bot.on('message', async msg => {
       if (fullLink.includes('instagram.com') || fullLink.includes('instagr.am')) {
         return getWorkingInstaFixUrl(fullLink);
       }
+      if (fullLink.includes('tiktok.com')) {
+        return getWorkingTikTokUrl(fullLink);
+      }
+      logLinkEvent('other', 'converted', false);
       return convertToInstaFix(fullLink);
     }));
 
@@ -824,17 +896,29 @@ bot.on('polling_error', error => {
 
 // Global error handling
 process.on('uncaughtException', error => {
-  console.error('CRITICAL ERROR (uncaughtException):', error);
+  log.error('uncaughtException', { message: error.message, stack: error.stack });
+  sendAdminAlert(`[CRITICAL] uncaughtException:\n${error.message}`).catch(() => {});
 });
 
-process.on('unhandledRejection', (reason, promise) => {
-  console.error(
-    'CRITICAL ERROR (unhandledRejection):',
-    promise,
-    'reason:',
-    reason
-  );
+process.on('unhandledRejection', (reason) => {
+  log.error('unhandledRejection', { reason: String(reason) });
+  sendAdminAlert(`[CRITICAL] unhandledRejection:\n${String(reason)}`).catch(() => {});
 });
+
+async function runHourlyHealthCheck() {
+  const [instaMain, instaFallback, ...tiktokResults] = await Promise.all([
+    checkService(`https://${INSTA_FIX_DOMAIN}/`),
+    checkService(`https://${INSTA_FIX_FALLBACK}/`),
+    ...TIKTOK_FIXERS.map(f => checkService(`https://${f}/`)),
+  ]);
+  const e = (s: string) => s === 'ok' ? '✅' : '❌';
+  const tiktokLines = TIKTOK_FIXERS.map((f, i) => `${e(tiktokResults[i])} ${f}`).join('\n');
+  await sendAdminAlert(
+    `📊 Статус сервисов:\n\nInstagram:\n${e(instaMain)} ${INSTA_FIX_DOMAIN}\n${e(instaFallback)} ${INSTA_FIX_FALLBACK}\n\nTikTok:\n${tiktokLines}`
+  );
+}
+
+setInterval(runHourlyHealthCheck, 60 * 60 * 1000);
 
 async function checkService(url: string): Promise<'ok' | 'down'> {
   try {
@@ -862,11 +946,38 @@ const server = http.createServer(async (req, res) => {
     );
     const allOk = instaMain === 'ok' || instaFallback === 'ok';
 
+    let stats = null;
+    if (DATABASE_URL) {
+      try {
+        const result = await dbClient.query(`
+          SELECT
+            COUNT(*)::int as total,
+            COUNT(*) FILTER (WHERE platform = 'instagram')::int as instagram,
+            COUNT(*) FILTER (WHERE platform = 'tiktok')::int as tiktok,
+            COUNT(*) FILTER (WHERE platform = 'other')::int as other,
+            ROUND(100.0 * COUNT(*) FILTER (WHERE is_fallback) / NULLIF(COUNT(*), 0))::int as fallback_pct
+          FROM link_events
+          WHERE created_at > NOW() - INTERVAL '24 hours'
+        `);
+        const r = result.rows[0];
+        stats = {
+          last_24h: {
+            total: r.total,
+            instagram: r.instagram,
+            tiktok: r.tiktok,
+            other: r.other,
+            fallback_rate: `${r.fallback_pct ?? 0}%`,
+          },
+        };
+      } catch {}
+    }
+
     res.writeHead(allOk ? 200 : 503, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       status: allOk ? 'ok' : 'degraded',
       instagram: { [INSTA_FIX_DOMAIN]: instaMain, [INSTA_FIX_FALLBACK]: instaFallback },
       tiktok,
+      ...(stats && { stats }),
     }, null, 2));
     return;
   }
