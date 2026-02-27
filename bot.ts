@@ -34,7 +34,7 @@ const TIKTOK_FIXERS = ['tnktok.com'];
 const REDDIT_EMBED_DOMAIN = 'transforminstalink-production.up.railway.app';
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
-const ytdlp = new YtDlp();
+const ytdlp = new YtDlp({ binaryPath: 'yt-dlp', ffmpegPath: 'ffmpeg' });
 
 async function sendAdminAlert(message: string) {
   if (!ADMIN_CHAT_ID) return;
@@ -622,20 +622,20 @@ bot.on('message', async msg => {
       ? finalText
       : `Saved ${username} a click ${platformStr}:\n\n${finalText}`;
 
-    // const replyMarkup =
-    //   fixedLinks.length === 1
-    //     ? {
-    //         inline_keyboard: [
-    //           [
-    //             {
-    //               text: '📥 Скачать видео/фото',
-    //               callback_data: 'download_video',
-    //             },
-    //           ],
-    //         ],
-    //       }
-    //     : undefined;
-    const replyMarkup = undefined;
+    const isDownloadable = (url: string) =>
+      url.includes(INSTA_FIX_DOMAIN) || url.includes(INSTA_FIX_FALLBACK) ||
+      TIKTOK_FIXERS.some(f => url.includes(f)) ||
+      url.includes('fxtwitter.com') ||
+      url.includes(REDDIT_EMBED_DOMAIN);
+
+    const replyMarkup =
+      fixedLinks.length === 1 && isDownloadable(fixedLinks[0])
+        ? {
+            inline_keyboard: [[
+              { text: '📥 Скачать видео/фото', callback_data: 'download_video' },
+            ]],
+          }
+        : undefined;
 
     if (isGroup) {
       try {
@@ -959,7 +959,7 @@ bot.on('callback_query', async query => {
       console.log(`Downloading ${originalUrl} to ${tempFilePath}`);
 
       // Пробуем скачать
-      await ytdlp.download(originalUrl, {
+      await ytdlp.downloadAsync(originalUrl, {
         output: tempFilePath,
         format: 'best[ext=mp4]/best',
         maxFilesize: '50M',
