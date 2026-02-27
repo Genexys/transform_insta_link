@@ -211,6 +211,7 @@ const instaRegex = /(?:www\.)?(?:instagram\.com|instagr\.am)/;
 
 async function getWorkingInstaFixUrl(originalUrl: string): Promise<string> {
   const selfHostedUrl = originalUrl.replace(instaRegex, INSTA_FIX_DOMAIN);
+  let selfHostedDown = false;
   try {
     const res = await fetch(selfHostedUrl, {
       method: 'HEAD',
@@ -221,11 +222,15 @@ async function getWorkingInstaFixUrl(originalUrl: string): Promise<string> {
       logLinkEvent('instagram', INSTA_FIX_DOMAIN, false);
       return selfHostedUrl;
     }
-  } catch {}
+    // 302 = сервис работает, но Instagram не отдал этот пост
+  } catch {
+    selfHostedDown = true; // сетевая ошибка = сервис реально недоступен
+  }
 
   // Self-hosted не смог — пробуем фоллбэк
   const fallbackUrl = originalUrl.replace(instaRegex, INSTA_FIX_FALLBACK);
-  log.warn('Instagram self-hosted failed, trying fallback', { url: originalUrl });
+  log.warn('Instagram self-hosted did not return 200, trying fallback', { url: originalUrl, selfHostedDown });
+  let fallbackDown = false;
   try {
     const res = await fetch(fallbackUrl, {
       method: 'HEAD',
@@ -236,12 +241,20 @@ async function getWorkingInstaFixUrl(originalUrl: string): Promise<string> {
       logLinkEvent('instagram', INSTA_FIX_FALLBACK, true);
       return fallbackUrl;
     }
-  } catch {}
+    // 302 = сервис работает, но пост недоступен
+  } catch {
+    fallbackDown = true;
+  }
 
-  // Оба упали
-  log.error('Both Instagram services failed', { url: originalUrl });
   logLinkEvent('instagram', 'none', true);
-  sendAdminAlert(`[INSTAGRAM] Оба сервиса недоступны\nURL: ${originalUrl}`).catch(() => {});
+  if (selfHostedDown && fallbackDown) {
+    // Оба сервиса реально упали (сетевые ошибки)
+    log.error('Both Instagram services are down (network errors)', { url: originalUrl });
+    sendAdminAlert(`[INSTAGRAM] Оба сервиса недоступны\nURL: ${originalUrl}`).catch(() => {});
+  } else {
+    // Сервисы работают, но Instagram не даёт фетчить этот конкретный пост
+    log.warn('Instagram services up but could not fetch this post', { url: originalUrl, selfHostedDown, fallbackDown });
+  }
   return fallbackUrl;
 }
 

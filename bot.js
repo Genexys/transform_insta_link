@@ -166,6 +166,7 @@ function convertToInstaFix(url) {
 const instaRegex = /(?:www\.)?(?:instagram\.com|instagr\.am)/;
 async function getWorkingInstaFixUrl(originalUrl) {
     const selfHostedUrl = originalUrl.replace(instaRegex, INSTA_FIX_DOMAIN);
+    let selfHostedDown = false;
     try {
         const res = await fetch(selfHostedUrl, {
             method: 'HEAD',
@@ -177,9 +178,12 @@ async function getWorkingInstaFixUrl(originalUrl) {
             return selfHostedUrl;
         }
     }
-    catch { }
+    catch {
+        selfHostedDown = true;
+    }
     const fallbackUrl = originalUrl.replace(instaRegex, INSTA_FIX_FALLBACK);
-    log.warn('Instagram self-hosted failed, trying fallback', { url: originalUrl });
+    log.warn('Instagram self-hosted did not return 200, trying fallback', { url: originalUrl, selfHostedDown });
+    let fallbackDown = false;
     try {
         const res = await fetch(fallbackUrl, {
             method: 'HEAD',
@@ -191,10 +195,17 @@ async function getWorkingInstaFixUrl(originalUrl) {
             return fallbackUrl;
         }
     }
-    catch { }
-    log.error('Both Instagram services failed', { url: originalUrl });
+    catch {
+        fallbackDown = true;
+    }
     logLinkEvent('instagram', 'none', true);
-    sendAdminAlert(`[INSTAGRAM] Оба сервиса недоступны\nURL: ${originalUrl}`).catch(() => { });
+    if (selfHostedDown && fallbackDown) {
+        log.error('Both Instagram services are down (network errors)', { url: originalUrl });
+        sendAdminAlert(`[INSTAGRAM] Оба сервиса недоступны\nURL: ${originalUrl}`).catch(() => { });
+    }
+    else {
+        log.warn('Instagram services up but could not fetch this post', { url: originalUrl, selfHostedDown, fallbackDown });
+    }
     return fallbackUrl;
 }
 const tiktokRegex = /(?:(?:www|vm|vt)\.)?tiktok\.com/;
