@@ -23,12 +23,26 @@ const log = {
     console.error(JSON.stringify({ level: 'error', msg, ...meta, ts: new Date().toISOString() })),
 };
 
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+async function fetchWithRetry(url: string, opts: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, opts);
+  } catch {
+    await sleep(300);
+    return await fetch(url, opts);
+  }
+}
+
 // Self-hosted InstaFix (приоритет) + публичный фоллбэк
 const INSTA_FIX_DOMAIN = 'instafix-production-c2e8.up.railway.app';
 const INSTA_FIX_FALLBACK = 'kkinstagram.com';
 
-// TikTok: tiktxk.com и tiktokez.com мертвы (2026), используем только tnktok.com
-const TIKTOK_FIXERS = ['tnktok.com'];
+// TikTok: tnktok.com (primary, og:video), vxtiktok.com (fallback, og:title only)
+const TIKTOK_FIXERS = ['tnktok.com', 'vxtiktok.com'];
+
+// Twitter: fxtwitter.com (primary), fixupx.com (fallback)
+const TWITTER_FIXERS = ['fxtwitter.com', 'fixupx.com'];
 
 // Self-hosted Reddit embed (наш бот на Railway — свой IP, своя квота)
 const REDDIT_EMBED_DOMAIN = 'transforminstalink-production.up.railway.app';
@@ -221,7 +235,6 @@ function revertUrlForDownload(url: string): string {
   let result = url
     .replace(INSTA_FIX_DOMAIN, 'instagram.com')
     .replace(INSTA_FIX_FALLBACK, 'instagram.com')
-    .replace('fxtwitter.com', 'x.com')
     .replace(REDDIT_EMBED_DOMAIN, 'reddit.com')
     .replace('vxthreads.net', 'threads.net')
     .replace('bskx.app', 'bsky.app')
@@ -231,6 +244,9 @@ function revertUrlForDownload(url: string): string {
   for (const fixer of TIKTOK_FIXERS) {
     result = result.replace(fixer, 'tiktok.com');
   }
+  for (const fixer of TWITTER_FIXERS) {
+    result = result.replace(fixer, 'x.com');
+  }
   return result;
 }
 
@@ -238,7 +254,6 @@ function convertToInstaFix(url: string): string {
   let convertedUrl = url
     .replace(/(?:www\.)?instagram\.com/g, INSTA_FIX_DOMAIN)
     .replace(/(?:www\.)?instagr\.am/g, INSTA_FIX_DOMAIN)
-    .replace(/x\.com/g, 'fxtwitter.com')
     .replace(/(?:www\.)?reddit\.com/g, REDDIT_EMBED_DOMAIN)
     // vxthreads.net down (2026), threads.net передаём без изменений
     .replace(/bsky\.app/g, 'bskx.app')
@@ -261,7 +276,7 @@ async function getWorkingInstaFixUrl(originalUrl: string, chatId?: number, userI
   try {
     // Проверяем только достижимость сервиса (не конкретного поста) —
     // HEAD может вернуть 302 даже когда GET отдаёт 200 с OG-тегами
-    await fetch(`https://${INSTA_FIX_DOMAIN}/`, {
+    await fetchWithRetry(`https://${INSTA_FIX_DOMAIN}/`, {
       method: 'HEAD',
       redirect: 'manual',
       signal: AbortSignal.timeout(3000),
@@ -275,7 +290,7 @@ async function getWorkingInstaFixUrl(originalUrl: string, chatId?: number, userI
   log.warn('Instagram self-hosted unreachable, using fallback', { url: originalUrl });
   const fallbackUrl = originalUrl.replace(instaRegex, INSTA_FIX_FALLBACK);
   try {
-    await fetch(`https://${INSTA_FIX_FALLBACK}/`, {
+    await fetchWithRetry(`https://${INSTA_FIX_FALLBACK}/`, {
       method: 'HEAD',
       redirect: 'manual',
       signal: AbortSignal.timeout(3000),
@@ -296,7 +311,7 @@ async function getWorkingTikTokUrl(originalUrl: string, chatId?: number, userId?
   // Все сервисы проверяем параллельно — побеждает первый вернувший 200
   const checks = TIKTOK_FIXERS.map(async fixer => {
     const fixedUrl = originalUrl.replace(tiktokRegex, fixer);
-    const res = await fetch(fixedUrl, {
+    const res = await fetchWithRetry(fixedUrl, {
       method: 'HEAD',
       redirect: 'manual',
       signal: AbortSignal.timeout(3000),
@@ -314,6 +329,31 @@ async function getWorkingTikTokUrl(originalUrl: string, chatId?: number, userId?
     log.warn('All TikTok fixers failed', { url: originalUrl });
     logLinkEvent('tiktok', 'none', true, chatId, userId);
     return originalUrl.replace(tiktokRegex, TIKTOK_FIXERS[0]);
+  }
+}
+
+const twitterRegex = /(?:(?:www|mobile)\.)?(?:x|twitter)\.com/;
+
+async function getWorkingTwitterUrl(originalUrl: string, chatId?: number, userId?: number): Promise<string> {
+  const checks = TWITTER_FIXERS.map(async fixer => {
+    const fixedUrl = originalUrl.replace(twitterRegex, fixer);
+    const res = await fetchWithRetry(fixedUrl, {
+      method: 'HEAD',
+      redirect: 'manual',
+      signal: AbortSignal.timeout(3000),
+    });
+    if (res.status >= 500) throw new Error(`${fixer}: ${res.status}`);
+    return fixedUrl;
+  });
+  try {
+    const result = await Promise.any(checks);
+    const service = TWITTER_FIXERS.find(f => result.includes(f)) ?? TWITTER_FIXERS[0];
+    logLinkEvent('twitter', service, service !== TWITTER_FIXERS[0], chatId, userId);
+    return result;
+  } catch {
+    log.warn('All Twitter fixers failed', { url: originalUrl });
+    logLinkEvent('twitter', 'none', true, chatId, userId);
+    return originalUrl.replace(twitterRegex, TWITTER_FIXERS[0]);
   }
 }
 
@@ -347,7 +387,7 @@ function findsocialLinks(text: string): string[] {
       cleanWord.includes('x.com') &&
       (cleanWord.match(/x\.com\/(?:[A-Za-z0-9_]+)\/status\/[0-9]+/) ||
         cleanWord.match(/x\.com\/(?:[A-Za-z0-9_]+)\/replies/)) &&
-      !cleanWord.includes('fxtwitter.com')
+      !TWITTER_FIXERS.some(f => cleanWord.includes(f))
     ) {
       socialLinks.push(cleanWord);
     }
@@ -578,9 +618,11 @@ bot.on('message', async msg => {
       if (fullLink.includes('tiktok.com')) {
         return getWorkingTikTokUrl(fullLink, isGroup ? chatId : undefined, msgUserId);
       }
+      if (fullLink.includes('x.com') || fullLink.includes('twitter.com')) {
+        return getWorkingTwitterUrl(fullLink, isGroup ? chatId : undefined, msgUserId);
+      }
       let platform = 'other';
-      if (fullLink.includes('x.com') || fullLink.includes('twitter.com')) platform = 'twitter';
-      else if (fullLink.includes('reddit.com')) platform = 'reddit';
+      if (fullLink.includes('reddit.com')) platform = 'reddit';
       else if (fullLink.includes('bsky.app')) platform = 'bluesky';
       else if (fullLink.includes('deviantart.com')) platform = 'deviantart';
       else if (fullLink.includes('pixiv.net')) platform = 'pixiv';
@@ -1176,15 +1218,31 @@ process.on('unhandledRejection', (reason) => {
 });
 
 async function runHourlyHealthCheck() {
-  const [instaMain, instaFallback, ...tiktokResults] = await Promise.all([
+  const e = (s: string) => s === 'ok' ? '✅' : '❌';
+  const [instaMain, instaFallback, ...rest] = await Promise.all([
     checkService(`https://${INSTA_FIX_DOMAIN}/`),
     checkService(`https://${INSTA_FIX_FALLBACK}/`),
     ...TIKTOK_FIXERS.map(f => checkService(`https://${f}/`)),
+    ...TWITTER_FIXERS.map(f => checkService(`https://${f}/`)),
+    checkService('https://bskx.app/'),
+    checkService('https://fixdeviantart.com/'),
+    checkService('https://phixiv.net/'),
   ]);
-  const e = (s: string) => s === 'ok' ? '✅' : '❌';
+  const tiktokCount = TIKTOK_FIXERS.length;
+  const twitterCount = TWITTER_FIXERS.length;
+  const tiktokResults = rest.slice(0, tiktokCount);
+  const twitterResults = rest.slice(tiktokCount, tiktokCount + twitterCount);
+  const [bluesky, deviantart, pixiv] = rest.slice(tiktokCount + twitterCount);
+
   const tiktokLines = TIKTOK_FIXERS.map((f, i) => `${e(tiktokResults[i])} ${f}`).join('\n');
+  const twitterLines = TWITTER_FIXERS.map((f, i) => `${e(twitterResults[i])} ${f}`).join('\n');
+
   await sendAdminAlert(
-    `📊 Статус сервисов:\n\nInstagram:\n${e(instaMain)} ${INSTA_FIX_DOMAIN}\n${e(instaFallback)} ${INSTA_FIX_FALLBACK}\n\nTikTok:\n${tiktokLines}`
+    `📊 Статус сервисов:\n\n` +
+    `Instagram:\n${e(instaMain)} ${INSTA_FIX_DOMAIN}\n${e(instaFallback)} ${INSTA_FIX_FALLBACK}\n\n` +
+    `TikTok:\n${tiktokLines}\n\n` +
+    `Twitter:\n${twitterLines}\n\n` +
+    `Другие:\n${e(bluesky)} bskx.app\n${e(deviantart)} fixdeviantart.com\n${e(pixiv)} phixiv.net`
   );
 }
 
