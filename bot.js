@@ -20,12 +20,23 @@ const log = {
     warn: (msg, meta) => console.warn(JSON.stringify({ level: 'warn', msg, ...meta, ts: new Date().toISOString() })),
     error: (msg, meta) => console.error(JSON.stringify({ level: 'error', msg, ...meta, ts: new Date().toISOString() })),
 };
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+async function fetchWithRetry(url, opts) {
+    try {
+        return await fetch(url, opts);
+    }
+    catch {
+        await sleep(300);
+        return await fetch(url, opts);
+    }
+}
 const INSTA_FIX_DOMAIN = 'instafix-production-c2e8.up.railway.app';
 const INSTA_FIX_FALLBACK = 'kkinstagram.com';
-const TIKTOK_FIXERS = ['tnktok.com'];
+const TIKTOK_FIXERS = ['tnktok.com', 'vxtiktok.com'];
+const TWITTER_FIXERS = ['fxtwitter.com', 'fixupx.com'];
 const REDDIT_EMBED_DOMAIN = 'transforminstalink-production.up.railway.app';
 const bot = new node_telegram_bot_api_1.default(BOT_TOKEN, { polling: true });
-const ytdlp = new ytdlp_nodejs_1.YtDlp();
+const ytdlp = new ytdlp_nodejs_1.YtDlp({ binaryPath: 'yt-dlp', ffmpegPath: 'ffmpeg' });
 async function sendAdminAlert(message) {
     if (!ADMIN_CHAT_ID)
         return;
@@ -57,8 +68,12 @@ async function initDB() {
         username TEXT,
         downloads_count INTEGER DEFAULT 0,
         is_premium BOOLEAN DEFAULT FALSE,
+        referred_by BIGINT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+    `);
+        await dbClient.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by BIGINT;
     `);
         await dbClient.query(`
       CREATE TABLE IF NOT EXISTS error_logs (
@@ -76,6 +91,21 @@ async function initDB() {
         platform TEXT,
         service TEXT,
         is_fallback BOOLEAN,
+        chat_id BIGINT,
+        user_id BIGINT,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+        await dbClient.query(`
+      ALTER TABLE link_events
+        ADD COLUMN IF NOT EXISTS chat_id BIGINT,
+        ADD COLUMN IF NOT EXISTS user_id BIGINT;
+    `);
+        await dbClient.query(`
+      CREATE TABLE IF NOT EXISTS chat_settings (
+        chat_id BIGINT PRIMARY KEY,
+        is_premium BOOLEAN DEFAULT FALSE,
+        quiet_mode BOOLEAN DEFAULT FALSE,
         created_at TIMESTAMP DEFAULT NOW()
       );
     `);
@@ -122,21 +152,67 @@ async function setPremium(telegramId) {
         return;
     await dbClient.query('UPDATE users SET is_premium = TRUE WHERE telegram_id = $1', [telegramId]);
 }
-async function logLinkEvent(platform, service, isFallback) {
+async function setReferredBy(telegramId, referrerId) {
     if (!DATABASE_URL)
         return;
     try {
-        await dbClient.query('INSERT INTO link_events (platform, service, is_fallback) VALUES ($1, $2, $3)', [platform, service, isFallback]);
+        await dbClient.query('UPDATE users SET referred_by = $1 WHERE telegram_id = $2 AND referred_by IS NULL', [referrerId, telegramId]);
+    }
+    catch (err) {
+        log.error('setReferredBy failed', { err: String(err) });
+    }
+}
+async function getReferralCount(telegramId) {
+    if (!DATABASE_URL)
+        return 0;
+    try {
+        const res = await dbClient.query('SELECT COUNT(*) FROM users WHERE referred_by = $1', [telegramId]);
+        return parseInt(res.rows[0].count);
+    }
+    catch {
+        return 0;
+    }
+}
+async function logLinkEvent(platform, service, isFallback, chatId, userId) {
+    if (!DATABASE_URL)
+        return;
+    try {
+        await dbClient.query('INSERT INTO link_events (platform, service, is_fallback, chat_id, user_id) VALUES ($1, $2, $3, $4, $5)', [platform, service, isFallback, chatId ?? null, userId ?? null]);
     }
     catch (err) {
         log.error('Failed to log link event', { err: String(err) });
+    }
+}
+async function getChatSettings(chatId) {
+    if (!DATABASE_URL)
+        return null;
+    try {
+        const res = await dbClient.query('SELECT is_premium, quiet_mode FROM chat_settings WHERE chat_id = $1', [chatId]);
+        return res.rows[0] ?? null;
+    }
+    catch (err) {
+        log.error('getChatSettings failed', { err: String(err) });
+        return null;
+    }
+}
+async function upsertChatSettings(chatId, patch) {
+    if (!DATABASE_URL)
+        return;
+    try {
+        await dbClient.query(`INSERT INTO chat_settings (chat_id, is_premium, quiet_mode)
+       VALUES ($1, COALESCE($2, FALSE), COALESCE($3, FALSE))
+       ON CONFLICT (chat_id) DO UPDATE SET
+         is_premium = CASE WHEN $2::boolean IS NOT NULL THEN $2 ELSE chat_settings.is_premium END,
+         quiet_mode = CASE WHEN $3::boolean IS NOT NULL THEN $3 ELSE chat_settings.quiet_mode END`, [chatId, patch.is_premium ?? null, patch.quiet_mode ?? null]);
+    }
+    catch (err) {
+        log.error('upsertChatSettings failed', { err: String(err) });
     }
 }
 function revertUrlForDownload(url) {
     let result = url
         .replace(INSTA_FIX_DOMAIN, 'instagram.com')
         .replace(INSTA_FIX_FALLBACK, 'instagram.com')
-        .replace('fxtwitter.com', 'x.com')
         .replace(REDDIT_EMBED_DOMAIN, 'reddit.com')
         .replace('vxthreads.net', 'threads.net')
         .replace('bskx.app', 'bsky.app')
@@ -146,13 +222,15 @@ function revertUrlForDownload(url) {
     for (const fixer of TIKTOK_FIXERS) {
         result = result.replace(fixer, 'tiktok.com');
     }
+    for (const fixer of TWITTER_FIXERS) {
+        result = result.replace(fixer, 'x.com');
+    }
     return result;
 }
 function convertToInstaFix(url) {
     let convertedUrl = url
         .replace(/(?:www\.)?instagram\.com/g, INSTA_FIX_DOMAIN)
         .replace(/(?:www\.)?instagr\.am/g, INSTA_FIX_DOMAIN)
-        .replace(/x\.com/g, 'fxtwitter.com')
         .replace(/(?:www\.)?reddit\.com/g, REDDIT_EMBED_DOMAIN)
         .replace(/bsky\.app/g, 'bskx.app')
         .replace(/deviantart\.com/g, 'fixdeviantart.com')
@@ -163,15 +241,15 @@ function convertToInstaFix(url) {
     return convertedUrl;
 }
 const instaRegex = /(?:www\.)?(?:instagram\.com|instagr\.am)/;
-async function getWorkingInstaFixUrl(originalUrl) {
+async function getWorkingInstaFixUrl(originalUrl, chatId, userId) {
     const selfHostedUrl = originalUrl.replace(instaRegex, INSTA_FIX_DOMAIN);
     try {
-        await fetch(`https://${INSTA_FIX_DOMAIN}/`, {
+        await fetchWithRetry(`https://${INSTA_FIX_DOMAIN}/`, {
             method: 'HEAD',
             redirect: 'manual',
             signal: AbortSignal.timeout(3000),
         });
-        logLinkEvent('instagram', INSTA_FIX_DOMAIN, false);
+        logLinkEvent('instagram', INSTA_FIX_DOMAIN, false, chatId, userId);
         return selfHostedUrl;
     }
     catch {
@@ -179,25 +257,25 @@ async function getWorkingInstaFixUrl(originalUrl) {
     log.warn('Instagram self-hosted unreachable, using fallback', { url: originalUrl });
     const fallbackUrl = originalUrl.replace(instaRegex, INSTA_FIX_FALLBACK);
     try {
-        await fetch(`https://${INSTA_FIX_FALLBACK}/`, {
+        await fetchWithRetry(`https://${INSTA_FIX_FALLBACK}/`, {
             method: 'HEAD',
             redirect: 'manual',
             signal: AbortSignal.timeout(3000),
         });
-        logLinkEvent('instagram', INSTA_FIX_FALLBACK, true);
+        logLinkEvent('instagram', INSTA_FIX_FALLBACK, true, chatId, userId);
         return fallbackUrl;
     }
     catch { }
     log.error('Both Instagram services are unreachable', { url: originalUrl });
-    logLinkEvent('instagram', 'none', true);
+    logLinkEvent('instagram', 'none', true, chatId, userId);
     sendAdminAlert(`[INSTAGRAM] Оба сервиса недоступны\nURL: ${originalUrl}`).catch(() => { });
     return fallbackUrl;
 }
 const tiktokRegex = /(?:(?:www|vm|vt)\.)?tiktok\.com/;
-async function getWorkingTikTokUrl(originalUrl) {
+async function getWorkingTikTokUrl(originalUrl, chatId, userId) {
     const checks = TIKTOK_FIXERS.map(async (fixer) => {
         const fixedUrl = originalUrl.replace(tiktokRegex, fixer);
-        const res = await fetch(fixedUrl, {
+        const res = await fetchWithRetry(fixedUrl, {
             method: 'HEAD',
             redirect: 'manual',
             signal: AbortSignal.timeout(3000),
@@ -209,13 +287,38 @@ async function getWorkingTikTokUrl(originalUrl) {
     try {
         const result = await Promise.any(checks);
         const service = TIKTOK_FIXERS.find(f => result.includes(f)) ?? TIKTOK_FIXERS[0];
-        logLinkEvent('tiktok', service, service !== TIKTOK_FIXERS[0]);
+        logLinkEvent('tiktok', service, service !== TIKTOK_FIXERS[0], chatId, userId);
         return result;
     }
     catch {
         log.warn('All TikTok fixers failed', { url: originalUrl });
-        logLinkEvent('tiktok', 'none', true);
+        logLinkEvent('tiktok', 'none', true, chatId, userId);
         return originalUrl.replace(tiktokRegex, TIKTOK_FIXERS[0]);
+    }
+}
+const twitterRegex = /(?:(?:www|mobile)\.)?(?:x|twitter)\.com/;
+async function getWorkingTwitterUrl(originalUrl, chatId, userId) {
+    const checks = TWITTER_FIXERS.map(async (fixer) => {
+        const fixedUrl = originalUrl.replace(twitterRegex, fixer);
+        const res = await fetchWithRetry(fixedUrl, {
+            method: 'HEAD',
+            redirect: 'manual',
+            signal: AbortSignal.timeout(3000),
+        });
+        if (res.status >= 500)
+            throw new Error(`${fixer}: ${res.status}`);
+        return fixedUrl;
+    });
+    try {
+        const result = await Promise.any(checks);
+        const service = TWITTER_FIXERS.find(f => result.includes(f)) ?? TWITTER_FIXERS[0];
+        logLinkEvent('twitter', service, service !== TWITTER_FIXERS[0], chatId, userId);
+        return result;
+    }
+    catch {
+        log.warn('All Twitter fixers failed', { url: originalUrl });
+        logLinkEvent('twitter', 'none', true, chatId, userId);
+        return originalUrl.replace(twitterRegex, TWITTER_FIXERS[0]);
     }
 }
 function findsocialLinks(text) {
@@ -238,7 +341,7 @@ function findsocialLinks(text) {
         if (cleanWord.includes('x.com') &&
             (cleanWord.match(/x\.com\/(?:[A-Za-z0-9_]+)\/status\/[0-9]+/) ||
                 cleanWord.match(/x\.com\/(?:[A-Za-z0-9_]+)\/replies/)) &&
-            !cleanWord.includes('fxtwitter.com')) {
+            !TWITTER_FIXERS.some(f => cleanWord.includes(f))) {
             socialLinks.push(cleanWord);
         }
         if (((cleanWord.includes('tiktok.com') &&
@@ -314,8 +417,7 @@ bot.on('inline_query', async (query) => {
     }
     const fixedLinks = await Promise.all(socialLinks.map(async (link) => {
         const fullLink = link.startsWith('http') ? link : `https://${link}`;
-        if (fullLink.includes('pinterest') ||
-            fullLink.includes('pin.it')) {
+        if (fullLink.includes('pinterest') || fullLink.includes('pin.it')) {
             return fullLink;
         }
         if (fullLink.includes('instagram.com') || fullLink.includes('instagr.am')) {
@@ -324,19 +426,39 @@ bot.on('inline_query', async (query) => {
         if (fullLink.includes('tiktok.com')) {
             return getWorkingTikTokUrl(fullLink);
         }
+        if (fullLink.includes('x.com') || fullLink.includes('twitter.com')) {
+            return getWorkingTwitterUrl(fullLink);
+        }
         return convertToInstaFix(fullLink);
     }));
     let fixedText = queryText;
     socialLinks.forEach((originalLink, index) => {
         fixedText = fixedText.replace(originalLink, fixedLinks[index]);
     });
-    console.log('Исправленный текст:', fixedText);
+    const platforms = new Set();
+    fixedLinks.forEach(url => {
+        if (url.includes(INSTA_FIX_DOMAIN) || url.includes(INSTA_FIX_FALLBACK))
+            platforms.add('📸 Instagram');
+        else if (TIKTOK_FIXERS.some(f => url.includes(f)))
+            platforms.add('🎵 TikTok');
+        else if (TWITTER_FIXERS.some(f => url.includes(f)))
+            platforms.add('🐦 Twitter');
+        else if (url.includes(REDDIT_EMBED_DOMAIN))
+            platforms.add('🟠 Reddit');
+        else if (url.includes('bskx'))
+            platforms.add('🦋 Bluesky');
+        else if (url.includes('fixdeviantart'))
+            platforms.add('🎨 DeviantArt');
+        else if (url.includes('phixiv'))
+            platforms.add('🅿️ Pixiv');
+    });
+    const platformStr = platforms.size > 0 ? Array.from(platforms).join(' · ') : 'ссылка';
     const results = [
         {
             type: 'article',
             id: 'fixed_message',
-            title: '✅ ссылки обработаны',
-            description: `${fixedLinks.length} ссылок найдено`,
+            title: `✅ ${platformStr}`,
+            description: fixedLinks.length === 1 ? fixedLinks[0] : `${fixedLinks.length} ссылок исправлено`,
             input_message_content: {
                 message_text: fixedText,
                 disable_web_page_preview: false,
@@ -346,7 +468,7 @@ bot.on('inline_query', async (query) => {
             type: 'article',
             id: 'links_only',
             title: 'ℹ️ Только ссылки',
-            description: 'Отправить только ссылки',
+            description: fixedLinks.join(' '),
             input_message_content: {
                 message_text: fixedLinks.join('\n'),
                 disable_web_page_preview: false,
@@ -368,6 +490,7 @@ bot.on('message', async (msg) => {
     const socialLinks = findsocialLinks(messageText);
     console.log('Найденные ссылки:', socialLinks);
     if (socialLinks.length > 0) {
+        const msgUserId = msg.from?.id;
         const fixedLinks = await Promise.all(socialLinks.map(async (link) => {
             const fullLink = link.startsWith('http') ? link : `https://${link}`;
             if (fullLink.includes('pinterest') ||
@@ -375,12 +498,24 @@ bot.on('message', async (msg) => {
                 return fullLink;
             }
             if (fullLink.includes('instagram.com') || fullLink.includes('instagr.am')) {
-                return getWorkingInstaFixUrl(fullLink);
+                return getWorkingInstaFixUrl(fullLink, isGroup ? chatId : undefined, msgUserId);
             }
             if (fullLink.includes('tiktok.com')) {
-                return getWorkingTikTokUrl(fullLink);
+                return getWorkingTikTokUrl(fullLink, isGroup ? chatId : undefined, msgUserId);
             }
-            logLinkEvent('other', 'converted', false);
+            if (fullLink.includes('x.com') || fullLink.includes('twitter.com')) {
+                return getWorkingTwitterUrl(fullLink, isGroup ? chatId : undefined, msgUserId);
+            }
+            let platform = 'other';
+            if (fullLink.includes('reddit.com'))
+                platform = 'reddit';
+            else if (fullLink.includes('bsky.app'))
+                platform = 'bluesky';
+            else if (fullLink.includes('deviantart.com'))
+                platform = 'deviantart';
+            else if (fullLink.includes('pixiv.net'))
+                platform = 'pixiv';
+            logLinkEvent(platform, 'converted', false, isGroup ? chatId : undefined, msgUserId);
             return convertToInstaFix(fullLink);
         }));
         console.log('Исправленные ссылки:', fixedLinks);
@@ -409,8 +544,19 @@ bot.on('message', async (msg) => {
                 platforms.add('📌 Pinterest');
         });
         const platformStr = platforms.size > 0 ? `(${Array.from(platforms).join(', ')})` : '';
-        const finalMessage = `Saved ${username} a click ${platformStr}:\n\n${finalText}`;
-        const replyMarkup = undefined;
+        const chatSettings = isGroup ? await getChatSettings(chatId) : null;
+        const quietMode = chatSettings?.quiet_mode ?? false;
+        const finalMessage = quietMode
+            ? finalText
+            : `Saved ${username} a click ${platformStr}:\n\n${finalText}`;
+        const isDownloadable = (url) => TIKTOK_FIXERS.some(f => url.includes(f));
+        const replyMarkup = fixedLinks.length === 1 && isDownloadable(fixedLinks[0])
+            ? {
+                inline_keyboard: [[
+                        { text: '📥 Скачать видео/фото', callback_data: 'download_video' },
+                    ]],
+            }
+            : undefined;
         if (isGroup) {
             try {
                 const sendOptions = {
@@ -435,6 +581,44 @@ bot.on('message', async (msg) => {
             });
         }
     }
+});
+bot.onText(/\/start(?:\s+(.+))?/, async (msg) => {
+    const chatId = msg.chat.id;
+    const telegramId = msg.from?.id;
+    const param = msg.text?.split(' ')[1];
+    if (telegramId && param?.startsWith('ref_')) {
+        const referrerId = parseInt(param.replace('ref_', ''));
+        if (!isNaN(referrerId) && referrerId !== telegramId) {
+            await createUser(telegramId, msg.from?.username);
+            await setReferredBy(telegramId, referrerId);
+        }
+    }
+    await bot.sendMessage(chatId, '👋 Привет! Я автоматически исправляю ссылки соцсетей, чтобы они показывали превью прямо в Telegram.\n\n' +
+        'Поддерживаю: Instagram, TikTok, Twitter/X, Reddit, Bluesky, Pixiv, DeviantArt\n\n' +
+        'Добавь меня в групповой чат — и я буду исправлять ссылки автоматически.', {
+        reply_markup: {
+            inline_keyboard: [[
+                    { text: '➕ Добавить в чат', url: 'https://t.me/transform_inst_link_bot?startgroup=true' },
+                ]],
+        },
+    });
+});
+bot.onText(/\/invite/, async (msg) => {
+    const chatId = msg.chat.id;
+    const telegramId = msg.from?.id;
+    if (!telegramId)
+        return;
+    await createUser(telegramId, msg.from?.username);
+    const count = await getReferralCount(telegramId);
+    const pluralize = (n) => {
+        if (n % 10 === 1 && n % 100 !== 11)
+            return 'пользователь';
+        if ([2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100))
+            return 'пользователя';
+        return 'пользователей';
+    };
+    await bot.sendMessage(chatId, `🔗 Твоя реферальная ссылка:\nhttps://t.me/transform_inst_link_bot?start=ref_${telegramId}\n\n` +
+        `Ты пригласил: ${count} ${pluralize(count)}`, { disable_web_page_preview: true });
 });
 bot.onText(/\/help/, msg => {
     const chatId = msg.chat.id;
@@ -480,6 +664,125 @@ bot.onText(/\/donate/, msg => {
         'USDT TRC20: `TYS2zFqnBjRtwTUyJjggFtQk9zrJX6T976`\n' +
         '₿ BTC: `bc1q3ezgkak8swygvgfcqgtcxyswfmt4dzeeu93vq5`\n\n' +
         'Выберите сумму в Stars ниже или воспользуйтесь реквизитами 🙏', opts);
+});
+bot.onText(/\/settings/, async (msg) => {
+    const chatId = msg.chat.id;
+    const isGroup = msg.chat.type === 'group' || msg.chat.type === 'supergroup';
+    if (!isGroup) {
+        await bot.sendMessage(chatId, '⚙️ /settings работает только в групповых чатах.');
+        return;
+    }
+    const fromId = msg.from?.id;
+    if (!fromId)
+        return;
+    let isAdmin = false;
+    try {
+        const member = await bot.getChatMember(chatId, fromId);
+        isAdmin = member.status === 'administrator' || member.status === 'creator';
+    }
+    catch { }
+    if (!isAdmin) {
+        await bot.sendMessage(chatId, '⚙️ Настройки доступны только администраторам чата.');
+        return;
+    }
+    const user = DATABASE_URL ? await getUser(fromId) : null;
+    const userIsPremium = user?.is_premium ?? false;
+    if (!userIsPremium) {
+        await bot.sendMessage(chatId, '⚙️ Настройки доступны premium-пользователям. Поддержи проект → /donate');
+        return;
+    }
+    await upsertChatSettings(chatId, { is_premium: true });
+    const settings = await getChatSettings(chatId);
+    const quietMode = settings?.quiet_mode ?? false;
+    await bot.sendMessage(chatId, '⚙️ Настройки чата  [Premium ✨]', {
+        reply_markup: {
+            inline_keyboard: [[
+                    {
+                        text: `🔇 Тихий режим: ${quietMode ? 'вкл' : 'выкл'}`,
+                        callback_data: quietMode ? 'settings_quiet_off' : 'settings_quiet_on',
+                    },
+                ]],
+        },
+    });
+});
+bot.onText(/\/chatstats/, async (msg) => {
+    const chatId = msg.chat.id;
+    const isGroup = msg.chat.type === 'group' || msg.chat.type === 'supergroup';
+    if (!isGroup) {
+        await bot.sendMessage(chatId, '📊 /chatstats работает только в групповых чатах.');
+        return;
+    }
+    const fromId = msg.from?.id;
+    if (!fromId)
+        return;
+    let isAdmin = false;
+    try {
+        const member = await bot.getChatMember(chatId, fromId);
+        isAdmin = member.status === 'administrator' || member.status === 'creator';
+    }
+    catch { }
+    if (!isAdmin) {
+        await bot.sendMessage(chatId, '📊 Статистика доступна только администраторам чата.');
+        return;
+    }
+    const settings = await getChatSettings(chatId);
+    if (!settings?.is_premium) {
+        await bot.sendMessage(chatId, '📊 Статистика доступна в premium-чатах. Поддержи проект → /donate, затем запусти /settings');
+        return;
+    }
+    if (!DATABASE_URL) {
+        await bot.sendMessage(chatId, '📊 База данных недоступна.');
+        return;
+    }
+    const platformRes = await dbClient.query(`SELECT platform, COUNT(*) as cnt
+     FROM link_events
+     WHERE chat_id = $1
+       AND created_at >= NOW() - INTERVAL '7 days'
+     GROUP BY platform
+     ORDER BY cnt DESC`, [chatId]);
+    const userRes = await dbClient.query(`SELECT user_id, COUNT(*) as cnt
+     FROM link_events
+     WHERE chat_id = $1
+       AND user_id IS NOT NULL
+       AND created_at >= NOW() - INTERVAL '7 days'
+     GROUP BY user_id
+     ORDER BY cnt DESC
+     LIMIT 3`, [chatId]);
+    const total = platformRes.rows.reduce((sum, r) => sum + parseInt(r.cnt), 0);
+    if (total === 0) {
+        await bot.sendMessage(chatId, '📊 За последние 7 дней ссылок не исправлялось.');
+        return;
+    }
+    const platformEmojis = {
+        instagram: '📸 Instagram',
+        tiktok: '🎵 TikTok',
+        twitter: '🐦 Twitter',
+        reddit: '🟠 Reddit',
+        bluesky: '🦋 Bluesky',
+        deviantart: '🎨 DeviantArt',
+        pixiv: '🅿️ Pixiv',
+        other: '🔗 Другие',
+    };
+    const platformLines = platformRes.rows.map((r) => {
+        const pct = Math.round((parseInt(r.cnt) / total) * 100);
+        const label = platformEmojis[r.platform] ?? r.platform;
+        return `${label}: ${r.cnt} (${pct}%)`;
+    }).join('\n');
+    const topUserLines = await Promise.all(userRes.rows.map(async (r, i) => {
+        let name = `user_${r.user_id}`;
+        try {
+            const member = await bot.getChatMember(chatId, r.user_id);
+            const u = member.user;
+            name = u.username ? `@${u.username}` : (u.first_name ?? name);
+        }
+        catch { }
+        return `${i + 1}. ${name} — ${r.cnt} ссылок`;
+    }));
+    const text = `📊 Статистика чата за 7 дней\n\n` +
+        `Всего исправлено: ${total} ссылок\n` +
+        platformLines +
+        (topUserLines.length > 0 ? `\n\n🏆 Самые активные:\n${topUserLines.join('\n')}` : '');
+    await bot.sendMessage(chatId, text);
 });
 bot.on('callback_query', async (query) => {
     const chatId = query.message?.chat.id;
@@ -534,7 +837,7 @@ bot.on('callback_query', async (query) => {
         const tempFilePath = path_1.default.join(os_1.default.tmpdir(), `video_${Date.now()}.mp4`);
         try {
             console.log(`Downloading ${originalUrl} to ${tempFilePath}`);
-            await ytdlp.download(originalUrl, {
+            await ytdlp.downloadAsync(originalUrl, {
                 output: tempFilePath,
                 format: 'best[ext=mp4]/best',
                 maxFilesize: '50M',
@@ -580,6 +883,35 @@ bot.on('callback_query', async (query) => {
                 });
             }
         }
+        return;
+    }
+    if (data === 'settings_quiet_on' || data === 'settings_quiet_off') {
+        let isAdmin = false;
+        try {
+            const member = await bot.getChatMember(chatId, telegramId);
+            isAdmin = member.status === 'administrator' || member.status === 'creator';
+        }
+        catch { }
+        if (!isAdmin) {
+            await bot.answerCallbackQuery(query.id, {
+                text: '⛔ Только администраторы могут изменять настройки.',
+                show_alert: true,
+            });
+            return;
+        }
+        const newQuietMode = data === 'settings_quiet_on';
+        await upsertChatSettings(chatId, { quiet_mode: newQuietMode });
+        await bot.editMessageReplyMarkup({
+            inline_keyboard: [[
+                    {
+                        text: `🔇 Тихий режим: ${newQuietMode ? 'вкл' : 'выкл'}`,
+                        callback_data: newQuietMode ? 'settings_quiet_off' : 'settings_quiet_on',
+                    },
+                ]],
+        }, { chat_id: chatId, message_id: query.message.message_id });
+        await bot.answerCallbackQuery(query.id, {
+            text: `🔇 Тихий режим ${newQuietMode ? 'включён' : 'выключен'}`,
+        });
         return;
     }
     if (data.startsWith('donate_')) {
@@ -663,14 +995,28 @@ process.on('unhandledRejection', (reason) => {
     sendAdminAlert(`[CRITICAL] unhandledRejection:\n${String(reason)}`).catch(() => { });
 });
 async function runHourlyHealthCheck() {
-    const [instaMain, instaFallback, ...tiktokResults] = await Promise.all([
+    const e = (s) => s === 'ok' ? '✅' : '❌';
+    const [instaMain, instaFallback, ...rest] = await Promise.all([
         checkService(`https://${INSTA_FIX_DOMAIN}/`),
         checkService(`https://${INSTA_FIX_FALLBACK}/`),
         ...TIKTOK_FIXERS.map(f => checkService(`https://${f}/`)),
+        ...TWITTER_FIXERS.map(f => checkService(`https://${f}/`)),
+        checkService('https://bskx.app/'),
+        checkService('https://fixdeviantart.com/'),
+        checkService('https://phixiv.net/'),
     ]);
-    const e = (s) => s === 'ok' ? '✅' : '❌';
+    const tiktokCount = TIKTOK_FIXERS.length;
+    const twitterCount = TWITTER_FIXERS.length;
+    const tiktokResults = rest.slice(0, tiktokCount);
+    const twitterResults = rest.slice(tiktokCount, tiktokCount + twitterCount);
+    const [bluesky, deviantart, pixiv] = rest.slice(tiktokCount + twitterCount);
     const tiktokLines = TIKTOK_FIXERS.map((f, i) => `${e(tiktokResults[i])} ${f}`).join('\n');
-    await sendAdminAlert(`📊 Статус сервисов:\n\nInstagram:\n${e(instaMain)} ${INSTA_FIX_DOMAIN}\n${e(instaFallback)} ${INSTA_FIX_FALLBACK}\n\nTikTok:\n${tiktokLines}`);
+    const twitterLines = TWITTER_FIXERS.map((f, i) => `${e(twitterResults[i])} ${f}`).join('\n');
+    await sendAdminAlert(`📊 Статус сервисов:\n\n` +
+        `Instagram:\n${e(instaMain)} ${INSTA_FIX_DOMAIN}\n${e(instaFallback)} ${INSTA_FIX_FALLBACK}\n\n` +
+        `TikTok:\n${tiktokLines}\n\n` +
+        `Twitter:\n${twitterLines}\n\n` +
+        `Другие:\n${e(bluesky)} bskx.app\n${e(deviantart)} fixdeviantart.com\n${e(pixiv)} phixiv.net`);
 }
 setInterval(runHourlyHealthCheck, 60 * 60 * 1000);
 async function checkService(url) {
