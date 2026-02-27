@@ -177,7 +177,7 @@ function revertUrlForDownload(url: string): string {
     .replace('vxreddit.com', 'reddit.com')
     .replace('vxthreads.net', 'threads.net')
     .replace('bskx.app', 'bsky.app')
-    .replace('fxdeviantart.com', 'deviantart.com')
+    .replace('fixdeviantart.com', 'deviantart.com')
     .replace('vxvk.com', 'vk.com')
     .replace('phixiv.net', 'pixiv.net');
   for (const fixer of TIKTOK_FIXERS) {
@@ -193,9 +193,9 @@ function convertToInstaFix(url: string): string {
     .replace(/x\.com/g, 'fxtwitter.com')
     .replace(/reddit\.com/g, 'vxreddit.com')
     .replace(/www\.reddit\.com/g, 'vxreddit.com')
-    .replace(/threads\.net/g, 'vxthreads.net')
+    // vxthreads.net down (2026), threads.net передаём без изменений
     .replace(/bsky\.app/g, 'bskx.app')
-    .replace(/deviantart\.com/g, 'fxdeviantart.com')
+    .replace(/deviantart\.com/g, 'fixdeviantart.com')
     // .replace(/vk\.com/g, 'vxvk.com')
     // .replace(/m\.vk\.com/g, 'vxvk.com')
     .replace(/pixiv\.net/g, 'phixiv.net');
@@ -332,14 +332,10 @@ function findsocialLinks(text: string): string[] {
       }
     }
 
-    // Threads
-    if (
-      cleanWord.includes('threads.net') &&
-      cleanWord.includes('/post/') &&
-      !cleanWord.includes('vxthreads.net')
-    ) {
-      socialLinks.push(cleanWord);
-    }
+    // Threads: vxthreads.net down (2026), all alternatives also down — skip
+    // if (cleanWord.includes('threads.net') && cleanWord.includes('/post/')) {
+    //   socialLinks.push(cleanWord);
+    // }
 
     // Bluesky
     if (
@@ -355,7 +351,7 @@ function findsocialLinks(text: string): string[] {
       cleanWord.includes('deviantart.com') &&
       (cleanWord.includes('/art/') ||
         cleanWord.match(/deviantart\.com\/[A-Za-z0-9_-]+\/art\//)) &&
-      !cleanWord.includes('fxdeviantart.com')
+      !cleanWord.includes('fixdeviantart.com')
     ) {
       socialLinks.push(cleanWord);
     }
@@ -555,9 +551,8 @@ bot.on('message', async msg => {
       else if (url.includes('fxtwitter')) platforms.add('🐦 X/Twitter');
       else if (TIKTOK_FIXERS.some(f => url.includes(f))) platforms.add('🎵 TikTok');
       else if (url.includes('vxreddit')) platforms.add('🟠 Reddit');
-      else if (url.includes('vxthreads')) platforms.add('🧵 Threads');
       else if (url.includes('bskx')) platforms.add('🦋 Bluesky');
-      else if (url.includes('fxdeviantart')) platforms.add('🎨 DeviantArt');
+      else if (url.includes('fixdeviantart')) platforms.add('🎨 DeviantArt');
       else if (url.includes('phixiv')) platforms.add('🅿️ Pixiv');
       else if (url.includes('vxvk')) platforms.add('💙 VK Video/Clip');
       else if (url.includes('pinterest') || url.includes('pin.it'))

@@ -139,7 +139,7 @@ function revertUrlForDownload(url) {
         .replace('vxreddit.com', 'reddit.com')
         .replace('vxthreads.net', 'threads.net')
         .replace('bskx.app', 'bsky.app')
-        .replace('fxdeviantart.com', 'deviantart.com')
+        .replace('fixdeviantart.com', 'deviantart.com')
         .replace('vxvk.com', 'vk.com')
         .replace('phixiv.net', 'pixiv.net');
     for (const fixer of TIKTOK_FIXERS) {
@@ -154,9 +154,8 @@ function convertToInstaFix(url) {
         .replace(/x\.com/g, 'fxtwitter.com')
         .replace(/reddit\.com/g, 'vxreddit.com')
         .replace(/www\.reddit\.com/g, 'vxreddit.com')
-        .replace(/threads\.net/g, 'vxthreads.net')
         .replace(/bsky\.app/g, 'bskx.app')
-        .replace(/deviantart\.com/g, 'fxdeviantart.com')
+        .replace(/deviantart\.com/g, 'fixdeviantart.com')
         .replace(/pixiv\.net/g, 'phixiv.net');
     if (url.includes('reddit.com') && url.includes('/s/')) {
         convertedUrl += ' ⚠️ (кросспост - видео может быть в оригинальном посте)';
@@ -259,11 +258,6 @@ function findsocialLinks(text) {
                 socialLinks.push(cleanWord);
             }
         }
-        if (cleanWord.includes('threads.net') &&
-            cleanWord.includes('/post/') &&
-            !cleanWord.includes('vxthreads.net')) {
-            socialLinks.push(cleanWord);
-        }
         if (cleanWord.includes('bsky.app') &&
             cleanWord.includes('/post/') &&
             !cleanWord.includes('bskx.app')) {
@@ -272,7 +266,7 @@ function findsocialLinks(text) {
         if (cleanWord.includes('deviantart.com') &&
             (cleanWord.includes('/art/') ||
                 cleanWord.match(/deviantart\.com\/[A-Za-z0-9_-]+\/art\//)) &&
-            !cleanWord.includes('fxdeviantart.com')) {
+            !cleanWord.includes('fixdeviantart.com')) {
             socialLinks.push(cleanWord);
         }
         if (cleanWord.includes('pixiv.net') &&
@@ -405,11 +399,9 @@ bot.on('message', async (msg) => {
                 platforms.add('🎵 TikTok');
             else if (url.includes('vxreddit'))
                 platforms.add('🟠 Reddit');
-            else if (url.includes('vxthreads'))
-                platforms.add('🧵 Threads');
             else if (url.includes('bskx'))
                 platforms.add('🦋 Bluesky');
-            else if (url.includes('fxdeviantart'))
+            else if (url.includes('fixdeviantart'))
                 platforms.add('🎨 DeviantArt');
             else if (url.includes('phixiv'))
                 platforms.add('🅿️ Pixiv');
