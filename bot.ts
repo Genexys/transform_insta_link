@@ -578,7 +578,13 @@ bot.on('message', async msg => {
       if (fullLink.includes('tiktok.com')) {
         return getWorkingTikTokUrl(fullLink, isGroup ? chatId : undefined, msgUserId);
       }
-      logLinkEvent('other', 'converted', false, isGroup ? chatId : undefined, msgUserId);
+      let platform = 'other';
+      if (fullLink.includes('x.com') || fullLink.includes('twitter.com')) platform = 'twitter';
+      else if (fullLink.includes('reddit.com')) platform = 'reddit';
+      else if (fullLink.includes('bsky.app')) platform = 'bluesky';
+      else if (fullLink.includes('deviantart.com')) platform = 'deviantart';
+      else if (fullLink.includes('pixiv.net')) platform = 'pixiv';
+      logLinkEvent(platform, 'converted', false, isGroup ? chatId : undefined, msgUserId);
       return convertToInstaFix(fullLink);
     }));
 
