@@ -883,6 +883,36 @@ bot.on('message', async msg => {
   }
 });
 
+bot.on('my_chat_member', async update => {
+  const { new_chat_member, old_chat_member, chat } = update;
+  const isGroup = chat.type === 'group' || chat.type === 'supergroup';
+  const justAdded =
+    (new_chat_member.status === 'member' || new_chat_member.status === 'administrator') &&
+    (old_chat_member.status === 'left' || old_chat_member.status === 'kicked');
+
+  if (!isGroup || !justAdded) return;
+
+  try {
+    await bot.sendMessage(
+      chat.id,
+      '👋 Привет! Я автоматически исправляю ссылки соцсетей, чтобы они показывали превью прямо в чате.\n\n' +
+        'Поддерживаю: Instagram, TikTok, Twitter/X, Reddit, Bluesky, Pixiv, DeviantArt\n\n' +
+        '⚙️ Для удаления оригинального сообщения со сломанной ссылкой нужны права администратора → «Удаление сообщений»\n\n' +
+        'Используй меня в инлайн-режиме: @transform_inst_link_bot <ссылка>',
+      {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '➕ Добавить в свой чат', url: 'https://t.me/transform_inst_link_bot?startgroup=true' },
+          ]],
+        },
+      }
+    );
+    log.info('Onboarding message sent', { chatId: chat.id, chatTitle: chat.title });
+  } catch (err) {
+    log.error('Failed to send onboarding message', { chatId: chat.id, err: String(err) });
+  }
+});
+
 bot.on('polling_error', error => {
   console.error('Polling error:', error);
 });
