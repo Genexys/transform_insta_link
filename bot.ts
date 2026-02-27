@@ -91,6 +91,21 @@ async function initDB() {
         platform TEXT,
         service TEXT,
         is_fallback BOOLEAN,
+        chat_id BIGINT,
+        user_id BIGINT,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+    await dbClient.query(`
+      ALTER TABLE link_events
+        ADD COLUMN IF NOT EXISTS chat_id BIGINT,
+        ADD COLUMN IF NOT EXISTS user_id BIGINT;
+    `);
+    await dbClient.query(`
+      CREATE TABLE IF NOT EXISTS chat_settings (
+        chat_id BIGINT PRIMARY KEY,
+        is_premium BOOLEAN DEFAULT FALSE,
+        quiet_mode BOOLEAN DEFAULT FALSE,
         created_at TIMESTAMP DEFAULT NOW()
       );
     `);
@@ -158,15 +173,45 @@ async function setPremium(telegramId: number) {
   );
 }
 
-async function logLinkEvent(platform: string, service: string, isFallback: boolean) {
+async function logLinkEvent(platform: string, service: string, isFallback: boolean, chatId?: number, userId?: number) {
   if (!DATABASE_URL) return;
   try {
     await dbClient.query(
-      'INSERT INTO link_events (platform, service, is_fallback) VALUES ($1, $2, $3)',
-      [platform, service, isFallback]
+      'INSERT INTO link_events (platform, service, is_fallback, chat_id, user_id) VALUES ($1, $2, $3, $4, $5)',
+      [platform, service, isFallback, chatId ?? null, userId ?? null]
     );
   } catch (err) {
     log.error('Failed to log link event', { err: String(err) });
+  }
+}
+
+async function getChatSettings(chatId: number): Promise<{ is_premium: boolean; quiet_mode: boolean } | null> {
+  if (!DATABASE_URL) return null;
+  try {
+    const res = await dbClient.query(
+      'SELECT is_premium, quiet_mode FROM chat_settings WHERE chat_id = $1',
+      [chatId]
+    );
+    return res.rows[0] ?? null;
+  } catch (err) {
+    log.error('getChatSettings failed', { err: String(err) });
+    return null;
+  }
+}
+
+async function upsertChatSettings(chatId: number, patch: { is_premium?: boolean; quiet_mode?: boolean }) {
+  if (!DATABASE_URL) return;
+  try {
+    await dbClient.query(
+      `INSERT INTO chat_settings (chat_id, is_premium, quiet_mode)
+       VALUES ($1, COALESCE($2, FALSE), COALESCE($3, FALSE))
+       ON CONFLICT (chat_id) DO UPDATE SET
+         is_premium = CASE WHEN $2::boolean IS NOT NULL THEN $2 ELSE chat_settings.is_premium END,
+         quiet_mode = CASE WHEN $3::boolean IS NOT NULL THEN $3 ELSE chat_settings.quiet_mode END`,
+      [chatId, patch.is_premium ?? null, patch.quiet_mode ?? null]
+    );
+  } catch (err) {
+    log.error('upsertChatSettings failed', { err: String(err) });
   }
 }
 
@@ -211,7 +256,7 @@ function convertToInstaFix(url: string): string {
 
 const instaRegex = /(?:www\.)?(?:instagram\.com|instagr\.am)/;
 
-async function getWorkingInstaFixUrl(originalUrl: string): Promise<string> {
+async function getWorkingInstaFixUrl(originalUrl: string, chatId?: number, userId?: number): Promise<string> {
   const selfHostedUrl = originalUrl.replace(instaRegex, INSTA_FIX_DOMAIN);
   try {
     // Проверяем только достижимость сервиса (не конкретного поста) —
@@ -221,7 +266,7 @@ async function getWorkingInstaFixUrl(originalUrl: string): Promise<string> {
       redirect: 'manual',
       signal: AbortSignal.timeout(3000),
     });
-    logLinkEvent('instagram', INSTA_FIX_DOMAIN, false);
+    logLinkEvent('instagram', INSTA_FIX_DOMAIN, false, chatId, userId);
     return selfHostedUrl;
   } catch {
     // Сервис сетево недоступен — переходим на фоллбэк
@@ -235,19 +280,19 @@ async function getWorkingInstaFixUrl(originalUrl: string): Promise<string> {
       redirect: 'manual',
       signal: AbortSignal.timeout(3000),
     });
-    logLinkEvent('instagram', INSTA_FIX_FALLBACK, true);
+    logLinkEvent('instagram', INSTA_FIX_FALLBACK, true, chatId, userId);
     return fallbackUrl;
   } catch {}
 
   log.error('Both Instagram services are unreachable', { url: originalUrl });
-  logLinkEvent('instagram', 'none', true);
+  logLinkEvent('instagram', 'none', true, chatId, userId);
   sendAdminAlert(`[INSTAGRAM] Оба сервиса недоступны\nURL: ${originalUrl}`).catch(() => {});
   return fallbackUrl;
 }
 
 const tiktokRegex = /(?:(?:www|vm|vt)\.)?tiktok\.com/;
 
-async function getWorkingTikTokUrl(originalUrl: string): Promise<string> {
+async function getWorkingTikTokUrl(originalUrl: string, chatId?: number, userId?: number): Promise<string> {
   // Все сервисы проверяем параллельно — побеждает первый вернувший 200
   const checks = TIKTOK_FIXERS.map(async fixer => {
     const fixedUrl = originalUrl.replace(tiktokRegex, fixer);
@@ -262,12 +307,12 @@ async function getWorkingTikTokUrl(originalUrl: string): Promise<string> {
   try {
     const result = await Promise.any(checks);
     const service = TIKTOK_FIXERS.find(f => result.includes(f)) ?? TIKTOK_FIXERS[0];
-    logLinkEvent('tiktok', service, service !== TIKTOK_FIXERS[0]);
+    logLinkEvent('tiktok', service, service !== TIKTOK_FIXERS[0], chatId, userId);
     return result;
   } catch {
     // Все недоступны — используем первый как best effort
     log.warn('All TikTok fixers failed', { url: originalUrl });
-    logLinkEvent('tiktok', 'none', true);
+    logLinkEvent('tiktok', 'none', true, chatId, userId);
     return originalUrl.replace(tiktokRegex, TIKTOK_FIXERS[0]);
   }
 }
@@ -518,6 +563,7 @@ bot.on('message', async msg => {
   console.log('Найденные ссылки:', socialLinks);
 
   if (socialLinks.length > 0) {
+    const msgUserId = msg.from?.id;
     const fixedLinks = await Promise.all(socialLinks.map(async link => {
       const fullLink = link.startsWith('http') ? link : `https://${link}`;
       if (
@@ -527,12 +573,12 @@ bot.on('message', async msg => {
         return fullLink;
       }
       if (fullLink.includes('instagram.com') || fullLink.includes('instagr.am')) {
-        return getWorkingInstaFixUrl(fullLink);
+        return getWorkingInstaFixUrl(fullLink, isGroup ? chatId : undefined, msgUserId);
       }
       if (fullLink.includes('tiktok.com')) {
-        return getWorkingTikTokUrl(fullLink);
+        return getWorkingTikTokUrl(fullLink, isGroup ? chatId : undefined, msgUserId);
       }
-      logLinkEvent('other', 'converted', false);
+      logLinkEvent('other', 'converted', false, isGroup ? chatId : undefined, msgUserId);
       return convertToInstaFix(fullLink);
     }));
 
@@ -563,7 +609,12 @@ bot.on('message', async msg => {
 
     const platformStr =
       platforms.size > 0 ? `(${Array.from(platforms).join(', ')})` : '';
-    const finalMessage = `Saved ${username} a click ${platformStr}:\n\n${finalText}`;
+
+    const chatSettings = isGroup ? await getChatSettings(chatId) : null;
+    const quietMode = chatSettings?.quiet_mode ?? false;
+    const finalMessage = quietMode
+      ? finalText
+      : `Saved ${username} a click ${platformStr}:\n\n${finalText}`;
 
     // const replyMarkup =
     //   fixedLinks.length === 1
@@ -668,6 +719,160 @@ bot.onText(/\/donate/, msg => {
       'Выберите сумму в Stars ниже или воспользуйтесь реквизитами 🙏',
     opts
   );
+});
+
+bot.onText(/\/settings/, async msg => {
+  const chatId = msg.chat.id;
+  const isGroup = msg.chat.type === 'group' || msg.chat.type === 'supergroup';
+
+  if (!isGroup) {
+    await bot.sendMessage(chatId, '⚙️ /settings работает только в групповых чатах.');
+    return;
+  }
+
+  const fromId = msg.from?.id;
+  if (!fromId) return;
+
+  let isAdmin = false;
+  try {
+    const member = await bot.getChatMember(chatId, fromId);
+    isAdmin = member.status === 'administrator' || member.status === 'creator';
+  } catch {}
+
+  if (!isAdmin) {
+    await bot.sendMessage(chatId, '⚙️ Настройки доступны только администраторам чата.');
+    return;
+  }
+
+  const user = DATABASE_URL ? await getUser(fromId) : null;
+  const userIsPremium = user?.is_premium ?? false;
+
+  if (!userIsPremium) {
+    await bot.sendMessage(
+      chatId,
+      '⚙️ Настройки доступны premium-пользователям. Поддержи проект → /donate'
+    );
+    return;
+  }
+
+  await upsertChatSettings(chatId, { is_premium: true });
+
+  const settings = await getChatSettings(chatId);
+  const quietMode = settings?.quiet_mode ?? false;
+
+  await bot.sendMessage(chatId, '⚙️ Настройки чата  [Premium ✨]', {
+    reply_markup: {
+      inline_keyboard: [[
+        {
+          text: `🔇 Тихий режим: ${quietMode ? 'вкл' : 'выкл'}`,
+          callback_data: quietMode ? 'settings_quiet_off' : 'settings_quiet_on',
+        },
+      ]],
+    },
+  });
+});
+
+bot.onText(/\/chatstats/, async msg => {
+  const chatId = msg.chat.id;
+  const isGroup = msg.chat.type === 'group' || msg.chat.type === 'supergroup';
+
+  if (!isGroup) {
+    await bot.sendMessage(chatId, '📊 /chatstats работает только в групповых чатах.');
+    return;
+  }
+
+  const fromId = msg.from?.id;
+  if (!fromId) return;
+
+  let isAdmin = false;
+  try {
+    const member = await bot.getChatMember(chatId, fromId);
+    isAdmin = member.status === 'administrator' || member.status === 'creator';
+  } catch {}
+
+  if (!isAdmin) {
+    await bot.sendMessage(chatId, '📊 Статистика доступна только администраторам чата.');
+    return;
+  }
+
+  const settings = await getChatSettings(chatId);
+  if (!settings?.is_premium) {
+    await bot.sendMessage(
+      chatId,
+      '📊 Статистика доступна в premium-чатах. Поддержи проект → /donate, затем запусти /settings'
+    );
+    return;
+  }
+
+  if (!DATABASE_URL) {
+    await bot.sendMessage(chatId, '📊 База данных недоступна.');
+    return;
+  }
+
+  const platformRes = await dbClient.query(
+    `SELECT platform, COUNT(*) as cnt
+     FROM link_events
+     WHERE chat_id = $1
+       AND created_at >= NOW() - INTERVAL '7 days'
+     GROUP BY platform
+     ORDER BY cnt DESC`,
+    [chatId]
+  );
+
+  const userRes = await dbClient.query(
+    `SELECT user_id, COUNT(*) as cnt
+     FROM link_events
+     WHERE chat_id = $1
+       AND user_id IS NOT NULL
+       AND created_at >= NOW() - INTERVAL '7 days'
+     GROUP BY user_id
+     ORDER BY cnt DESC
+     LIMIT 3`,
+    [chatId]
+  );
+
+  const total = platformRes.rows.reduce((sum: number, r: any) => sum + parseInt(r.cnt), 0);
+  if (total === 0) {
+    await bot.sendMessage(chatId, '📊 За последние 7 дней ссылок не исправлялось.');
+    return;
+  }
+
+  const platformEmojis: Record<string, string> = {
+    instagram: '📸 Instagram',
+    tiktok: '🎵 TikTok',
+    twitter: '🐦 Twitter',
+    reddit: '🟠 Reddit',
+    bluesky: '🦋 Bluesky',
+    deviantart: '🎨 DeviantArt',
+    pixiv: '🅿️ Pixiv',
+    other: '🔗 Другие',
+  };
+
+  const platformLines = platformRes.rows.map((r: any) => {
+    const pct = Math.round((parseInt(r.cnt) / total) * 100);
+    const label = platformEmojis[r.platform] ?? r.platform;
+    return `${label}: ${r.cnt} (${pct}%)`;
+  }).join('\n');
+
+  const topUserLines = await Promise.all(
+    userRes.rows.map(async (r: any, i: number) => {
+      let name = `user_${r.user_id}`;
+      try {
+        const member = await bot.getChatMember(chatId, r.user_id);
+        const u = member.user;
+        name = u.username ? `@${u.username}` : (u.first_name ?? name);
+      } catch {}
+      return `${i + 1}. ${name} — ${r.cnt} ссылок`;
+    })
+  );
+
+  const text =
+    `📊 Статистика чата за 7 дней\n\n` +
+    `Всего исправлено: ${total} ссылок\n` +
+    platformLines +
+    (topUserLines.length > 0 ? `\n\n🏆 Самые активные:\n${topUserLines.join('\n')}` : '');
+
+  await bot.sendMessage(chatId, text);
 });
 
 // Обработка callback queries (Донат + Скачивание)
@@ -811,6 +1016,43 @@ bot.on('callback_query', async query => {
         });
       }
     }
+    return;
+  }
+
+  // --- Настройки чата ---
+  if (data === 'settings_quiet_on' || data === 'settings_quiet_off') {
+    let isAdmin = false;
+    try {
+      const member = await bot.getChatMember(chatId, telegramId);
+      isAdmin = member.status === 'administrator' || member.status === 'creator';
+    } catch {}
+
+    if (!isAdmin) {
+      await bot.answerCallbackQuery(query.id, {
+        text: '⛔ Только администраторы могут изменять настройки.',
+        show_alert: true,
+      });
+      return;
+    }
+
+    const newQuietMode = data === 'settings_quiet_on';
+    await upsertChatSettings(chatId, { quiet_mode: newQuietMode });
+
+    await bot.editMessageReplyMarkup(
+      {
+        inline_keyboard: [[
+          {
+            text: `🔇 Тихий режим: ${newQuietMode ? 'вкл' : 'выкл'}`,
+            callback_data: newQuietMode ? 'settings_quiet_off' : 'settings_quiet_on',
+          },
+        ]],
+      },
+      { chat_id: chatId, message_id: query.message.message_id }
+    );
+
+    await bot.answerCallbackQuery(query.id, {
+      text: `🔇 Тихий режим ${newQuietMode ? 'включён' : 'выключен'}`,
+    });
     return;
   }
 
