@@ -1324,7 +1324,7 @@ async function runHourlyHealthCheck() {
   );
 }
 
-setInterval(runHourlyHealthCheck, 60 * 60 * 1000);
+setInterval(runHourlyHealthCheck, 3 * 60 * 60 * 1000);
 
 async function checkService(url: string): Promise<'ok' | 'down'> {
   try {

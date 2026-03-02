@@ -1018,7 +1018,7 @@ async function runHourlyHealthCheck() {
         `Twitter:\n${twitterLines}\n\n` +
         `Другие:\n${e(bluesky)} bskx.app\n${e(deviantart)} fixdeviantart.com\n${e(pixiv)} phixiv.net`);
 }
-setInterval(runHourlyHealthCheck, 60 * 60 * 1000);
+setInterval(runHourlyHealthCheck, 3 * 60 * 60 * 1000);
 async function checkService(url) {
     try {
         const res = await fetch(url, {
