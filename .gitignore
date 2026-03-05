@@ -7,3 +7,12 @@ dist/
 .DS_Store
 .vscode/
 .idea/
+.agent/
+.agents/
+.claude/*
+settings.local.json
+skills-lock.json
+.mcp.json
+mcp-config.json
+opencode.json
+opencode.jsonc

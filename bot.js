@@ -16,9 +16,24 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const DATABASE_URL = process.env.DATABASE_URL;
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID;
 const log = {
-    info: (msg, meta) => console.log(JSON.stringify({ level: 'info', msg, ...meta, ts: new Date().toISOString() })),
-    warn: (msg, meta) => console.warn(JSON.stringify({ level: 'warn', msg, ...meta, ts: new Date().toISOString() })),
-    error: (msg, meta) => console.error(JSON.stringify({ level: 'error', msg, ...meta, ts: new Date().toISOString() })),
+    info: (msg, meta) => console.log(JSON.stringify({
+        level: 'info',
+        msg,
+        ...meta,
+        ts: new Date().toISOString(),
+    })),
+    warn: (msg, meta) => console.warn(JSON.stringify({
+        level: 'warn',
+        msg,
+        ...meta,
+        ts: new Date().toISOString(),
+    })),
+    error: (msg, meta) => console.error(JSON.stringify({
+        level: 'error',
+        msg,
+        ...meta,
+        ts: new Date().toISOString(),
+    })),
 };
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 async function fetchWithRetry(url, opts) {
@@ -32,7 +47,7 @@ async function fetchWithRetry(url, opts) {
 }
 const INSTA_FIX_DOMAIN = 'instafix-production-c2e8.up.railway.app';
 const INSTA_FIX_FALLBACK = 'kkinstagram.com';
-const TIKTOK_FIXERS = ['tnktok.com', 'vxtiktok.com'];
+const TIKTOK_FIXERS = ['tnktok.com'];
 const TWITTER_FIXERS = ['fxtwitter.com', 'fixupx.com'];
 const REDDIT_EMBED_DOMAIN = 'transforminstalink-production.up.railway.app';
 const bot = new node_telegram_bot_api_1.default(BOT_TOKEN, { polling: true });
@@ -254,7 +269,9 @@ async function getWorkingInstaFixUrl(originalUrl, chatId, userId) {
     }
     catch {
     }
-    log.warn('Instagram self-hosted unreachable, using fallback', { url: originalUrl });
+    log.warn('Instagram self-hosted unreachable, using fallback', {
+        url: originalUrl,
+    });
     const fallbackUrl = originalUrl.replace(instaRegex, INSTA_FIX_FALLBACK);
     try {
         await fetchWithRetry(`https://${INSTA_FIX_FALLBACK}/`, {
@@ -420,7 +437,8 @@ bot.on('inline_query', async (query) => {
         if (fullLink.includes('pinterest') || fullLink.includes('pin.it')) {
             return fullLink;
         }
-        if (fullLink.includes('instagram.com') || fullLink.includes('instagr.am')) {
+        if (fullLink.includes('instagram.com') ||
+            fullLink.includes('instagr.am')) {
             return getWorkingInstaFixUrl(fullLink);
         }
         if (fullLink.includes('tiktok.com')) {
@@ -458,7 +476,9 @@ bot.on('inline_query', async (query) => {
             type: 'article',
             id: 'fixed_message',
             title: `✅ ${platformStr}`,
-            description: fixedLinks.length === 1 ? fixedLinks[0] : `${fixedLinks.length} ссылок исправлено`,
+            description: fixedLinks.length === 1
+                ? fixedLinks[0]
+                : `${fixedLinks.length} ссылок исправлено`,
             input_message_content: {
                 message_text: fixedText,
                 disable_web_page_preview: false,
@@ -493,11 +513,11 @@ bot.on('message', async (msg) => {
         const msgUserId = msg.from?.id;
         const fixedLinks = await Promise.all(socialLinks.map(async (link) => {
             const fullLink = link.startsWith('http') ? link : `https://${link}`;
-            if (fullLink.includes('pinterest') ||
-                fullLink.includes('pin.it')) {
+            if (fullLink.includes('pinterest') || fullLink.includes('pin.it')) {
                 return fullLink;
             }
-            if (fullLink.includes('instagram.com') || fullLink.includes('instagr.am')) {
+            if (fullLink.includes('instagram.com') ||
+                fullLink.includes('instagr.am')) {
                 return getWorkingInstaFixUrl(fullLink, isGroup ? chatId : undefined, msgUserId);
             }
             if (fullLink.includes('tiktok.com')) {
@@ -552,9 +572,14 @@ bot.on('message', async (msg) => {
         const isDownloadable = (url) => TIKTOK_FIXERS.some(f => url.includes(f));
         const replyMarkup = fixedLinks.length === 1 && isDownloadable(fixedLinks[0])
             ? {
-                inline_keyboard: [[
-                        { text: '📥 Скачать видео/фото', callback_data: 'download_video' },
-                    ]],
+                inline_keyboard: [
+                    [
+                        {
+                            text: '📥 Скачать видео/фото',
+                            callback_data: 'download_video',
+                        },
+                    ],
+                ],
             }
             : undefined;
         if (isGroup) {
@@ -597,9 +622,14 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg) => {
         'Поддерживаю: Instagram, TikTok, Twitter/X, Reddit, Bluesky, Pixiv, DeviantArt\n\n' +
         'Добавь меня в групповой чат — и я буду исправлять ссылки автоматически.', {
         reply_markup: {
-            inline_keyboard: [[
-                    { text: '➕ Добавить в чат', url: 'https://t.me/transform_inst_link_bot?startgroup=true' },
-                ]],
+            inline_keyboard: [
+                [
+                    {
+                        text: '➕ Добавить в чат',
+                        url: 'https://t.me/transform_inst_link_bot?startgroup=true',
+                    },
+                ],
+            ],
         },
     });
 });
@@ -696,12 +726,16 @@ bot.onText(/\/settings/, async (msg) => {
     const quietMode = settings?.quiet_mode ?? false;
     await bot.sendMessage(chatId, '⚙️ Настройки чата  [Premium ✨]', {
         reply_markup: {
-            inline_keyboard: [[
+            inline_keyboard: [
+                [
                     {
                         text: `🔇 Тихий режим: ${quietMode ? 'вкл' : 'выкл'}`,
-                        callback_data: quietMode ? 'settings_quiet_off' : 'settings_quiet_on',
+                        callback_data: quietMode
+                            ? 'settings_quiet_off'
+                            : 'settings_quiet_on',
                     },
-                ]],
+                ],
+            ],
         },
     });
 });
@@ -763,11 +797,13 @@ bot.onText(/\/chatstats/, async (msg) => {
         pixiv: '🅿️ Pixiv',
         other: '🔗 Другие',
     };
-    const platformLines = platformRes.rows.map((r) => {
+    const platformLines = platformRes.rows
+        .map((r) => {
         const pct = Math.round((parseInt(r.cnt) / total) * 100);
         const label = platformEmojis[r.platform] ?? r.platform;
         return `${label}: ${r.cnt} (${pct}%)`;
-    }).join('\n');
+    })
+        .join('\n');
     const topUserLines = await Promise.all(userRes.rows.map(async (r, i) => {
         let name = `user_${r.user_id}`;
         try {
@@ -781,7 +817,9 @@ bot.onText(/\/chatstats/, async (msg) => {
     const text = `📊 Статистика чата за 7 дней\n\n` +
         `Всего исправлено: ${total} ссылок\n` +
         platformLines +
-        (topUserLines.length > 0 ? `\n\n🏆 Самые активные:\n${topUserLines.join('\n')}` : '');
+        (topUserLines.length > 0
+            ? `\n\n🏆 Самые активные:\n${topUserLines.join('\n')}`
+            : '');
     await bot.sendMessage(chatId, text);
 });
 bot.on('callback_query', async (query) => {
@@ -889,7 +927,8 @@ bot.on('callback_query', async (query) => {
         let isAdmin = false;
         try {
             const member = await bot.getChatMember(chatId, telegramId);
-            isAdmin = member.status === 'administrator' || member.status === 'creator';
+            isAdmin =
+                member.status === 'administrator' || member.status === 'creator';
         }
         catch { }
         if (!isAdmin) {
@@ -902,12 +941,16 @@ bot.on('callback_query', async (query) => {
         const newQuietMode = data === 'settings_quiet_on';
         await upsertChatSettings(chatId, { quiet_mode: newQuietMode });
         await bot.editMessageReplyMarkup({
-            inline_keyboard: [[
+            inline_keyboard: [
+                [
                     {
                         text: `🔇 Тихий режим: ${newQuietMode ? 'вкл' : 'выкл'}`,
-                        callback_data: newQuietMode ? 'settings_quiet_off' : 'settings_quiet_on',
+                        callback_data: newQuietMode
+                            ? 'settings_quiet_off'
+                            : 'settings_quiet_on',
                     },
-                ]],
+                ],
+            ],
         }, { chat_id: chatId, message_id: query.message.message_id });
         await bot.answerCallbackQuery(query.id, {
             text: `🔇 Тихий режим ${newQuietMode ? 'включён' : 'выключен'}`,
@@ -962,7 +1005,8 @@ bot.on('message', async (msg) => {
 bot.on('my_chat_member', async (update) => {
     const { new_chat_member, old_chat_member, chat } = update;
     const isGroup = chat.type === 'group' || chat.type === 'supergroup';
-    const justAdded = (new_chat_member.status === 'member' || new_chat_member.status === 'administrator') &&
+    const justAdded = (new_chat_member.status === 'member' ||
+        new_chat_member.status === 'administrator') &&
         (old_chat_member.status === 'left' || old_chat_member.status === 'kicked');
     if (!isGroup || !justAdded)
         return;
@@ -972,30 +1016,44 @@ bot.on('my_chat_member', async (update) => {
             '⚙️ Для удаления оригинального сообщения со сломанной ссылкой нужны права администратора → «Удаление сообщений»\n\n' +
             'Используй меня в инлайн-режиме: @transform_inst_link_bot <ссылка>', {
             reply_markup: {
-                inline_keyboard: [[
-                        { text: '➕ Добавить в свой чат', url: 'https://t.me/transform_inst_link_bot?startgroup=true' },
-                    ]],
+                inline_keyboard: [
+                    [
+                        {
+                            text: '➕ Добавить в свой чат',
+                            url: 'https://t.me/transform_inst_link_bot?startgroup=true',
+                        },
+                    ],
+                ],
             },
         });
-        log.info('Onboarding message sent', { chatId: chat.id, chatTitle: chat.title });
+        log.info('Onboarding message sent', {
+            chatId: chat.id,
+            chatTitle: chat.title,
+        });
     }
     catch (err) {
-        log.error('Failed to send onboarding message', { chatId: chat.id, err: String(err) });
+        log.error('Failed to send onboarding message', {
+            chatId: chat.id,
+            err: String(err),
+        });
     }
 });
 bot.on('polling_error', error => {
     console.error('Polling error:', error);
 });
 process.on('uncaughtException', error => {
-    log.error('uncaughtException', { message: error.message, stack: error.stack });
+    log.error('uncaughtException', {
+        message: error.message,
+        stack: error.stack,
+    });
     sendAdminAlert(`[CRITICAL] uncaughtException:\n${error.message}`).catch(() => { });
 });
-process.on('unhandledRejection', (reason) => {
+process.on('unhandledRejection', reason => {
     log.error('unhandledRejection', { reason: String(reason) });
     sendAdminAlert(`[CRITICAL] unhandledRejection:\n${String(reason)}`).catch(() => { });
 });
 async function runHourlyHealthCheck() {
-    const e = (s) => s === 'ok' ? '✅' : '❌';
+    const e = (s) => (s === 'ok' ? '✅' : '❌');
     const [instaMain, instaFallback, ...rest] = await Promise.all([
         checkService(`https://${INSTA_FIX_DOMAIN}/`),
         checkService(`https://${INSTA_FIX_FALLBACK}/`),
@@ -1056,7 +1114,7 @@ async function handleRedditEmbed(path, res) {
         });
         if (!apiRes.ok)
             throw new Error(`Reddit API ${apiRes.status}`);
-        const data = await apiRes.json();
+        const data = (await apiRes.json());
         const post = data[0]?.data?.children?.[0]?.data;
         if (!post)
             throw new Error('No post data');
@@ -1141,7 +1199,10 @@ const server = http_1.default.createServer(async (req, res) => {
         res.writeHead(allOk ? 200 : 503, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
             status: allOk ? 'ok' : 'degraded',
-            instagram: { [INSTA_FIX_DOMAIN]: instaMain, [INSTA_FIX_FALLBACK]: instaFallback },
+            instagram: {
+                [INSTA_FIX_DOMAIN]: instaMain,
+                [INSTA_FIX_FALLBACK]: instaFallback,
+            },
             tiktok,
             ...(stats && { stats }),
         }, null, 2));
