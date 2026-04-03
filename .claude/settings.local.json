@@ -44,7 +44,21 @@
       "WebFetch(domain:instafix-production-c2e8.up.railway.app)",
       "Bash(railway:*)",
       "Bash(gh api:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(git add:*)",
+      "Bash(git push:*)",
+      "Bash(npm audit:*)",
+      "Bash(git:*)",
+      "Bash(cp:*)",
+      "Bash(yt-dlp:*)",
+      "Bash(pip3 install:*)"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "filesystem",
+    "context7",
+    "chrome-devtools-mcp",
+    "firecrawl-mcp",
+    "next-devtools"
+  ]
 }

@@ -338,29 +338,60 @@ function convertToInstaFix(url: string): string {
 
 const instaRegex = /(?:www\.)?(?:instagram\.com|instagr\.am)/;
 
+async function hasOgVideo(url: string): Promise<boolean> {
+  try {
+    const resp = await fetchWithRetry(url, {
+      method: 'GET',
+      redirect: 'follow',
+      signal: AbortSignal.timeout(5000),
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (compatible; TelegramBot/1.0; +https://core.telegram.org/bots)',
+      },
+    });
+    const html = await resp.text();
+    return /og:video/.test(html);
+  } catch {
+    return false;
+  }
+}
+
 async function getWorkingInstaFixUrl(
   originalUrl: string,
   chatId?: number,
   userId?: number
 ): Promise<string> {
+  const isReel =
+    originalUrl.includes('/reel/') || originalUrl.includes('/reels/');
   const selfHostedUrl = originalUrl.replace(instaRegex, INSTA_FIX_DOMAIN);
+
   try {
-    // Проверяем только достижимость сервиса (не конкретного поста) —
-    // HEAD может вернуть 302 даже когда GET отдаёт 200 с OG-тегами
-    await fetchWithRetry(`https://${INSTA_FIX_DOMAIN}/`, {
-      method: 'HEAD',
-      redirect: 'manual',
-      signal: AbortSignal.timeout(3000),
-    });
-    logLinkEvent('instagram', INSTA_FIX_DOMAIN, false, chatId, userId);
-    return selfHostedUrl;
+    if (isReel) {
+      // Для reels проверяем, что self-hosted действительно отдаёт og:video
+      const hasVideo = await hasOgVideo(`https://${selfHostedUrl}`);
+      if (hasVideo) {
+        logLinkEvent('instagram', INSTA_FIX_DOMAIN, false, chatId, userId);
+        return selfHostedUrl;
+      }
+      log.warn('Self-hosted InstaFix missing og:video for reel, falling back', {
+        url: originalUrl,
+      });
+    } else {
+      // Для постов/stories достаточно проверить доступность сервиса
+      await fetchWithRetry(`https://${INSTA_FIX_DOMAIN}/`, {
+        method: 'HEAD',
+        redirect: 'manual',
+        signal: AbortSignal.timeout(3000),
+      });
+      logLinkEvent('instagram', INSTA_FIX_DOMAIN, false, chatId, userId);
+      return selfHostedUrl;
+    }
   } catch {
-    // Сервис сетево недоступен — переходим на фоллбэк
+    log.warn('Instagram self-hosted unreachable, using fallback', {
+      url: originalUrl,
+    });
   }
 
-  log.warn('Instagram self-hosted unreachable, using fallback', {
-    url: originalUrl,
-  });
   const fallbackUrl = originalUrl.replace(instaRegex, INSTA_FIX_FALLBACK);
   try {
     await fetchWithRetry(`https://${INSTA_FIX_FALLBACK}/`, {
