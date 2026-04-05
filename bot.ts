@@ -134,7 +134,7 @@ async function deleteMessageIfPossible(
   messageId: number,
 ): Promise<void> {
   try {
-    await bot.deleteMessage(chatId, String(messageId));
+    await bot.deleteMessage(chatId, messageId);
   } catch (error) {
     if (error instanceof Error && error.message.includes('message to delete not found')) {
       return;
@@ -246,10 +246,13 @@ function clearPendingDeleteAction(chatId: number, replyMessageId: number): Pendi
 
 async function answerCallbackQuery(
   callbackQueryId: string,
-  options?: TelegramBot.AnswerCallbackQueryOptions,
+  options?: Omit<TelegramBot.AnswerCallbackQueryOptions, 'callback_query_id'>,
 ): Promise<void> {
   try {
-    await bot.answerCallbackQuery(callbackQueryId, options);
+    await bot.answerCallbackQuery({
+      callback_query_id: callbackQueryId,
+      ...(options || {}),
+    });
   } catch (error) {
     if (
       error instanceof Error &&
@@ -321,7 +324,8 @@ function getAllowedChatId(message: TelegramBot.Message): number | null {
 async function canDeleteMessages(chatId: number): Promise<boolean> {
   try {
     const admins = await bot.getChatAdministrators(chatId);
-    const botMember = admins.find((member) => member.user.id === bot.me?.id);
+    const me = await bot.getMe();
+    const botMember = admins.find((member) => member.user.id === me.id);
 
     return Boolean(
       botMember &&
@@ -611,9 +615,11 @@ async function sendMediaWithCaption(
     }
   }
 
-  return bot.sendMediaGroup(chatId, clonedMedia, {
+  const sentMessages = await bot.sendMediaGroup(chatId, clonedMedia, {
     reply_to_message_id: replyToMessageId,
   });
+
+  return Array.isArray(sentMessages) ? sentMessages : [sentMessages];
 }
 
 async function sendMediaRestorePrompt(
@@ -923,7 +929,9 @@ bot.on('message', async (message) => {
     return;
   }
 
-  if (message.new_chat_members?.some((member) => member.id === bot.me?.id)) {
+  const me = await bot.getMe();
+
+  if (message.new_chat_members?.some((member) => member.id === me.id)) {
     const hasDeletePermission = await canDeleteMessages(message.chat.id);
 
     if (!hasDeletePermission) {
