@@ -15,11 +15,24 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 app.get('/', (_, res) => {
-  res.send('Bot is running!');
+  res.json({
+    ok: true,
+    service: 'transform_insta_link',
+    uptimeSec: Math.round(process.uptime()),
+    primaryDomain: INSTA_FIX_DOMAIN,
+    fallbackDomain: INSTA_FIX_FALLBACK,
+    allowedChatsConfigured: ALLOWED_CHAT_IDS.size > 0,
+  });
 });
 
 app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
+  console.log('[startup] HTTP server listening', {
+    port,
+    primaryDomain: INSTA_FIX_DOMAIN,
+    fallbackDomain: INSTA_FIX_FALLBACK,
+    allowedChatIdsCount: ALLOWED_CHAT_IDS.size,
+    nodeEnv: process.env.NODE_ENV || 'development',
+  });
 });
 
 const ACTION_DELETE_DELAY_MS = 1000;
@@ -36,8 +49,8 @@ const RETRY_BACKOFF_BASE_MS = 1000;
 const INSTAGRAM_HOST_PATTERN = /(^|\.)instagram\.com$/i;
 const DD_INSTAGRAM_HOST_PATTERN = /(^|\.)ddinstagram\.com$/i;
 const VX_INSTAGRAM_HOST_PATTERN = /(^|\.)vxinstagram\.com$/i;
-const INSTA_FIX_DOMAIN = 'ddinstagram.com';
-const INSTA_FIX_FALLBACK = 'kksave.com';
+const INSTA_FIX_DOMAIN = process.env.INSTA_FIX_DOMAIN || 'ddinstagram.com';
+const INSTA_FIX_FALLBACK = process.env.INSTA_FIX_FALLBACK || 'kksave.com';
 const SHARE_HOSTS = new Set(['share.icloud.com']);
 const URL_REGEX = /https?:\/\/[^\s<>()]+/gi;
 const TRAILING_PUNCTUATION_REGEX = /[),.!?:;]+$/;
@@ -1024,4 +1037,12 @@ bot.on('message', async (message) => {
   }
 });
 
-console.log('Bot is running...');
+process.on('unhandledRejection', (reason) => {
+  console.error('[fatal] unhandledRejection', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('[fatal] uncaughtException', error);
+});
+
+console.log('[startup] Telegram bot polling started');
