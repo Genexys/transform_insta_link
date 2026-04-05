@@ -1,1687 +1,1019 @@
-import dotenv from 'dotenv';
+import 'dotenv/config';
+import express from 'express';
 import TelegramBot from 'node-telegram-bot-api';
-import http from 'http';
-import { YtDlp } from 'ytdlp-nodejs';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
-import { Client } from 'pg';
+import type { Message, ChatMember, ParseMode } from 'node-telegram-bot-api';
 
-dotenv.config();
+const token = process.env.BOT_TOKEN;
 
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
-const DATABASE_URL = process.env.DATABASE_URL;
-const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID;
+if (!token) {
+  throw new Error('BOT_TOKEN is not set');
+}
 
-// --- Structured logger ---
-const log = {
-  info: (msg: string, meta?: object) =>
-    console.log(
-      JSON.stringify({
-        level: 'info',
-        msg,
-        ...meta,
-        ts: new Date().toISOString(),
-      })
-    ),
-  warn: (msg: string, meta?: object) =>
-    console.warn(
-      JSON.stringify({
-        level: 'warn',
-        msg,
-        ...meta,
-        ts: new Date().toISOString(),
-      })
-    ),
-  error: (msg: string, meta?: object) =>
-    console.error(
-      JSON.stringify({
-        level: 'error',
-        msg,
-        ...meta,
-        ts: new Date().toISOString(),
-      })
-    ),
+const bot = new TelegramBot(token, { polling: true });
+
+const app = express();
+const port = process.env.PORT || 3000;
+
+app.get('/', (_, res) => {
+  res.send('Bot is running!');
+});
+
+app.listen(port, () => {
+  console.log(`Server is running on port ${port}`);
+});
+
+const ACTION_DELETE_DELAY_MS = 1000;
+const ACTION_DELETE_CHECK_INTERVAL_MS = 500;
+const ACTION_DELETE_MAX_ATTEMPTS = 10;
+const DEFAULT_EDIT_DELAY_MS = 1000;
+const MAX_CAPTION_LENGTH = 900;
+const MAX_MEDIA_GROUP_ITEMS = 10;
+const MAX_MEDIA_GROUP_TOTAL_BYTES = 49 * 1024 * 1024;
+const MAX_SINGLE_FILE_BYTES = 49 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 49 * 1024 * 1024;
+const MAX_RETRY_ATTEMPTS = 5;
+const RETRY_BACKOFF_BASE_MS = 1000;
+const INSTAGRAM_HOST_PATTERN = /(^|\.)instagram\.com$/i;
+const DD_INSTAGRAM_HOST_PATTERN = /(^|\.)ddinstagram\.com$/i;
+const VX_INSTAGRAM_HOST_PATTERN = /(^|\.)vxinstagram\.com$/i;
+const INSTA_FIX_DOMAIN = 'ddinstagram.com';
+const INSTA_FIX_FALLBACK = 'kksave.com';
+const SHARE_HOSTS = new Set(['share.icloud.com']);
+const URL_REGEX = /https?:\/\/[^\s<>()]+/gi;
+const TRAILING_PUNCTUATION_REGEX = /[),.!?:;]+$/;
+const TELEGRAM_CAPTION_LIMIT = 1024;
+const TELEGRAM_TEXT_LIMIT = 4096;
+
+const ALLOWED_CHAT_IDS = new Set<number>(
+  (process.env.ALLOWED_CHAT_IDS || '')
+    .split(',')
+    .map((value) => Number.parseInt(value.trim(), 10))
+    .filter((value) => Number.isInteger(value)),
+);
+
+const usersWaitingForCaption = new Set<number>();
+
+type PendingAction = {
+  timeout: NodeJS.Timeout;
+  chatId: number;
+  replyMessageId: number;
+  requestMessageId: number;
 };
 
-const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+const pendingDeleteActions = new Map<string, PendingAction>();
+const callbackProcessing = new Set<string>();
 
-async function fetchWithRetry(
-  url: string,
-  opts: RequestInit
-): Promise<Response> {
-  try {
-    return await fetch(url, opts);
-  } catch {
-    await sleep(300);
-    return await fetch(url, opts);
-  }
+type PendingDeletedMedia = {
+  media: TelegramBot.InputMedia[];
+  sourceMessageId: number;
+};
+
+const pendingDeletedMediaByUser = new Map<number, PendingDeletedMedia>();
+
+const pendingDeletedMediaGroups = new Map<string, TelegramBot.Message[]>();
+const pendingDeletedMediaGroupTimers = new Map<string, NodeJS.Timeout>();
+
+function normalizeCaptionText(input: string): string {
+  return input.replace(/\r\n/g, '\n').trim();
 }
 
-// Self-hosted InstaFix (приоритет) + публичный фоллбэк
-const INSTA_FIX_DOMAIN = 'instafix-production-c2e8.up.railway.app';
-const INSTA_FIX_FALLBACK = 'kkinstagram.com';
-
-// TikTok: tnktok.com (primary, og:video), vxtiktok.com (fallback, og:title only)
-const TIKTOK_FIXERS = ['tnktok.com'];
-
-// Twitter: fxtwitter.com (primary), fixupx.com (fallback)
-const TWITTER_FIXERS = ['fxtwitter.com', 'fixupx.com'];
-
-// Self-hosted Reddit embed (наш бот на Railway — свой IP, своя квота)
-const REDDIT_EMBED_DOMAIN = 'transforminstalink-production.up.railway.app';
-
-const bot = new TelegramBot(BOT_TOKEN, { polling: true });
-const ytdlp = new YtDlp({ binaryPath: 'yt-dlp', ffmpegPath: 'ffmpeg' });
-
-async function sendAdminAlert(message: string) {
-  if (!ADMIN_CHAT_ID) return;
-  try {
-    await bot.sendMessage(ADMIN_CHAT_ID, `🚨 ${message}`);
-  } catch (err) {
-    log.error('Failed to send admin alert', { err: String(err) });
-  }
-}
-
-// --- PostgreSQL Setup ---
-const dbClient = new Client({
-  connectionString: DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false, // Для Railway/Heroku часто нужно
-  },
-});
-
-async function initDB() {
-  if (!DATABASE_URL) {
-    console.warn(
-      '⚠️ DATABASE_URL не найден. Работа без базы данных (лимиты отключены).'
-    );
-    return;
-  }
-  try {
-    await dbClient.connect();
-    console.log('✅ Подключено к PostgreSQL');
-
-    await dbClient.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        telegram_id BIGINT UNIQUE NOT NULL,
-        username TEXT,
-        downloads_count INTEGER DEFAULT 0,
-        is_premium BOOLEAN DEFAULT FALSE,
-        referred_by BIGINT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-    await dbClient.query(`
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by BIGINT;
-    `);
-
-    await dbClient.query(`
-      CREATE TABLE IF NOT EXISTS error_logs (
-        id SERIAL PRIMARY KEY,
-        telegram_id BIGINT,
-        error_message TEXT,
-        stack_trace TEXT,
-        url TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-    await dbClient.query(`
-      CREATE TABLE IF NOT EXISTS link_events (
-        id SERIAL PRIMARY KEY,
-        platform TEXT,
-        service TEXT,
-        is_fallback BOOLEAN,
-        chat_id BIGINT,
-        user_id BIGINT,
-        created_at TIMESTAMP DEFAULT NOW()
-      );
-    `);
-    await dbClient.query(`
-      ALTER TABLE link_events
-        ADD COLUMN IF NOT EXISTS chat_id BIGINT,
-        ADD COLUMN IF NOT EXISTS user_id BIGINT;
-    `);
-    await dbClient.query(`
-      CREATE TABLE IF NOT EXISTS chat_settings (
-        chat_id BIGINT PRIMARY KEY,
-        is_premium BOOLEAN DEFAULT FALSE,
-        quiet_mode BOOLEAN DEFAULT FALSE,
-        created_at TIMESTAMP DEFAULT NOW()
-      );
-    `);
-    log.info('DB tables ready');
-  } catch (err) {
-    log.error('DB connection failed', { err: String(err) });
-  }
-}
-
-initDB();
-
-// --- DB Helpers ---
-
-async function saveErrorLog(
-  telegramId: number | null,
-  message: string,
-  stack: string = '',
-  url: string = ''
-) {
-  if (!DATABASE_URL) return;
-  try {
-    await dbClient.query(
-      'INSERT INTO error_logs (telegram_id, error_message, stack_trace, url) VALUES ($1, $2, $3, $4)',
-      [telegramId, message, stack, url]
-    );
-  } catch (err) {
-    console.error('Failed to save error log to DB:', err);
-  }
-}
-
-async function getUser(telegramId: number) {
-  if (!DATABASE_URL) return null;
-  const res = await dbClient.query(
-    'SELECT * FROM users WHERE telegram_id = $1',
-    [telegramId]
-  );
-  return res.rows[0];
-}
-
-async function createUser(telegramId: number, username: string = '') {
-  if (!DATABASE_URL) return;
-  try {
-    await dbClient.query(
-      'INSERT INTO users (telegram_id, username) VALUES ($1, $2) ON CONFLICT (telegram_id) DO NOTHING',
-      [telegramId, username]
-    );
-  } catch (err) {
-    console.error('Error creating user:', err);
-  }
-}
-
-async function incrementDownloads(telegramId: number) {
-  if (!DATABASE_URL) return;
-  await dbClient.query(
-    'UPDATE users SET downloads_count = downloads_count + 1 WHERE telegram_id = $1',
-    [telegramId]
-  );
-}
-
-async function setPremium(telegramId: number) {
-  if (!DATABASE_URL) return;
-  await dbClient.query(
-    'UPDATE users SET is_premium = TRUE WHERE telegram_id = $1',
-    [telegramId]
-  );
-}
-
-async function setReferredBy(
-  telegramId: number,
-  referrerId: number
-): Promise<void> {
-  if (!DATABASE_URL) return;
-  try {
-    await dbClient.query(
-      'UPDATE users SET referred_by = $1 WHERE telegram_id = $2 AND referred_by IS NULL',
-      [referrerId, telegramId]
-    );
-  } catch (err) {
-    log.error('setReferredBy failed', { err: String(err) });
-  }
-}
-
-async function getReferralCount(telegramId: number): Promise<number> {
-  if (!DATABASE_URL) return 0;
-  try {
-    const res = await dbClient.query(
-      'SELECT COUNT(*) FROM users WHERE referred_by = $1',
-      [telegramId]
-    );
-    return parseInt(res.rows[0].count);
-  } catch {
-    return 0;
-  }
-}
-
-async function logLinkEvent(
-  platform: string,
-  service: string,
-  isFallback: boolean,
-  chatId?: number,
-  userId?: number
-) {
-  if (!DATABASE_URL) return;
-  try {
-    await dbClient.query(
-      'INSERT INTO link_events (platform, service, is_fallback, chat_id, user_id) VALUES ($1, $2, $3, $4, $5)',
-      [platform, service, isFallback, chatId ?? null, userId ?? null]
-    );
-  } catch (err) {
-    log.error('Failed to log link event', { err: String(err) });
-  }
-}
-
-async function getChatSettings(
-  chatId: number
-): Promise<{ is_premium: boolean; quiet_mode: boolean } | null> {
-  if (!DATABASE_URL) return null;
-  try {
-    const res = await dbClient.query(
-      'SELECT is_premium, quiet_mode FROM chat_settings WHERE chat_id = $1',
-      [chatId]
-    );
-    return res.rows[0] ?? null;
-  } catch (err) {
-    log.error('getChatSettings failed', { err: String(err) });
-    return null;
-  }
-}
-
-async function upsertChatSettings(
-  chatId: number,
-  patch: { is_premium?: boolean; quiet_mode?: boolean }
-) {
-  if (!DATABASE_URL) return;
-  try {
-    await dbClient.query(
-      `INSERT INTO chat_settings (chat_id, is_premium, quiet_mode)
-       VALUES ($1, COALESCE($2, FALSE), COALESCE($3, FALSE))
-       ON CONFLICT (chat_id) DO UPDATE SET
-         is_premium = CASE WHEN $2::boolean IS NOT NULL THEN $2 ELSE chat_settings.is_premium END,
-         quiet_mode = CASE WHEN $3::boolean IS NOT NULL THEN $3 ELSE chat_settings.quiet_mode END`,
-      [chatId, patch.is_premium ?? null, patch.quiet_mode ?? null]
-    );
-  } catch (err) {
-    log.error('upsertChatSettings failed', { err: String(err) });
-  }
-}
-
-// --- Logic ---
-
-function revertUrlForDownload(url: string): string {
-  let result = url
-    .replace(INSTA_FIX_DOMAIN, 'instagram.com')
-    .replace(INSTA_FIX_FALLBACK, 'instagram.com')
-    .replace(REDDIT_EMBED_DOMAIN, 'reddit.com')
-    .replace('vxthreads.net', 'threads.net')
-    .replace('bskx.app', 'bsky.app')
-    .replace('fixdeviantart.com', 'deviantart.com')
-    .replace('vxvk.com', 'vk.com')
-    .replace('phixiv.net', 'pixiv.net');
-  for (const fixer of TIKTOK_FIXERS) {
-    result = result.replace(fixer, 'tiktok.com');
-  }
-  for (const fixer of TWITTER_FIXERS) {
-    result = result.replace(fixer, 'x.com');
-  }
-  return result;
-}
-
-function convertToInstaFix(url: string): string {
-  let convertedUrl = url
-    .replace(/(?:www\.)?instagram\.com/g, INSTA_FIX_DOMAIN)
-    .replace(/(?:www\.)?instagr\.am/g, INSTA_FIX_DOMAIN)
-    .replace(/(?:www\.)?reddit\.com/g, REDDIT_EMBED_DOMAIN)
-    // vxthreads.net down (2026), threads.net передаём без изменений
-    .replace(/bsky\.app/g, 'bskx.app')
-    .replace(/deviantart\.com/g, 'fixdeviantart.com')
-    // .replace(/vk\.com/g, 'vxvk.com')
-    // .replace(/m\.vk\.com/g, 'vxvk.com')
-    .replace(/pixiv\.net/g, 'phixiv.net');
-
-  if (url.includes('reddit.com') && url.includes('/s/')) {
-    convertedUrl += ' ⚠️ (кросспост - видео может быть в оригинальном посте)';
-  }
-
-  return convertedUrl;
-}
-
-const instaRegex = /(?:www\.)?(?:instagram\.com|instagr\.am)/;
-
-async function hasOgVideo(url: string): Promise<boolean> {
-  try {
-    const resp = await fetchWithRetry(url, {
-      method: 'GET',
-      redirect: 'follow',
-      signal: AbortSignal.timeout(5000),
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (compatible; TelegramBot/1.0; +https://core.telegram.org/bots)',
-      },
-    });
-    const html = await resp.text();
-    return /og:video/.test(html);
-  } catch {
-    return false;
-  }
-}
-
-async function getWorkingInstaFixUrl(
-  originalUrl: string,
-  chatId?: number,
-  userId?: number
-): Promise<string> {
-  const isReel =
-    originalUrl.includes('/reel/') || originalUrl.includes('/reels/');
-  const selfHostedUrl = originalUrl.replace(instaRegex, INSTA_FIX_DOMAIN);
-
-  try {
-    if (isReel) {
-      // Для reels проверяем, что self-hosted действительно отдаёт og:video
-      const hasVideo = await hasOgVideo(`https://${selfHostedUrl}`);
-      if (hasVideo) {
-        logLinkEvent('instagram', INSTA_FIX_DOMAIN, false, chatId, userId);
-        return selfHostedUrl;
-      }
-      log.warn('Self-hosted InstaFix missing og:video for reel, falling back', {
-        url: originalUrl,
-      });
-    } else {
-      // Для постов/stories достаточно проверить доступность сервиса
-      await fetchWithRetry(`https://${INSTA_FIX_DOMAIN}/`, {
-        method: 'HEAD',
-        redirect: 'manual',
-        signal: AbortSignal.timeout(3000),
-      });
-      logLinkEvent('instagram', INSTA_FIX_DOMAIN, false, chatId, userId);
-      return selfHostedUrl;
-    }
-  } catch {
-    log.warn('Instagram self-hosted unreachable, using fallback', {
-      url: originalUrl,
-    });
-  }
-
-  const fallbackUrl = originalUrl.replace(instaRegex, INSTA_FIX_FALLBACK);
-  try {
-    await fetchWithRetry(`https://${INSTA_FIX_FALLBACK}/`, {
-      method: 'HEAD',
-      redirect: 'manual',
-      signal: AbortSignal.timeout(3000),
-    });
-    logLinkEvent('instagram', INSTA_FIX_FALLBACK, true, chatId, userId);
-    return fallbackUrl;
-  } catch {}
-
-  log.error('Both Instagram services are unreachable', { url: originalUrl });
-  logLinkEvent('instagram', 'none', true, chatId, userId);
-  sendAdminAlert(
-    `[INSTAGRAM] Оба сервиса недоступны\nURL: ${originalUrl}`
-  ).catch(() => {});
-  return fallbackUrl;
-}
-
-const tiktokRegex = /(?:(?:www|vm|vt)\.)?tiktok\.com/;
-
-async function getWorkingTikTokUrl(
-  originalUrl: string,
-  chatId?: number,
-  userId?: number
-): Promise<string> {
-  // Все сервисы проверяем параллельно — побеждает первый вернувший 200
-  const checks = TIKTOK_FIXERS.map(async fixer => {
-    const fixedUrl = originalUrl.replace(tiktokRegex, fixer);
-    const res = await fetchWithRetry(fixedUrl, {
-      method: 'HEAD',
-      redirect: 'manual',
-      signal: AbortSignal.timeout(3000),
-    });
-    if (res.status !== 200) throw new Error(`${fixer}: ${res.status}`);
-    return fixedUrl;
-  });
-  try {
-    const result = await Promise.any(checks);
-    const service =
-      TIKTOK_FIXERS.find(f => result.includes(f)) ?? TIKTOK_FIXERS[0];
-    logLinkEvent(
-      'tiktok',
-      service,
-      service !== TIKTOK_FIXERS[0],
-      chatId,
-      userId
-    );
-    return result;
-  } catch {
-    // Все недоступны — используем первый как best effort
-    log.warn('All TikTok fixers failed', { url: originalUrl });
-    logLinkEvent('tiktok', 'none', true, chatId, userId);
-    return originalUrl.replace(tiktokRegex, TIKTOK_FIXERS[0]);
-  }
-}
-
-const twitterRegex = /(?:(?:www|mobile)\.)?(?:x|twitter)\.com/;
-
-async function getWorkingTwitterUrl(
-  originalUrl: string,
-  chatId?: number,
-  userId?: number
-): Promise<string> {
-  const checks = TWITTER_FIXERS.map(async fixer => {
-    const fixedUrl = originalUrl.replace(twitterRegex, fixer);
-    const res = await fetchWithRetry(fixedUrl, {
-      method: 'HEAD',
-      redirect: 'manual',
-      signal: AbortSignal.timeout(3000),
-    });
-    if (res.status >= 500) throw new Error(`${fixer}: ${res.status}`);
-    return fixedUrl;
-  });
-  try {
-    const result = await Promise.any(checks);
-    const service =
-      TWITTER_FIXERS.find(f => result.includes(f)) ?? TWITTER_FIXERS[0];
-    logLinkEvent(
-      'twitter',
-      service,
-      service !== TWITTER_FIXERS[0],
-      chatId,
-      userId
-    );
-    return result;
-  } catch {
-    log.warn('All Twitter fixers failed', { url: originalUrl });
-    logLinkEvent('twitter', 'none', true, chatId, userId);
-    return originalUrl.replace(twitterRegex, TWITTER_FIXERS[0]);
-  }
-}
-
-function findsocialLinks(text: string): string[] {
-  const words = text.split(/\s+/); // Разбиваем по любым пробельным символам
-  const socialLinks: string[] = [];
-
-  for (let word of words) {
-    const cleanWord = word.replace(/[.,!?;)]*$/, '');
-
-    // Instagram
-    if (
-      (cleanWord.includes('instagram.com') ||
-        cleanWord.includes('instagr.am')) &&
-      (cleanWord.includes('/p/') ||
-        cleanWord.includes('/reel/') ||
-        cleanWord.includes('/tv/'))
-    ) {
-      if (
-        !cleanWord.includes('ddinstagram.com') &&
-        !cleanWord.includes('kkinstagram.com') &&
-        !cleanWord.includes(INSTA_FIX_DOMAIN) &&
-        !cleanWord.includes('vxinstagram.com')
-      ) {
-        socialLinks.push(cleanWord);
-      }
-    }
-
-    // X.com (Twitter)
-    if (
-      cleanWord.includes('x.com') &&
-      (cleanWord.match(/x\.com\/(?:[A-Za-z0-9_]+)\/status\/[0-9]+/) ||
-        cleanWord.match(/x\.com\/(?:[A-Za-z0-9_]+)\/replies/)) &&
-      !TWITTER_FIXERS.some(f => cleanWord.includes(f))
-    ) {
-      socialLinks.push(cleanWord);
-    }
-
-    // TikTok
-    if (
-      ((cleanWord.includes('tiktok.com') &&
-        cleanWord.match(/tiktok\.com\/@[A-Za-z0-9_.-]+\/video\/[0-9]+/)) ||
-        cleanWord.includes('vt.tiktok.com') ||
-        cleanWord.includes('vm.tiktok.com')) &&
-      !cleanWord.includes('vxtiktok.com')
-    ) {
-      socialLinks.push(cleanWord);
-    }
-
-    // Reddit
-    if (
-      cleanWord.includes('reddit.com') &&
-      !cleanWord.includes(REDDIT_EMBED_DOMAIN)
-    ) {
-      if (
-        cleanWord.match(/reddit\.com\/r\/[A-Za-z0-9_]+\/comments/) ||
-        cleanWord.match(/www\.reddit\.com\/r\/[A-Za-z0-9_]+\/comments/) ||
-        cleanWord.match(/reddit\.com\/r\/[A-Za-z0-9_]+\/s\/[A-Za-z0-9_]+/)
-      ) {
-        socialLinks.push(cleanWord);
-      }
-    }
-
-    // Threads: vxthreads.net down (2026), all alternatives also down — skip
-    // if (cleanWord.includes('threads.net') && cleanWord.includes('/post/')) {
-    //   socialLinks.push(cleanWord);
-    // }
-
-    // Bluesky
-    if (
-      cleanWord.includes('bsky.app') &&
-      cleanWord.includes('/post/') &&
-      !cleanWord.includes('bskx.app')
-    ) {
-      socialLinks.push(cleanWord);
-    }
-
-    // DeviantArt
-    if (
-      cleanWord.includes('deviantart.com') &&
-      (cleanWord.includes('/art/') ||
-        cleanWord.match(/deviantart\.com\/[A-Za-z0-9_-]+\/art\//)) &&
-      !cleanWord.includes('fixdeviantart.com')
-    ) {
-      socialLinks.push(cleanWord);
-    }
-
-    // Pixiv
-    if (
-      cleanWord.includes('pixiv.net') &&
-      cleanWord.includes('/artworks/') &&
-      !cleanWord.includes('phixiv.net')
-    ) {
-      socialLinks.push(cleanWord);
-    }
-
-    // Pinterest
-    if (
-      cleanWord.includes('pinterest.com/pin/') ||
-      cleanWord.includes('pin.it/')
-    ) {
-      socialLinks.push(cleanWord);
-    }
-
-    // YouTube Shorts
-    // if (
-    //   cleanWord.includes('youtube.com/shorts/') ||
-    //   (cleanWord.includes('youtu.be/') && !cleanWord.includes('youtube.com/watch'))
-    // ) {
-    //   // youtu.be часто используется для обычных видео, но иногда и для шортсов.
-    //   // yt-dlp справится с обоими, добавим в поддержку.
-    //    socialLinks.push(cleanWord);
-    // }
-
-    // VK Video & Clips
-    // if (
-    //   (cleanWord.includes('vk.com/video') ||
-    //     cleanWord.includes('vk.com/clip')) &&
-    //   !cleanWord.includes('vxvk.com')
-    // ) {
-    //   socialLinks.push(cleanWord);
-    // }
-  }
-
-  return socialLinks;
-}
-
-bot.on('inline_query', async query => {
-  const queryText = query.query.trim();
-  const queryId = query.id;
-
-  console.log('Inline запрос:', queryText);
-
-  if (!queryText) {
-    await bot.answerInlineQuery(queryId, [
-      {
-        type: 'article',
-        id: 'instruction',
-        title: '📱 Link Fixer',
-        description: 'Введите ссылку для исправления',
-        input_message_content: {
-          message_text: '📱 Отправьте ссылку для получения рабочей версии',
-        },
-      },
-    ]);
-    return;
-  }
-
-  const socialLinks = findsocialLinks(queryText);
-
-  if (socialLinks.length === 0) {
-    await bot.answerInlineQuery(queryId, [
-      {
-        type: 'article',
-        id: 'no_links',
-        title: '❌ ссылки не найдены',
-        description: 'Убедитесь что отправили правильную ссылку',
-        input_message_content: {
-          message_text: queryText,
-        },
-      },
-    ]);
-    return;
-  }
-
-  const fixedLinks = await Promise.all(
-    socialLinks.map(async link => {
-      const fullLink = link.startsWith('http') ? link : `https://${link}`;
-      if (fullLink.includes('pinterest') || fullLink.includes('pin.it')) {
-        return fullLink;
-      }
-      if (
-        fullLink.includes('instagram.com') ||
-        fullLink.includes('instagr.am')
-      ) {
-        return getWorkingInstaFixUrl(fullLink);
-      }
-      if (fullLink.includes('tiktok.com')) {
-        return getWorkingTikTokUrl(fullLink);
-      }
-      if (fullLink.includes('x.com') || fullLink.includes('twitter.com')) {
-        return getWorkingTwitterUrl(fullLink);
-      }
-      return convertToInstaFix(fullLink);
-    })
-  );
-
-  let fixedText = queryText;
-  socialLinks.forEach((originalLink, index) => {
-    fixedText = fixedText.replace(originalLink, fixedLinks[index]);
-  });
-
-  const platforms = new Set<string>();
-  fixedLinks.forEach(url => {
-    if (url.includes(INSTA_FIX_DOMAIN) || url.includes(INSTA_FIX_FALLBACK))
-      platforms.add('📸 Instagram');
-    else if (TIKTOK_FIXERS.some(f => url.includes(f)))
-      platforms.add('🎵 TikTok');
-    else if (TWITTER_FIXERS.some(f => url.includes(f)))
-      platforms.add('🐦 Twitter');
-    else if (url.includes(REDDIT_EMBED_DOMAIN)) platforms.add('🟠 Reddit');
-    else if (url.includes('bskx')) platforms.add('🦋 Bluesky');
-    else if (url.includes('fixdeviantart')) platforms.add('🎨 DeviantArt');
-    else if (url.includes('phixiv')) platforms.add('🅿️ Pixiv');
-  });
-  const platformStr =
-    platforms.size > 0 ? Array.from(platforms).join(' · ') : 'ссылка';
-
-  const results = [
-    {
-      type: 'article' as const,
-      id: 'fixed_message',
-      title: `✅ ${platformStr}`,
-      description:
-        fixedLinks.length === 1
-          ? fixedLinks[0]
-          : `${fixedLinks.length} ссылок исправлено`,
-      input_message_content: {
-        message_text: fixedText,
-        disable_web_page_preview: false,
-      },
-    },
-    {
-      type: 'article' as const,
-      id: 'links_only',
-      title: 'ℹ️ Только ссылки',
-      description: fixedLinks.join(' '),
-      input_message_content: {
-        message_text: fixedLinks.join('\n'),
-        disable_web_page_preview: false,
-      },
-    },
-  ];
-
-  await bot.answerInlineQuery(queryId, results, {
-    cache_time: 0,
-  });
-});
-
-bot.on('message', async msg => {
-  const chatId = msg.chat.id;
-  const messageText = msg.text;
-  const isGroup = msg.chat.type === 'group' || msg.chat.type === 'supergroup';
-
-  if (!messageText || messageText.startsWith('/')) {
-    return;
-  }
-
-  // console.log('🚀 ~ msg.from?.username:', msg.from?.username);
-  // if (msg.from?.username === 'bulocha_s_coritsoi') {
-  //   const sendOptions: TelegramBot.SendMessageOptions = {
-  //     disable_web_page_preview: false,
-  //     reply_to_message_id: msg.message_id,
-  //   };
-  //   await bot.sendMessage(chatId, 'Какой Илья хороший человек!', sendOptions);
-
-  //   await bot.deleteMessage(chatId, msg.message_id);
-  //   return;
-  // }
-
-  console.log('Получено сообщение:', messageText);
-  // console.log(
-  //   'Получено сообщение от:',
-  //   msg.from?.username || 'неизвестный пользователь'
-  // );
-
-  const socialLinks = findsocialLinks(messageText);
-
-  console.log('Найденные ссылки:', socialLinks);
-
-  if (socialLinks.length > 0) {
-    const msgUserId = msg.from?.id;
-    const fixedLinks = await Promise.all(
-      socialLinks.map(async link => {
-        const fullLink = link.startsWith('http') ? link : `https://${link}`;
-        if (fullLink.includes('pinterest') || fullLink.includes('pin.it')) {
-          return fullLink;
-        }
-        if (
-          fullLink.includes('instagram.com') ||
-          fullLink.includes('instagr.am')
-        ) {
-          return getWorkingInstaFixUrl(
-            fullLink,
-            isGroup ? chatId : undefined,
-            msgUserId
-          );
-        }
-        if (fullLink.includes('tiktok.com')) {
-          return getWorkingTikTokUrl(
-            fullLink,
-            isGroup ? chatId : undefined,
-            msgUserId
-          );
-        }
-        if (fullLink.includes('x.com') || fullLink.includes('twitter.com')) {
-          return getWorkingTwitterUrl(
-            fullLink,
-            isGroup ? chatId : undefined,
-            msgUserId
-          );
-        }
-        let platform = 'other';
-        if (fullLink.includes('reddit.com')) platform = 'reddit';
-        else if (fullLink.includes('bsky.app')) platform = 'bluesky';
-        else if (fullLink.includes('deviantart.com')) platform = 'deviantart';
-        else if (fullLink.includes('pixiv.net')) platform = 'pixiv';
-        logLinkEvent(
-          platform,
-          'converted',
-          false,
-          isGroup ? chatId : undefined,
-          msgUserId
-        );
-        return convertToInstaFix(fullLink);
-      })
-    );
-
-    console.log('Исправленные ссылки:', fixedLinks);
-
-    const username = msg.from?.username ? `@${msg.from.username}` : 'кто-то';
-
-    let finalText = messageText;
-    const platforms = new Set<string>();
-
-    fixedLinks.forEach((url, index) => {
-      finalText = finalText.replace(socialLinks[index], url);
-
-      if (url.includes(INSTA_FIX_DOMAIN) || url.includes(INSTA_FIX_FALLBACK))
-        platforms.add('📸 Instagram');
-      else if (url.includes('fxtwitter')) platforms.add('🐦 X/Twitter');
-      else if (TIKTOK_FIXERS.some(f => url.includes(f)))
-        platforms.add('🎵 TikTok');
-      else if (url.includes(REDDIT_EMBED_DOMAIN)) platforms.add('🟠 Reddit');
-      else if (url.includes('bskx')) platforms.add('🦋 Bluesky');
-      else if (url.includes('fixdeviantart')) platforms.add('🎨 DeviantArt');
-      else if (url.includes('phixiv')) platforms.add('🅿️ Pixiv');
-      else if (url.includes('vxvk')) platforms.add('💙 VK Video/Clip');
-      else if (url.includes('pinterest') || url.includes('pin.it'))
-        platforms.add('📌 Pinterest');
-      // else if (url.includes('youtube') || url.includes('youtu.be'))
-      //   platform = '📺 YouTube';
-    });
-
-    const platformStr =
-      platforms.size > 0 ? `(${Array.from(platforms).join(', ')})` : '';
-
-    const chatSettings = isGroup ? await getChatSettings(chatId) : null;
-    const quietMode = chatSettings?.quiet_mode ?? false;
-    const finalMessage = quietMode
-      ? finalText
-      : `Saved ${username} a click ${platformStr}:\n\n${finalText}`;
-
-    // TikTok — единственная платформа где yt-dlp работает без авторизации (2026).
-    // Instagram/Reddit/Twitter требуют куки или заблокировали API.
-    const isDownloadable = (url: string) =>
-      TIKTOK_FIXERS.some(f => url.includes(f));
-
-    const replyMarkup =
-      fixedLinks.length === 1 && isDownloadable(fixedLinks[0])
-        ? {
-            inline_keyboard: [
-              [
-                {
-                  text: '📥 Скачать видео/фото',
-                  callback_data: 'download_video',
-                },
-              ],
-            ],
-          }
-        : undefined;
-
-    if (isGroup) {
-      try {
-        const sendOptions: TelegramBot.SendMessageOptions = {
-          disable_web_page_preview: false,
-          reply_to_message_id: msg.message_id,
-          reply_markup: replyMarkup,
-        };
-        await bot.sendMessage(chatId, finalMessage, sendOptions);
-        console.log('✅ Сообщение-ответ успешно отправлено');
-        await bot.deleteMessage(chatId, msg.message_id);
-      } catch (error) {
-        if (error instanceof Error) {
-          console.error('❌ Ошибка при отправке ответа:', error.message);
-        }
-      }
-    } else {
-      bot.sendMessage(chatId, finalMessage, {
-        disable_web_page_preview: false,
-        reply_markup: replyMarkup,
-      });
-    }
-  }
-});
-
-bot.onText(/\/start(?:\s+(.+))?/, async msg => {
-  const chatId = msg.chat.id;
-  const telegramId = msg.from?.id;
-  const param = msg.text?.split(' ')[1];
-
-  if (telegramId && param?.startsWith('ref_')) {
-    const referrerId = parseInt(param.replace('ref_', ''));
-    if (!isNaN(referrerId) && referrerId !== telegramId) {
-      await createUser(telegramId, msg.from?.username);
-      await setReferredBy(telegramId, referrerId);
-    }
-  }
-
-  await bot.sendMessage(
-    chatId,
-    '👋 Привет! Я автоматически исправляю ссылки соцсетей, чтобы они показывали превью прямо в Telegram.\n\n' +
-      'Поддерживаю: Instagram, TikTok, Twitter/X, Reddit, Bluesky, Pixiv, DeviantArt\n\n' +
-      'Добавь меня в групповой чат — и я буду исправлять ссылки автоматически.',
-    {
-      reply_markup: {
-        inline_keyboard: [
-          [
-            {
-              text: '➕ Добавить в чат',
-              url: 'https://t.me/transform_inst_link_bot?startgroup=true',
-            },
-          ],
-        ],
-      },
-    }
-  );
-});
-
-bot.onText(/\/invite/, async msg => {
-  const chatId = msg.chat.id;
-  const telegramId = msg.from?.id;
-  if (!telegramId) return;
-
-  await createUser(telegramId, msg.from?.username);
-  const count = await getReferralCount(telegramId);
-
-  const pluralize = (n: number) => {
-    if (n % 10 === 1 && n % 100 !== 11) return 'пользователь';
-    if ([2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100))
-      return 'пользователя';
-    return 'пользователей';
-  };
-
-  await bot.sendMessage(
-    chatId,
-    `🔗 Твоя реферальная ссылка:\nhttps://t.me/transform_inst_link_bot?start=ref_${telegramId}\n\n` +
-      `Ты пригласил: ${count} ${pluralize(count)}`,
-    { disable_web_page_preview: true }
-  );
-});
-
-bot.onText(/\/help/, msg => {
-  const chatId = msg.chat.id;
-  bot.sendMessage(
-    chatId,
-    '🔧 Как использовать:\n\n' +
-      '1. Добавьте бота в групповой чат\n' +
-      '2. Дайте боту аминистраторские права для управления сообщениями (удаление и редактирование)\n' +
-      '3. Когда кто-то отправит ссылку, бот автоматически отправит исправленную версию\n' +
-      '4. Исправленные ссылки будут показывать нормальный предпросмотр\n' +
-      '5. Вы также можете использовать меня в личных сообщениях или в режиме инлайн, ' +
-      'вводя @transform_inst_link_bot в любом чате и отправляя ссылку\n' +
-      '6. Бот поддерживает ссылки на:\n' +
-      '   • Instagram (посты, reels, IGTV)\n' +
-      '   • X.com (Twitter)\n' +
-      '   • TikTok\n' +
-      '   • Reddit\n' +
-      '   • Threads\n' +
-      '   • Bluesky\n' +
-      '   • DeviantArt\n' +
-      '   • Pixiv\n' +
-      '   • VK Video/Clip\n\n'
-  );
-});
-
-bot.onText(/\/donate/, msg => {
-  const chatId = msg.chat.id;
-  const opts: TelegramBot.SendMessageOptions = {
-    parse_mode: 'MarkdownV2',
-    reply_markup: {
-      inline_keyboard: [
-        [
-          { text: '⭐ 50 Stars', callback_data: 'donate_50' },
-          { text: '⭐ 100 Stars', callback_data: 'donate_100' },
-        ],
-        [
-          { text: '⭐ 250 Stars', callback_data: 'donate_250' },
-          { text: '⭐ 500 Stars', callback_data: 'donate_500' },
-        ],
-      ],
-    },
-  };
-
-  bot.sendMessage(
-    chatId,
-    '❤️ *Поддержать проект*\n\n' +
-      'Вы можете поддержать развитие бота с помощью *Telegram Stars* или напрямую:\n\n' +
-      '💳 Тинь: `https://www.tinkoff.ru/rm/r_niFZCEvUVm.PQsrZmuYJc/pTW9A14929`\n' +
-      '💳 BOG: `GE76BG0000000538914758`\n' +
-      'USDT TRC20: `TYS2zFqnBjRtwTUyJjggFtQk9zrJX6T976`\n' +
-      '₿ BTC: `bc1q3ezgkak8swygvgfcqgtcxyswfmt4dzeeu93vq5`\n\n' +
-      'Выберите сумму в Stars ниже или воспользуйтесь реквизитами 🙏',
-    opts
-  );
-});
-
-bot.onText(/\/settings/, async msg => {
-  const chatId = msg.chat.id;
-  const isGroup = msg.chat.type === 'group' || msg.chat.type === 'supergroup';
-
-  if (!isGroup) {
-    await bot.sendMessage(
-      chatId,
-      '⚙️ /settings работает только в групповых чатах.'
-    );
-    return;
-  }
-
-  const fromId = msg.from?.id;
-  if (!fromId) return;
-
-  let isAdmin = false;
-  try {
-    const member = await bot.getChatMember(chatId, fromId);
-    isAdmin = member.status === 'administrator' || member.status === 'creator';
-  } catch {}
-
-  if (!isAdmin) {
-    await bot.sendMessage(
-      chatId,
-      '⚙️ Настройки доступны только администраторам чата.'
-    );
-    return;
-  }
-
-  const user = DATABASE_URL ? await getUser(fromId) : null;
-  const userIsPremium = user?.is_premium ?? false;
-
-  if (!userIsPremium) {
-    await bot.sendMessage(
-      chatId,
-      '⚙️ Настройки доступны premium-пользователям. Поддержи проект → /donate'
-    );
-    return;
-  }
-
-  await upsertChatSettings(chatId, { is_premium: true });
-
-  const settings = await getChatSettings(chatId);
-  const quietMode = settings?.quiet_mode ?? false;
-
-  await bot.sendMessage(chatId, '⚙️ Настройки чата  [Premium ✨]', {
-    reply_markup: {
-      inline_keyboard: [
-        [
-          {
-            text: `🔇 Тихий режим: ${quietMode ? 'вкл' : 'выкл'}`,
-            callback_data: quietMode
-              ? 'settings_quiet_off'
-              : 'settings_quiet_on',
-          },
-        ],
-      ],
-    },
-  });
-});
-
-bot.onText(/\/chatstats/, async msg => {
-  const chatId = msg.chat.id;
-  const isGroup = msg.chat.type === 'group' || msg.chat.type === 'supergroup';
-
-  if (!isGroup) {
-    await bot.sendMessage(
-      chatId,
-      '📊 /chatstats работает только в групповых чатах.'
-    );
-    return;
-  }
-
-  const fromId = msg.from?.id;
-  if (!fromId) return;
-
-  let isAdmin = false;
-  try {
-    const member = await bot.getChatMember(chatId, fromId);
-    isAdmin = member.status === 'administrator' || member.status === 'creator';
-  } catch {}
-
-  if (!isAdmin) {
-    await bot.sendMessage(
-      chatId,
-      '📊 Статистика доступна только администраторам чата.'
-    );
-    return;
-  }
-
-  const settings = await getChatSettings(chatId);
-  if (!settings?.is_premium) {
-    await bot.sendMessage(
-      chatId,
-      '📊 Статистика доступна в premium-чатах. Поддержи проект → /donate, затем запусти /settings'
-    );
-    return;
-  }
-
-  if (!DATABASE_URL) {
-    await bot.sendMessage(chatId, '📊 База данных недоступна.');
-    return;
-  }
-
-  const platformRes = await dbClient.query(
-    `SELECT platform, COUNT(*) as cnt
-     FROM link_events
-     WHERE chat_id = $1
-       AND created_at >= NOW() - INTERVAL '7 days'
-     GROUP BY platform
-     ORDER BY cnt DESC`,
-    [chatId]
-  );
-
-  const userRes = await dbClient.query(
-    `SELECT user_id, COUNT(*) as cnt
-     FROM link_events
-     WHERE chat_id = $1
-       AND user_id IS NOT NULL
-       AND created_at >= NOW() - INTERVAL '7 days'
-     GROUP BY user_id
-     ORDER BY cnt DESC
-     LIMIT 3`,
-    [chatId]
-  );
-
-  const total = platformRes.rows.reduce(
-    (sum: number, r: any) => sum + parseInt(r.cnt),
-    0
-  );
-  if (total === 0) {
-    await bot.sendMessage(
-      chatId,
-      '📊 За последние 7 дней ссылок не исправлялось.'
-    );
-    return;
-  }
-
-  const platformEmojis: Record<string, string> = {
-    instagram: '📸 Instagram',
-    tiktok: '🎵 TikTok',
-    twitter: '🐦 Twitter',
-    reddit: '🟠 Reddit',
-    bluesky: '🦋 Bluesky',
-    deviantart: '🎨 DeviantArt',
-    pixiv: '🅿️ Pixiv',
-    other: '🔗 Другие',
-  };
-
-  const platformLines = platformRes.rows
-    .map((r: any) => {
-      const pct = Math.round((parseInt(r.cnt) / total) * 100);
-      const label = platformEmojis[r.platform] ?? r.platform;
-      return `${label}: ${r.cnt} (${pct}%)`;
-    })
-    .join('\n');
-
-  const topUserLines = await Promise.all(
-    userRes.rows.map(async (r: any, i: number) => {
-      let name = `user_${r.user_id}`;
-      try {
-        const member = await bot.getChatMember(chatId, r.user_id);
-        const u = member.user;
-        name = u.username ? `@${u.username}` : (u.first_name ?? name);
-      } catch {}
-      return `${i + 1}. ${name} — ${r.cnt} ссылок`;
-    })
-  );
-
-  const text =
-    `📊 Статистика чата за 7 дней\n\n` +
-    `Всего исправлено: ${total} ссылок\n` +
-    platformLines +
-    (topUserLines.length > 0
-      ? `\n\n🏆 Самые активные:\n${topUserLines.join('\n')}`
-      : '');
-
-  await bot.sendMessage(chatId, text);
-});
-
-// Обработка callback queries (Донат + Скачивание)
-bot.on('callback_query', async query => {
-  const chatId = query.message?.chat.id;
-  const telegramId = query.from.id;
-  const username = query.from.username;
-  const data = query.data;
-
-  if (!query.message || !chatId || !data) return;
-
-  // --- Скачивание видео ---
-  if (data === 'download_video') {
-    // 1. Проверяем пользователя в БД
-    if (DATABASE_URL) {
-      await createUser(telegramId, username);
-      const user = await getUser(telegramId);
-
-      // 2. Лимит: 10 скачиваний для бесплатных пользователей
-      if (user && !user.is_premium && user.downloads_count >= 10) {
-        await bot.answerCallbackQuery(query.id, {
-          text: '⛔ Лимит бесплатных скачиваний исчерпан!',
-          show_alert: true,
-        });
-
-        const opts: TelegramBot.SendMessageOptions = {
-          parse_mode: 'MarkdownV2',
-          reply_markup: {
-            inline_keyboard: [
-              [
-                {
-                  text: '⭐ Поддержать (50 Stars)',
-                  callback_data: 'donate_50',
-                },
-              ],
-            ],
-          },
-        };
-
-        await bot.sendMessage(
-          chatId,
-          '🛑 *Бесплатный лимит исчерпан*\n\n' +
-            'Вы скачали 10 видео. Чтобы снять лимит и качать без ограничений, пожалуйста, поддержите проект донатом (любая сумма от 50 Stars).\n\n' +
-            'Это помогает оплачивать серверы и поддерживать бота! ❤️',
-          opts
-        );
-        return;
-      }
-    }
-
-    const messageText = query.message?.text;
-    if (!messageText) return;
-
-    // Извлекаем URL из сообщения (обычно последняя строка)
-    const urlMatch = messageText.match(/https?:\/\/\S+$/);
-    if (!urlMatch) {
-      await bot.answerCallbackQuery(query.id, {
-        text: '❌ Ссылка не найдена',
-        show_alert: true,
-      });
-      return;
-    }
-
-    const fixedUrl = urlMatch[0];
-    const originalUrl = revertUrlForDownload(fixedUrl);
-
-    await bot.answerCallbackQuery(query.id, { text: '⏳ Начинаю загрузку...' });
-
-    const loadingMsg = await bot.sendMessage(
-      chatId,
-      '⏳ Скачиваю видео, это может занять несколько секунд...',
-      { reply_to_message_id: query.message.message_id }
-    );
-
-    const tempFilePath = path.join(os.tmpdir(), `video_${Date.now()}.mp4`);
-
-    try {
-      console.log(`Downloading ${originalUrl} to ${tempFilePath}`);
-
-      // Пробуем скачать
-      await ytdlp.downloadAsync(originalUrl, {
-        output: tempFilePath,
-        format: 'best[ext=mp4]/best',
-        maxFilesize: '50M',
-      });
-
-      // Проверяем, создался ли файл
-      if (!fs.existsSync(tempFilePath)) {
-        throw new Error(
-          'Файл не был создан после загрузки. Возможно, yt-dlp не установлен или ссылка не поддерживается.'
-        );
-      }
-
-      const stats = fs.statSync(tempFilePath);
-      console.log(`File downloaded successfully: ${stats.size} bytes`);
-
-      await bot.sendChatAction(chatId, 'upload_video');
-
-      await bot.sendVideo(chatId, tempFilePath, {
-        caption: '🎥 Ваше видео готово!',
-        reply_to_message_id: query.message.message_id,
-        protect_content: true,
-      });
-
-      // Увеличиваем счетчик скачиваний
-      if (DATABASE_URL) {
-        await incrementDownloads(telegramId);
-      }
-
-      await bot.deleteMessage(chatId, loadingMsg.message_id);
-    } catch (error: any) {
-      console.error('Download error full details:', error);
-
-      // Сохраняем ошибку в базу данных для админа
-      await saveErrorLog(
-        telegramId,
-        error.message || 'Unknown error',
-        error.stack || '',
-        originalUrl
-      );
-
-      let errorMsg = '❌ Ошибка при скачивании.';
-
-      if (error.message && error.message.includes('File is larger than')) {
-        errorMsg =
-          '❌ Видео слишком большое для отправки через Telegram (>50MB).';
-      } else {
-        errorMsg =
-          '❌ Произошла ошибка на сервере. Попробуйте позже или используйте другую ссылку.';
-      }
-
-      await bot.editMessageText(errorMsg, {
-        chat_id: chatId,
-        message_id: loadingMsg.message_id,
-      });
-    } finally {
-      // Удаляем временный файл
-      if (fs.existsSync(tempFilePath)) {
-        fs.unlink(tempFilePath, err => {
-          if (err) console.error('Error deleting temp file:', err);
-        });
-      }
-    }
-    return;
-  }
-
-  // --- Настройки чата ---
-  if (data === 'settings_quiet_on' || data === 'settings_quiet_off') {
-    let isAdmin = false;
-    try {
-      const member = await bot.getChatMember(chatId, telegramId);
-      isAdmin =
-        member.status === 'administrator' || member.status === 'creator';
-    } catch {}
-
-    if (!isAdmin) {
-      await bot.answerCallbackQuery(query.id, {
-        text: '⛔ Только администраторы могут изменять настройки.',
-        show_alert: true,
-      });
-      return;
-    }
-
-    const newQuietMode = data === 'settings_quiet_on';
-    await upsertChatSettings(chatId, { quiet_mode: newQuietMode });
-
-    await bot.editMessageReplyMarkup(
-      {
-        inline_keyboard: [
-          [
-            {
-              text: `🔇 Тихий режим: ${newQuietMode ? 'вкл' : 'выкл'}`,
-              callback_data: newQuietMode
-                ? 'settings_quiet_off'
-                : 'settings_quiet_on',
-            },
-          ],
-        ],
-      },
-      { chat_id: chatId, message_id: query.message.message_id }
-    );
-
-    await bot.answerCallbackQuery(query.id, {
-      text: `🔇 Тихий режим ${newQuietMode ? 'включён' : 'выключен'}`,
-    });
-    return;
-  }
-
-  // --- Донаты ---
-  if (data.startsWith('donate_')) {
-    const amount = parseInt(data.split('_')[1]);
-    const title = 'Поддержка InstaFix Bot';
-    const description = `Добровольный донат в размере ${amount} Stars на развитие проекта.`;
-    const payload = `stars_donate_${amount}`;
-    const currency = 'XTR'; // XTR = Telegram Stars
-
-    try {
-      await bot.sendInvoice(
-        chatId,
-        title,
-        description,
-        payload,
-        '', // provider_token для Stars должен быть пустым
-        currency,
-        [{ label: 'Донат', amount: amount }],
-        {
-          need_name: false,
-          need_phone_number: false,
-          need_email: false,
-          need_shipping_address: false,
-        }
-      );
-
-      // Убираем уведомление о нажатии кнопки
-      await bot.answerCallbackQuery(query.id);
-    } catch (error) {
-      console.error('Ошибка при отправке инвойса:', error);
-      bot.answerCallbackQuery(query.id, {
-        text: 'Произошла ошибка при формировании счета.',
-        show_alert: true,
-      });
-    }
-  }
-});
-
-// Обязательное подтверждение перед оплатой
-bot.on('pre_checkout_query', query => {
-  bot.answerPreCheckoutQuery(query.id, true).catch(err => {
-    console.error('Ошибка pre_checkout_query:', err);
-  });
-});
-
-// Обработка успешного платежа
-bot.on('message', async msg => {
-  if (msg.successful_payment) {
-    const chatId = msg.chat.id;
-    const telegramId = msg.from?.id;
-    const amount = msg.successful_payment.total_amount;
-    const username = msg.from?.username ? `@${msg.from.username}` : 'Друг';
-
-    console.log(`✅ Получен донат: ${amount} Stars от ${username}`);
-
-    if (DATABASE_URL && telegramId) {
-      await createUser(telegramId, msg.from?.username);
-      await setPremium(telegramId);
-    }
-
-    await bot.sendMessage(
-      chatId,
-      `🎉 *Спасибо большое, ${username}!*\n\n` +
-        `Ваш донат в размере *${amount} Stars* успешно получен.\n` +
-        `✅ Теперь у вас *БЕЗЛИМИТНОЕ* скачивание видео!`,
-      { parse_mode: 'Markdown' }
-    );
-  }
-});
-
-bot.on('my_chat_member', async update => {
-  const { new_chat_member, old_chat_member, chat } = update;
-  const isGroup = chat.type === 'group' || chat.type === 'supergroup';
-  const justAdded =
-    (new_chat_member.status === 'member' ||
-      new_chat_member.status === 'administrator') &&
-    (old_chat_member.status === 'left' || old_chat_member.status === 'kicked');
-
-  if (!isGroup || !justAdded) return;
-
-  try {
-    await bot.sendMessage(
-      chat.id,
-      '👋 Привет! Я автоматически исправляю ссылки соцсетей, чтобы они показывали превью прямо в чате.\n\n' +
-        'Поддерживаю: Instagram, TikTok, Twitter/X, Reddit, Bluesky, Pixiv, DeviantArt\n\n' +
-        '⚙️ Для удаления оригинального сообщения со сломанной ссылкой нужны права администратора → «Удаление сообщений»\n\n' +
-        'Используй меня в инлайн-режиме: @transform_inst_link_bot <ссылка>',
-      {
-        reply_markup: {
-          inline_keyboard: [
-            [
-              {
-                text: '➕ Добавить в свой чат',
-                url: 'https://t.me/transform_inst_link_bot?startgroup=true',
-              },
-            ],
-          ],
-        },
-      }
-    );
-    log.info('Onboarding message sent', {
-      chatId: chat.id,
-      chatTitle: chat.title,
-    });
-  } catch (err) {
-    log.error('Failed to send onboarding message', {
-      chatId: chat.id,
-      err: String(err),
-    });
-  }
-});
-
-bot.on('polling_error', error => {
-  console.error('Polling error:', error);
-});
-
-// Global error handling
-process.on('uncaughtException', error => {
-  log.error('uncaughtException', {
-    message: error.message,
-    stack: error.stack,
-  });
-  sendAdminAlert(`[CRITICAL] uncaughtException:\n${error.message}`).catch(
-    () => {}
-  );
-});
-
-process.on('unhandledRejection', reason => {
-  log.error('unhandledRejection', { reason: String(reason) });
-  sendAdminAlert(`[CRITICAL] unhandledRejection:\n${String(reason)}`).catch(
-    () => {}
-  );
-});
-
-async function runHourlyHealthCheck() {
-  const e = (s: string) => (s === 'ok' ? '✅' : '❌');
-  const [instaMain, instaFallback, ...rest] = await Promise.all([
-    checkService(`https://${INSTA_FIX_DOMAIN}/`),
-    checkService(`https://${INSTA_FIX_FALLBACK}/`),
-    ...TIKTOK_FIXERS.map(f => checkService(`https://${f}/`)),
-    ...TWITTER_FIXERS.map(f => checkService(`https://${f}/`)),
-    checkService('https://bskx.app/'),
-    checkService('https://fixdeviantart.com/'),
-    checkService('https://phixiv.net/'),
-  ]);
-  const tiktokCount = TIKTOK_FIXERS.length;
-  const twitterCount = TWITTER_FIXERS.length;
-  const tiktokResults = rest.slice(0, tiktokCount);
-  const twitterResults = rest.slice(tiktokCount, tiktokCount + twitterCount);
-  const [bluesky, deviantart, pixiv] = rest.slice(tiktokCount + twitterCount);
-
-  const tiktokLines = TIKTOK_FIXERS.map(
-    (f, i) => `${e(tiktokResults[i])} ${f}`
-  ).join('\n');
-  const twitterLines = TWITTER_FIXERS.map(
-    (f, i) => `${e(twitterResults[i])} ${f}`
-  ).join('\n');
-
-  await sendAdminAlert(
-    `📊 Статус сервисов:\n\n` +
-      `Instagram:\n${e(instaMain)} ${INSTA_FIX_DOMAIN}\n${e(instaFallback)} ${INSTA_FIX_FALLBACK}\n\n` +
-      `TikTok:\n${tiktokLines}\n\n` +
-      `Twitter:\n${twitterLines}\n\n` +
-      `Другие:\n${e(bluesky)} bskx.app\n${e(deviantart)} fixdeviantart.com\n${e(pixiv)} phixiv.net`
-  );
-}
-
-setInterval(runHourlyHealthCheck, 3 * 60 * 60 * 1000);
-
-async function checkService(url: string): Promise<'ok' | 'down'> {
-  try {
-    const res = await fetch(url, {
-      method: 'HEAD',
-      redirect: 'manual',
-      signal: AbortSignal.timeout(3000),
-    });
-    return res.status < 500 ? 'ok' : 'down';
-  } catch {
-    return 'down';
-  }
-}
-
-function escapeHtml(str: string): string {
-  return str
+function escapeHtml(value: string): string {
+  return value
     .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 }
 
-async function handleRedditEmbed(path: string, res: http.ServerResponse) {
-  const redditUrl = `https://www.reddit.com${path}`;
+function getCaptionPreview(caption: string): string {
+  const normalized = normalizeCaptionText(caption);
 
-  // Для /s/ шорт-ссылок — просто редирект, нет смысла парсить
-  const match = path.match(/^\/r\/([^/]+)\/comments\/([^/]+)/);
-  if (!match) {
-    res.writeHead(302, { Location: redditUrl });
-    res.end();
-    return;
+  if (!normalized) {
+    return 'No caption';
   }
 
-  const [, subreddit, postId] = match;
+  const oneLine = normalized.replace(/\s+/g, ' ');
+  const limit = 40;
+
+  return oneLine.length > limit ? `${oneLine.slice(0, limit - 1)}…` : oneLine;
+}
+
+function buildRestoreButtonText(caption: string): string {
+  const preview = getCaptionPreview(caption);
+  return `↩️ Restore deleted post (${preview})`;
+}
+
+function cloneReplyMarkup(
+  markup?: TelegramBot.InlineKeyboardMarkup,
+): TelegramBot.InlineKeyboardMarkup | undefined {
+  if (!markup) {
+    return undefined;
+  }
+
+  return {
+    inline_keyboard: markup.inline_keyboard.map((row) =>
+      row.map((button) => ({ ...button })),
+    ),
+  };
+}
+
+function buildRestoreReplyMarkup(caption: string): TelegramBot.InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [
+        {
+          text: buildRestoreButtonText(caption),
+          callback_data: 'restore_deleted_media',
+        },
+      ],
+    ],
+  };
+}
+
+async function deleteMessageIfPossible(
+  chatId: number,
+  messageId: number,
+): Promise<void> {
   try {
-    const apiUrl = `https://www.reddit.com/r/${subreddit}/comments/${postId}/.json`;
-    const apiRes = await fetch(apiUrl, {
-      headers: { 'User-Agent': 'TelegramBot:transform_insta_link:v1.0' },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!apiRes.ok) throw new Error(`Reddit API ${apiRes.status}`);
-
-    const data = (await apiRes.json()) as any;
-    const post = data[0]?.data?.children?.[0]?.data;
-    if (!post) throw new Error('No post data');
-
-    const title = post.title || 'Reddit post';
-    const author = post.author || '';
-    const subredditPrefixed = post.subreddit_name_prefixed || `r/${subreddit}`;
-    const score = post.score ?? 0;
-    const numComments = post.num_comments ?? 0;
-    const selftext = (post.selftext || '').substring(0, 200);
-    const description =
-      selftext ||
-      `by u/${author} in ${subredditPrefixed} · ${score} pts · ${numComments} comments`;
-
-    let ogImage = '';
-    if (post.preview?.images?.[0]?.source?.url) {
-      ogImage = post.preview.images[0].source.url.replace(/&amp;/g, '&');
-    } else if (post.thumbnail?.startsWith('http')) {
-      ogImage = post.thumbnail;
+    await bot.deleteMessage(chatId, String(messageId));
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('message to delete not found')) {
+      return;
     }
 
-    let ogVideo = '';
-    if (post.is_video && post.media?.reddit_video?.fallback_url) {
-      ogVideo = post.media.reddit_video.fallback_url;
-    }
-
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
-<meta property="og:site_name" content="Reddit">
-<meta property="og:title" content="${escapeHtml(title)}">
-<meta property="og:description" content="${escapeHtml(description)}">
-<meta property="og:url" content="${redditUrl}">
-${ogImage ? `<meta property="og:image" content="${escapeHtml(ogImage)}">` : ''}
-${ogVideo ? `<meta property="og:video" content="${escapeHtml(ogVideo)}"><meta property="og:video:type" content="video/mp4">` : ''}
-<meta http-equiv="refresh" content="0; url=${redditUrl}">
-</head><body>Redirecting to <a href="${redditUrl}">Reddit post</a></body></html>`;
-
-    logLinkEvent('reddit', REDDIT_EMBED_DOMAIN, false);
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(html);
-  } catch (err) {
-    log.error('Reddit embed failed', { path, err: String(err) });
-    res.writeHead(302, { Location: redditUrl });
-    res.end();
+    throw error;
   }
 }
 
-const server = http.createServer(async (req, res) => {
-  const urlPath = req.url || '';
+async function tryDeleteMessageWithRetry(
+  chatId: number,
+  messageId: number,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < ACTION_DELETE_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      await deleteMessageIfPossible(chatId, messageId);
+      return true;
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.message.includes('message can\'t be deleted for everyone') ||
+          error.message.includes('message can\'t be deleted'))
+      ) {
+        return false;
+      }
 
-  if (urlPath.startsWith('/r/')) {
-    await handleRedditEmbed(urlPath, res);
-    return;
+      if (attempt === ACTION_DELETE_MAX_ATTEMPTS - 1) {
+        throw error;
+      }
+
+      await delay(ACTION_DELETE_CHECK_INTERVAL_MS);
+    }
   }
 
-  if (urlPath === '/health') {
-    const [instaMain, instaFallback, ...tiktokResults] = await Promise.all([
-      checkService(`https://${INSTA_FIX_DOMAIN}/`),
-      checkService(`https://${INSTA_FIX_FALLBACK}/`),
-      ...TIKTOK_FIXERS.map(f => checkService(`https://${f}/`)),
-    ]);
+  return false;
+}
 
-    const tiktok = Object.fromEntries(
-      TIKTOK_FIXERS.map((f, i) => [f, tiktokResults[i]])
-    );
-    const allOk = instaMain === 'ok' || instaFallback === 'ok';
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
 
-    let stats = null;
-    if (DATABASE_URL) {
-      try {
-        const result = await dbClient.query(`
-          SELECT
-            COUNT(*)::int as total,
-            COUNT(*) FILTER (WHERE platform = 'instagram')::int as instagram,
-            COUNT(*) FILTER (WHERE platform = 'tiktok')::int as tiktok,
-            COUNT(*) FILTER (WHERE platform = 'other')::int as other,
-            ROUND(100.0 * COUNT(*) FILTER (WHERE is_fallback) / NULLIF(COUNT(*), 0))::int as fallback_pct
-          FROM link_events
-          WHERE created_at > NOW() - INTERVAL '24 hours'
-        `);
-        const r = result.rows[0];
-        stats = {
-          last_24h: {
-            total: r.total,
-            instagram: r.instagram,
-            tiktok: r.tiktok,
-            other: r.other,
-            fallback_rate: `${r.fallback_pct ?? 0}%`,
-          },
-        };
-      } catch {}
+function isTelegramForbiddenError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes('403');
+}
+
+function isTelegramBadRequestError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes('400');
+}
+
+function isInputMediaPhoto(item: TelegramBot.InputMedia): item is TelegramBot.InputMediaPhoto {
+  return item.type === 'photo';
+}
+
+function isInputMediaVideo(item: TelegramBot.InputMedia): item is TelegramBot.InputMediaVideo {
+  return item.type === 'video';
+}
+
+function getBestPhotoSize(
+  photoSizes?: TelegramBot.PhotoSize[],
+): TelegramBot.PhotoSize | undefined {
+  if (!photoSizes?.length) {
+    return undefined;
+  }
+
+  return [...photoSizes].sort((a, b) => {
+    const areaA = (a.width || 0) * (a.height || 0);
+    const areaB = (b.width || 0) * (b.height || 0);
+    return areaB - areaA;
+  })[0];
+}
+
+function getMessageCaption(message: TelegramBot.Message): string {
+  return normalizeCaptionText(message.caption || '');
+}
+
+function truncateCaptionForTelegram(text: string): string {
+  if (text.length <= TELEGRAM_CAPTION_LIMIT) {
+    return text;
+  }
+
+  return `${text.slice(0, TELEGRAM_CAPTION_LIMIT - 1)}…`;
+}
+
+function truncateTextForTelegram(text: string): string {
+  if (text.length <= TELEGRAM_TEXT_LIMIT) {
+    return text;
+  }
+
+  return `${text.slice(0, TELEGRAM_TEXT_LIMIT - 1)}…`;
+}
+
+function buildDeleteActionKey(chatId: number, replyMessageId: number): string {
+  return `${chatId}:${replyMessageId}`;
+}
+
+function clearPendingDeleteAction(chatId: number, replyMessageId: number): PendingAction | undefined {
+  const key = buildDeleteActionKey(chatId, replyMessageId);
+  const pendingAction = pendingDeleteActions.get(key);
+
+  if (pendingAction) {
+    clearTimeout(pendingAction.timeout);
+    pendingDeleteActions.delete(key);
+  }
+
+  return pendingAction;
+}
+
+async function answerCallbackQuery(
+  callbackQueryId: string,
+  options?: TelegramBot.AnswerCallbackQueryOptions,
+): Promise<void> {
+  try {
+    await bot.answerCallbackQuery(callbackQueryId, options);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message.includes('query is too old') ||
+        error.message.includes('query ID is invalid'))
+    ) {
+      return;
     }
 
-    res.writeHead(allOk ? 200 : 503, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify(
-        {
-          status: allOk ? 'ok' : 'degraded',
-          instagram: {
-            [INSTA_FIX_DOMAIN]: instaMain,
-            [INSTA_FIX_FALLBACK]: instaFallback,
-          },
-          tiktok,
-          ...(stats && { stats }),
-        },
-        null,
-        2
-      )
+    throw error;
+  }
+}
+
+async function safelyDeleteActionMessage(
+  chatId: number,
+  replyMessageId: number,
+): Promise<void> {
+  try {
+    await deleteMessageIfPossible(chatId, replyMessageId);
+  } catch (error) {
+    if (isTelegramForbiddenError(error) || isTelegramBadRequestError(error)) {
+      return;
+    }
+
+    throw error;
+  }
+}
+
+async function promptDeleteAction(
+  chatId: number,
+  requestMessageId: number,
+  sourceMessageId: number,
+): Promise<void> {
+  clearPendingDeleteAction(chatId, requestMessageId);
+
+  const sentMessage = await bot.sendMessage(chatId, 'Delete original message?', {
+    reply_to_message_id: requestMessageId,
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '🗑️ Delete', callback_data: `delete_original:${sourceMessageId}` },
+          { text: 'Keep', callback_data: 'keep_original' },
+        ],
+      ],
+    },
+  });
+
+  const timeout = setTimeout(() => {
+    void safelyDeleteActionMessage(chatId, sentMessage.message_id);
+    pendingDeleteActions.delete(buildDeleteActionKey(chatId, sentMessage.message_id));
+  }, ACTION_DELETE_DELAY_MS);
+
+  pendingDeleteActions.set(buildDeleteActionKey(chatId, sentMessage.message_id), {
+    timeout,
+    chatId,
+    replyMessageId: sentMessage.message_id,
+    requestMessageId,
+  });
+}
+
+function getAllowedChatId(message: TelegramBot.Message): number | null {
+  if (ALLOWED_CHAT_IDS.size === 0) {
+    return message.chat.id;
+  }
+
+  return ALLOWED_CHAT_IDS.has(message.chat.id) ? message.chat.id : null;
+}
+
+async function canDeleteMessages(chatId: number): Promise<boolean> {
+  try {
+    const admins = await bot.getChatAdministrators(chatId);
+    const botMember = admins.find((member) => member.user.id === bot.me?.id);
+
+    return Boolean(
+      botMember &&
+        ('can_delete_messages' in botMember ? botMember.can_delete_messages : false),
     );
+  } catch (error) {
+    console.error('Failed to check bot permissions', error);
+    return false;
+  }
+}
+
+function normalizeInstagramUrl(urlString: string): URL | null {
+  try {
+    const url = new URL(urlString);
+    const host = url.hostname.toLowerCase();
+
+    if (INSTAGRAM_HOST_PATTERN.test(host)) {
+      return url;
+    }
+
+    if (DD_INSTAGRAM_HOST_PATTERN.test(host)) {
+      url.hostname = host.replace(DD_INSTAGRAM_HOST_PATTERN, (_, prefix) => `${prefix}${'instagram.com'}`);
+      return url;
+    }
+
+    if (VX_INSTAGRAM_HOST_PATTERN.test(host)) {
+      url.hostname = host.replace(VX_INSTAGRAM_HOST_PATTERN, (_, prefix) => `${prefix}${'instagram.com'}`);
+      return url;
+    }
+
+    if (host === INSTA_FIX_DOMAIN || host.endsWith(`.${INSTA_FIX_DOMAIN}`)) {
+      url.hostname = host.replace(new RegExp(`${INSTA_FIX_DOMAIN.replace('.', '\\.')}$`, 'i'), 'instagram.com');
+      return url;
+    }
+
+    if (host === INSTA_FIX_FALLBACK || host.endsWith(`.${INSTA_FIX_FALLBACK}`)) {
+      url.hostname = host.replace(new RegExp(`${INSTA_FIX_FALLBACK.replace('.', '\\.')}$`, 'i'), 'instagram.com');
+      return url;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeShareUrl(urlString: string): URL | null {
+  try {
+    const url = new URL(urlString);
+    const host = url.hostname.toLowerCase();
+
+    return SHARE_HOSTS.has(host) ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+function trimTrailingPunctuation(url: string): { cleanedUrl: string; trailingPunctuation: string } {
+  const match = url.match(TRAILING_PUNCTUATION_REGEX);
+
+  if (!match) {
+    return { cleanedUrl: url, trailingPunctuation: '' };
+  }
+
+  return {
+    cleanedUrl: url.slice(0, -match[0].length),
+    trailingPunctuation: match[0],
+  };
+}
+
+function rewriteInstagramLink(urlString: string): string | null {
+  const normalizedUrl = normalizeInstagramUrl(urlString);
+
+  if (!normalizedUrl) {
+    return null;
+  }
+
+  const originalHost = normalizedUrl.hostname;
+  normalizedUrl.hostname = normalizedUrl.hostname.replace(INSTAGRAM_HOST_PATTERN, (_, prefix) => `${prefix}${INSTA_FIX_DOMAIN}`);
+
+  if (normalizedUrl.hostname === originalHost) {
+    return null;
+  }
+
+  return normalizedUrl.toString();
+}
+
+function rewriteShareLink(urlString: string): string | null {
+  const normalizedUrl = normalizeShareUrl(urlString);
+
+  if (!normalizedUrl) {
+    return null;
+  }
+
+  normalizedUrl.hostname = 'www.icloud.com';
+  normalizedUrl.pathname = `/shortcuts/${normalizedUrl.pathname.replace(/^\/+/, '')}`;
+
+  return normalizedUrl.toString();
+}
+
+function extractUrls(text: string): string[] {
+  const matches = text.match(URL_REGEX);
+  return matches ? [...matches] : [];
+}
+
+function replaceTransformedLinkInText(text: string): string | null {
+  let replaced = false;
+
+  const updatedText = text.replace(URL_REGEX, (match) => {
+    const { cleanedUrl, trailingPunctuation } = trimTrailingPunctuation(match);
+    const transformedUrl = rewriteInstagramLink(cleanedUrl) || rewriteShareLink(cleanedUrl);
+
+    if (!transformedUrl) {
+      return match;
+    }
+
+    replaced = true;
+    return `${transformedUrl}${trailingPunctuation}`;
+  });
+
+  return replaced ? updatedText : null;
+}
+
+function isInstagramLinkCandidate(text: string): boolean {
+  const urls = extractUrls(text);
+
+  return urls.some((url) => {
+    const { cleanedUrl } = trimTrailingPunctuation(url);
+    return Boolean(normalizeInstagramUrl(cleanedUrl) || normalizeShareUrl(cleanedUrl));
+  });
+}
+
+async function safelyEditMessageText(
+  chatId: number,
+  messageId: number,
+  text: string,
+  options: TelegramBot.EditMessageTextOptions,
+): Promise<void> {
+  try {
+    await bot.editMessageText(text, {
+      ...options,
+      chat_id: chatId,
+      message_id: messageId,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('message is not modified')) {
+      return;
+    }
+
+    throw error;
+  }
+}
+
+async function getBotMember(chatId: number): Promise<ChatMember | null> {
+  try {
+    const me = await bot.getMe();
+    return await bot.getChatMember(chatId, me.id);
+  } catch (error) {
+    console.error('Failed to get bot chat member', error);
+    return null;
+  }
+}
+
+function canManageMessages(member: ChatMember | null): boolean {
+  if (!member) {
+    return false;
+  }
+
+  if (member.status === 'administrator') {
+    return Boolean(
+      'can_delete_messages' in member ? member.can_delete_messages : false,
+    );
+  }
+
+  return member.status === 'creator';
+}
+
+async function sendTransformedResponse(
+  message: TelegramBot.Message,
+  transformedText: string,
+): Promise<void> {
+  const chatId = message.chat.id;
+  const originalText = message.text || message.caption || '';
+  const shouldAttemptDelete = canManageMessages(await getBotMember(chatId));
+
+  if (shouldAttemptDelete) {
+    try {
+      const deleted = await tryDeleteMessageWithRetry(chatId, message.message_id);
+
+      if (deleted) {
+        await bot.sendMessage(chatId, transformedText, {
+          disable_web_page_preview: false,
+        });
+        return;
+      }
+    } catch (error) {
+      console.error('Failed to delete original message', error);
+    }
+  }
+
+  if (message.text) {
+    try {
+      await safelyEditMessageText(chatId, message.message_id, transformedText, {
+        disable_web_page_preview: false,
+      });
+      return;
+    } catch (error) {
+      console.error('Failed to edit text message', error);
+    }
+  }
+
+  await bot.sendMessage(chatId, transformedText, {
+    reply_to_message_id: message.message_id,
+    disable_web_page_preview: false,
+  });
+
+  if (originalText !== transformedText) {
+    void promptDeleteAction(chatId, message.message_id, message.message_id);
+  }
+}
+
+function toInputMediaFromMessage(
+  message: TelegramBot.Message,
+  caption?: string,
+): TelegramBot.InputMedia | null {
+  if (message.photo?.length) {
+    const bestPhoto = getBestPhotoSize(message.photo);
+
+    if (!bestPhoto?.file_id) {
+      return null;
+    }
+
+    return {
+      type: 'photo',
+      media: bestPhoto.file_id,
+      ...(caption ? { caption: truncateCaptionForTelegram(caption) } : {}),
+    };
+  }
+
+  if (message.video?.file_id) {
+    return {
+      type: 'video',
+      media: message.video.file_id,
+      ...(caption ? { caption: truncateCaptionForTelegram(caption) } : {}),
+    };
+  }
+
+  return null;
+}
+
+async function sendMediaWithCaption(
+  chatId: number,
+  media: TelegramBot.InputMedia[],
+  caption: string,
+  replyToMessageId?: number,
+): Promise<TelegramBot.Message[]> {
+  const normalizedCaption = normalizeCaptionText(caption);
+  const clonedMedia = media.map((item, index) => {
+    const clonedItem: TelegramBot.InputMedia = { ...item };
+
+    if (index === 0 && normalizedCaption) {
+      clonedItem.caption = truncateCaptionForTelegram(normalizedCaption);
+    } else {
+      delete clonedItem.caption;
+    }
+
+    return clonedItem;
+  });
+
+  if (clonedMedia.length === 1) {
+    const [item] = clonedMedia;
+
+    if (isInputMediaPhoto(item)) {
+      const sentMessage = await bot.sendPhoto(chatId, item.media, {
+        caption: item.caption,
+        reply_to_message_id: replyToMessageId,
+      });
+      return [sentMessage];
+    }
+
+    if (isInputMediaVideo(item)) {
+      const sentMessage = await bot.sendVideo(chatId, item.media, {
+        caption: item.caption,
+        reply_to_message_id: replyToMessageId,
+      });
+      return [sentMessage];
+    }
+  }
+
+  return bot.sendMediaGroup(chatId, clonedMedia, {
+    reply_to_message_id: replyToMessageId,
+  });
+}
+
+async function sendMediaRestorePrompt(
+  chatId: number,
+  requestMessageId: number,
+  caption: string,
+): Promise<void> {
+  await bot.sendMessage(chatId, 'Deleted post saved. Tap below to restore it with the same caption.', {
+    reply_to_message_id: requestMessageId,
+    reply_markup: buildRestoreReplyMarkup(caption),
+  });
+}
+
+function getMediaFileSizeBytes(message: TelegramBot.Message): number | undefined {
+  if (message.photo?.length) {
+    return getBestPhotoSize(message.photo)?.file_size;
+  }
+
+  if (message.video) {
+    return message.video.file_size;
+  }
+
+  return undefined;
+}
+
+function mediaExceedsSupportedLimit(message: TelegramBot.Message): boolean {
+  if (message.video && (message.video.file_size || 0) > MAX_VIDEO_BYTES) {
+    return true;
+  }
+
+  const fileSize = getMediaFileSizeBytes(message);
+  return typeof fileSize === 'number' && fileSize > MAX_SINGLE_FILE_BYTES;
+}
+
+function mediaGroupExceedsSupportedLimit(messages: TelegramBot.Message[]): boolean {
+  let totalBytes = 0;
+
+  for (const item of messages) {
+    const fileSize = getMediaFileSizeBytes(item);
+
+    if (typeof fileSize === 'number') {
+      totalBytes += fileSize;
+    }
+  }
+
+  return totalBytes > MAX_MEDIA_GROUP_TOTAL_BYTES;
+}
+
+function sortMediaGroupMessages(messages: TelegramBot.Message[]): TelegramBot.Message[] {
+  return [...messages].sort((a, b) => a.message_id - b.message_id);
+}
+
+async function handleDeletedMediaRestore(callbackQuery: TelegramBot.CallbackQuery): Promise<void> {
+  const callbackMessage = callbackQuery.message;
+  const fromUser = callbackQuery.from;
+
+  if (!callbackMessage || !fromUser) {
     return;
   }
 
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('🤖 Fix Bot is running!');
+  const pendingMedia = pendingDeletedMediaByUser.get(fromUser.id);
+
+  if (!pendingMedia) {
+    await answerCallbackQuery(callbackQuery.id, {
+      text: 'No deleted post found to restore.',
+      show_alert: true,
+    });
+    return;
+  }
+
+  try {
+    await sendMediaWithCaption(
+      callbackMessage.chat.id,
+      pendingMedia.media,
+      getMessageCaption(callbackMessage),
+      callbackMessage.message_id,
+    );
+    await answerCallbackQuery(callbackQuery.id, {
+      text: 'Post restored.',
+    });
+  } catch (error) {
+    console.error('Failed to restore deleted media', error);
+    await answerCallbackQuery(callbackQuery.id, {
+      text: 'Failed to restore post.',
+      show_alert: true,
+    });
+    return;
+  }
+
+  pendingDeletedMediaByUser.delete(fromUser.id);
+
+  try {
+    await safelyDeleteActionMessage(callbackMessage.chat.id, callbackMessage.message_id);
+  } catch (error) {
+    console.error('Failed to delete restore prompt', error);
+  }
+}
+
+async function sendMediaCaptionPrompt(
+  message: TelegramBot.Message,
+): Promise<void> {
+  const sentMessage = await bot.sendMessage(
+    message.chat.id,
+    'I saved the post. Send me a caption in your next message and I will repost it.',
+    {
+      reply_to_message_id: message.message_id,
+    },
+  );
+
+  void promptDeleteAction(message.chat.id, sentMessage.message_id, message.message_id);
+}
+
+async function handleSingleMediaDeletion(message: TelegramBot.Message): Promise<boolean> {
+  const inputMedia = toInputMediaFromMessage(message);
+
+  if (!inputMedia) {
+    return false;
+  }
+
+  if (mediaExceedsSupportedLimit(message)) {
+    await bot.sendMessage(
+      message.chat.id,
+      'This media file is too large for me to restore. Telegram only allows files up to 49 MB in this flow.',
+      {
+        reply_to_message_id: message.message_id,
+      },
+    );
+    return false;
+  }
+
+  try {
+    const deleted = await tryDeleteMessageWithRetry(message.chat.id, message.message_id);
+
+    if (!deleted) {
+      return false;
+    }
+  } catch (error) {
+    console.error('Failed to delete media message', error);
+    return false;
+  }
+
+  pendingDeletedMediaByUser.set(message.from?.id || 0, {
+    media: [inputMedia],
+    sourceMessageId: message.message_id,
+  });
+  usersWaitingForCaption.add(message.from?.id || 0);
+
+  await sendMediaCaptionPrompt(message);
+  return true;
+}
+
+async function handleMediaGroupDeletion(message: TelegramBot.Message): Promise<void> {
+  const mediaGroupId = message.media_group_id;
+  const chatId = message.chat.id;
+
+  if (!mediaGroupId) {
+    return;
+  }
+
+  const existingMessages = pendingDeletedMediaGroups.get(mediaGroupId) || [];
+  existingMessages.push(message);
+  pendingDeletedMediaGroups.set(mediaGroupId, existingMessages);
+
+  const existingTimer = pendingDeletedMediaGroupTimers.get(mediaGroupId);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+  }
+
+  const timer = setTimeout(() => {
+    void (async () => {
+      const groupedMessages = pendingDeletedMediaGroups.get(mediaGroupId);
+      pendingDeletedMediaGroups.delete(mediaGroupId);
+      pendingDeletedMediaGroupTimers.delete(mediaGroupId);
+
+      if (!groupedMessages?.length) {
+        return;
+      }
+
+      const sortedMessages = sortMediaGroupMessages(groupedMessages);
+      const inputMedia = sortedMessages
+        .slice(0, MAX_MEDIA_GROUP_ITEMS)
+        .map((item, index) =>
+          toInputMediaFromMessage(item, index === 0 ? getMessageCaption(item) : undefined),
+        )
+        .filter((item): item is TelegramBot.InputMedia => Boolean(item));
+
+      if (!inputMedia.length) {
+        return;
+      }
+
+      if (mediaGroupExceedsSupportedLimit(sortedMessages)) {
+        await bot.sendMessage(
+          chatId,
+          'This media group is too large for me to restore. Telegram only allows up to 49 MB total in this flow.',
+          {
+            reply_to_message_id: sortedMessages[0].message_id,
+          },
+        );
+        return;
+      }
+
+      try {
+        for (const item of sortedMessages) {
+          await tryDeleteMessageWithRetry(chatId, item.message_id);
+        }
+      } catch (error) {
+        console.error('Failed to delete media group', error);
+        return;
+      }
+
+      pendingDeletedMediaByUser.set(sortedMessages[0].from?.id || 0, {
+        media: inputMedia,
+        sourceMessageId: sortedMessages[0].message_id,
+      });
+      usersWaitingForCaption.add(sortedMessages[0].from?.id || 0);
+      await sendMediaCaptionPrompt(sortedMessages[0]);
+    })();
+  }, 500);
+
+  pendingDeletedMediaGroupTimers.set(mediaGroupId, timer);
+}
+
+bot.on('callback_query', async (callbackQuery) => {
+  const callbackMessage = callbackQuery.message;
+  const callbackData = callbackQuery.data;
+
+  if (!callbackMessage || !callbackData) {
+    return;
+  }
+
+  const callbackKey = `${callbackMessage.chat.id}:${callbackMessage.message_id}:${callbackQuery.id}`;
+  if (callbackProcessing.has(callbackKey)) {
+    return;
+  }
+
+  callbackProcessing.add(callbackKey);
+
+  try {
+    if (callbackData === 'restore_deleted_media') {
+      await handleDeletedMediaRestore(callbackQuery);
+      return;
+    }
+
+    const pendingAction = clearPendingDeleteAction(
+      callbackMessage.chat.id,
+      callbackMessage.message_id,
+    );
+
+    if (!pendingAction) {
+      await answerCallbackQuery(callbackQuery.id, {
+        text: 'This action is no longer available.',
+        show_alert: true,
+      });
+      return;
+    }
+
+    if (callbackData.startsWith('delete_original:')) {
+      const sourceMessageId = Number.parseInt(
+        callbackData.split(':')[1],
+        10,
+      );
+
+      if (!Number.isInteger(sourceMessageId)) {
+        await answerCallbackQuery(callbackQuery.id, {
+          text: 'Invalid delete action.',
+          show_alert: true,
+        });
+        return;
+      }
+
+      try {
+        await deleteMessageIfPossible(callbackMessage.chat.id, sourceMessageId);
+        await answerCallbackQuery(callbackQuery.id, {
+          text: 'Original message deleted.',
+        });
+      } catch (error) {
+        console.error('Failed to delete original message from callback', error);
+        await answerCallbackQuery(callbackQuery.id, {
+          text: 'Failed to delete original message.',
+          show_alert: true,
+        });
+      }
+    } else if (callbackData === 'keep_original') {
+      await answerCallbackQuery(callbackQuery.id, {
+        text: 'Keeping original message.',
+      });
+    } else {
+      await answerCallbackQuery(callbackQuery.id, {
+        text: 'Unknown action.',
+        show_alert: true,
+      });
+      return;
+    }
+
+    await safelyDeleteActionMessage(callbackMessage.chat.id, callbackMessage.message_id);
+  } catch (error) {
+    console.error('Failed to process callback query', error);
+  } finally {
+    callbackProcessing.delete(callbackKey);
+  }
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`🌐 HTTP server listening on port ${PORT}`);
+bot.on('message', async (message) => {
+  const allowedChatId = getAllowedChatId(message);
+
+  if (!allowedChatId) {
+    return;
+  }
+
+  if (message.new_chat_members?.some((member) => member.id === bot.me?.id)) {
+    const hasDeletePermission = await canDeleteMessages(message.chat.id);
+
+    if (!hasDeletePermission) {
+      await bot.sendMessage(
+        message.chat.id,
+        'Hi! Please make me an admin with Delete messages permission so I can replace Instagram links properly.',
+      );
+    }
+    return;
+  }
+
+  if (message.text?.startsWith('/start')) {
+    await bot.sendMessage(message.chat.id, 'Send me a message with an Instagram link and I will replace it.', {
+      reply_to_message_id: message.message_id,
+    });
+    return;
+  }
+
+  if (message.text?.startsWith('/captionreset')) {
+    if (message.from?.id) {
+      usersWaitingForCaption.delete(message.from.id);
+      pendingDeletedMediaByUser.delete(message.from.id);
+    }
+
+    await bot.sendMessage(message.chat.id, 'Caption input reset.', {
+      reply_to_message_id: message.message_id,
+    });
+    return;
+  }
+
+  if (message.media_group_id && (message.photo?.length || message.video)) {
+    await handleMediaGroupDeletion(message);
+    return;
+  }
+
+  if (message.photo?.length || message.video) {
+    const handled = await handleSingleMediaDeletion(message);
+    if (handled) {
+      return;
+    }
+  }
+
+  if (message.from?.id && usersWaitingForCaption.has(message.from.id) && message.text) {
+    const pendingMedia = pendingDeletedMediaByUser.get(message.from.id);
+
+    if (!pendingMedia) {
+      usersWaitingForCaption.delete(message.from.id);
+      return;
+    }
+
+    try {
+      await sendMediaWithCaption(
+        message.chat.id,
+        pendingMedia.media,
+        message.text,
+        message.message_id,
+      );
+      await sendMediaRestorePrompt(message.chat.id, message.message_id, message.text);
+      usersWaitingForCaption.delete(message.from.id);
+      pendingDeletedMediaByUser.delete(message.from.id);
+    } catch (error) {
+      console.error('Failed to resend deleted media with caption', error);
+      await bot.sendMessage(
+        message.chat.id,
+        'Failed to repost the deleted post. Please try again.',
+        {
+          reply_to_message_id: message.message_id,
+        },
+      );
+    }
+    return;
+  }
+
+  const content = message.text || message.caption || '';
+
+  if (!content || !isInstagramLinkCandidate(content)) {
+    return;
+  }
+
+  const transformedText = replaceTransformedLinkInText(content);
+
+  if (!transformedText || transformedText === content) {
+    return;
+  }
+
+  try {
+    await sendTransformedResponse(message, transformedText);
+  } catch (error) {
+    console.error('Failed to transform Instagram link', error);
+  }
 });
 
-console.log('🤖 Fix Bot запущен...');
+console.log('Bot is running...');
