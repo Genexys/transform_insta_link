@@ -2,12 +2,12 @@
   "name": "telegram-instagram-fix-bot",
   "version": "1.0.0",
   "description": "Telegram bot that converts Instagram links to working preview links",
-  "main": "bot.js",
+  "main": "dist/bot.js",
   "scripts": {
     "build": "tsc",
-    "start": "node bot.js",
+    "start": "node dist/bot.js",
     "dev": "ts-node bot.ts",
-    "railway:start": "npm start",
+    "railway:start": "npm run build && npm start",
     "watch": "tsc -w"
   },
   "dependencies": {
