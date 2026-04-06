@@ -18,10 +18,10 @@ import {
 } from './src/config';
 import { isInstagramLinkCandidate, replaceTransformedLinkInText } from './src/linkTransform';
 
-const token = process.env.BOT_TOKEN;
+const token = process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
 
 if (!token) {
-  throw new Error('BOT_TOKEN is not set');
+  throw new Error('BOT_TOKEN or TELEGRAM_BOT_TOKEN is not set');
 }
 
 const bot = new TelegramBot(token, { polling: true });
@@ -37,6 +37,7 @@ app.get('/', (_, res) => {
     primaryDomain: INSTA_FIX_DOMAIN,
     fallbackDomain: INSTA_FIX_FALLBACK,
     allowedChatsConfigured: ALLOWED_CHAT_IDS.size > 0,
+    hasTelegramBotToken: Boolean(process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN),
   });
 });
 
@@ -46,6 +47,7 @@ app.listen(port, () => {
     primaryDomain: INSTA_FIX_DOMAIN,
     fallbackDomain: INSTA_FIX_FALLBACK,
     allowedChatIdsCount: ALLOWED_CHAT_IDS.size,
+    hasTelegramBotToken: Boolean(process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN),
     nodeEnv: process.env.NODE_ENV || 'development',
   });
 });
