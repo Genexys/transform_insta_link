@@ -1,7 +1,22 @@
 import 'dotenv/config';
 import express from 'express';
 import TelegramBot from 'node-telegram-bot-api';
-import type { Message, ChatMember, ParseMode } from 'node-telegram-bot-api';
+import type { ChatMember } from 'node-telegram-bot-api';
+import {
+  ACTION_DELETE_CHECK_INTERVAL_MS,
+  ACTION_DELETE_DELAY_MS,
+  ACTION_DELETE_MAX_ATTEMPTS,
+  ALLOWED_CHAT_IDS,
+  INSTA_FIX_DOMAIN,
+  INSTA_FIX_FALLBACK,
+  MAX_MEDIA_GROUP_ITEMS,
+  MAX_MEDIA_GROUP_TOTAL_BYTES,
+  MAX_SINGLE_FILE_BYTES,
+  MAX_VIDEO_BYTES,
+  TELEGRAM_CAPTION_LIMIT,
+  TELEGRAM_TEXT_LIMIT,
+} from './src/config';
+import { isInstagramLinkCandidate, replaceTransformedLinkInText } from './src/linkTransform';
 
 const token = process.env.BOT_TOKEN;
 
@@ -35,34 +50,6 @@ app.listen(port, () => {
   });
 });
 
-const ACTION_DELETE_DELAY_MS = 1000;
-const ACTION_DELETE_CHECK_INTERVAL_MS = 500;
-const ACTION_DELETE_MAX_ATTEMPTS = 10;
-const DEFAULT_EDIT_DELAY_MS = 1000;
-const MAX_CAPTION_LENGTH = 900;
-const MAX_MEDIA_GROUP_ITEMS = 10;
-const MAX_MEDIA_GROUP_TOTAL_BYTES = 49 * 1024 * 1024;
-const MAX_SINGLE_FILE_BYTES = 49 * 1024 * 1024;
-const MAX_VIDEO_BYTES = 49 * 1024 * 1024;
-const MAX_RETRY_ATTEMPTS = 5;
-const RETRY_BACKOFF_BASE_MS = 1000;
-const INSTAGRAM_HOST_PATTERN = /(^|\.)instagram\.com$/i;
-const DD_INSTAGRAM_HOST_PATTERN = /(^|\.)ddinstagram\.com$/i;
-const VX_INSTAGRAM_HOST_PATTERN = /(^|\.)vxinstagram\.com$/i;
-const INSTA_FIX_DOMAIN = process.env.INSTA_FIX_DOMAIN || 'ddinstagram.com';
-const INSTA_FIX_FALLBACK = process.env.INSTA_FIX_FALLBACK || 'kksave.com';
-const SHARE_HOSTS = new Set(['share.icloud.com']);
-const URL_REGEX = /https?:\/\/[^\s<>()]+/gi;
-const TRAILING_PUNCTUATION_REGEX = /[),.!?:;]+$/;
-const TELEGRAM_CAPTION_LIMIT = 1024;
-const TELEGRAM_TEXT_LIMIT = 4096;
-
-const ALLOWED_CHAT_IDS = new Set<number>(
-  (process.env.ALLOWED_CHAT_IDS || '')
-    .split(',')
-    .map((value) => Number.parseInt(value.trim(), 10))
-    .filter((value) => Number.isInteger(value)),
-);
 
 const usersWaitingForCaption = new Set<number>();
 
@@ -350,126 +337,6 @@ async function canDeleteMessages(chatId: number): Promise<boolean> {
   }
 }
 
-function normalizeInstagramUrl(urlString: string): URL | null {
-  try {
-    const url = new URL(urlString);
-    const host = url.hostname.toLowerCase();
-
-    if (INSTAGRAM_HOST_PATTERN.test(host)) {
-      return url;
-    }
-
-    if (DD_INSTAGRAM_HOST_PATTERN.test(host)) {
-      url.hostname = host.replace(DD_INSTAGRAM_HOST_PATTERN, (_, prefix) => `${prefix}${'instagram.com'}`);
-      return url;
-    }
-
-    if (VX_INSTAGRAM_HOST_PATTERN.test(host)) {
-      url.hostname = host.replace(VX_INSTAGRAM_HOST_PATTERN, (_, prefix) => `${prefix}${'instagram.com'}`);
-      return url;
-    }
-
-    if (host === INSTA_FIX_DOMAIN || host.endsWith(`.${INSTA_FIX_DOMAIN}`)) {
-      url.hostname = host.replace(new RegExp(`${INSTA_FIX_DOMAIN.replace('.', '\\.')}$`, 'i'), 'instagram.com');
-      return url;
-    }
-
-    if (host === INSTA_FIX_FALLBACK || host.endsWith(`.${INSTA_FIX_FALLBACK}`)) {
-      url.hostname = host.replace(new RegExp(`${INSTA_FIX_FALLBACK.replace('.', '\\.')}$`, 'i'), 'instagram.com');
-      return url;
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function normalizeShareUrl(urlString: string): URL | null {
-  try {
-    const url = new URL(urlString);
-    const host = url.hostname.toLowerCase();
-
-    return SHARE_HOSTS.has(host) ? url : null;
-  } catch {
-    return null;
-  }
-}
-
-function trimTrailingPunctuation(url: string): { cleanedUrl: string; trailingPunctuation: string } {
-  const match = url.match(TRAILING_PUNCTUATION_REGEX);
-
-  if (!match) {
-    return { cleanedUrl: url, trailingPunctuation: '' };
-  }
-
-  return {
-    cleanedUrl: url.slice(0, -match[0].length),
-    trailingPunctuation: match[0],
-  };
-}
-
-function rewriteInstagramLink(urlString: string): string | null {
-  const normalizedUrl = normalizeInstagramUrl(urlString);
-
-  if (!normalizedUrl) {
-    return null;
-  }
-
-  const originalHost = normalizedUrl.hostname;
-  normalizedUrl.hostname = normalizedUrl.hostname.replace(INSTAGRAM_HOST_PATTERN, (_, prefix) => `${prefix}${INSTA_FIX_DOMAIN}`);
-
-  if (normalizedUrl.hostname === originalHost) {
-    return null;
-  }
-
-  return normalizedUrl.toString();
-}
-
-function rewriteShareLink(urlString: string): string | null {
-  const normalizedUrl = normalizeShareUrl(urlString);
-
-  if (!normalizedUrl) {
-    return null;
-  }
-
-  normalizedUrl.hostname = 'www.icloud.com';
-  normalizedUrl.pathname = `/shortcuts/${normalizedUrl.pathname.replace(/^\/+/, '')}`;
-
-  return normalizedUrl.toString();
-}
-
-function extractUrls(text: string): string[] {
-  const matches = text.match(URL_REGEX);
-  return matches ? [...matches] : [];
-}
-
-function replaceTransformedLinkInText(text: string): string | null {
-  let replaced = false;
-
-  const updatedText = text.replace(URL_REGEX, (match) => {
-    const { cleanedUrl, trailingPunctuation } = trimTrailingPunctuation(match);
-    const transformedUrl = rewriteInstagramLink(cleanedUrl) || rewriteShareLink(cleanedUrl);
-
-    if (!transformedUrl) {
-      return match;
-    }
-
-    replaced = true;
-    return `${transformedUrl}${trailingPunctuation}`;
-  });
-
-  return replaced ? updatedText : null;
-}
-
-function isInstagramLinkCandidate(text: string): boolean {
-  const urls = extractUrls(text);
-
-  return urls.some((url) => {
-    const { cleanedUrl } = trimTrailingPunctuation(url);
-    return Boolean(normalizeInstagramUrl(cleanedUrl) || normalizeShareUrl(cleanedUrl));
-  });
-}
 
 async function safelyEditMessageText(
   chatId: number,
