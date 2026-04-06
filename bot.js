@@ -46,8 +46,8 @@ async function fetchWithRetry(url, opts) {
     }
 }
 const INSTA_FIX_DOMAIN = 'instafix-production-c2e8.up.railway.app';
-const INSTA_FIX_FALLBACK = 'kkinstagram.com';
-const TIKTOK_FIXERS = ['tnktok.com', 'tnktok.com'];
+const INSTA_FIX_FALLBACK = 'kksave.com';
+const TIKTOK_FIXERS = ['tnktok.com'];
 const TWITTER_FIXERS = ['fxtwitter.com', 'fixupx.com'];
 const REDDIT_EMBED_DOMAIN = 'transforminstalink-production.up.railway.app';
 const bot = new node_telegram_bot_api_1.default(BOT_TOKEN, { polling: true });

@@ -55,16 +55,15 @@ async function fetchWithRetry(
   } catch {
     await sleep(300);
     return await fetch(url, opts);
-    /// test
   }
 }
 
 // Self-hosted InstaFix (приоритет) + публичный фоллбэк
 const INSTA_FIX_DOMAIN = 'instafix-production-c2e8.up.railway.app';
-const INSTA_FIX_FALLBACK = 'kkinstagram.com';
+const INSTA_FIX_FALLBACK = 'kksave.com';
 
 // TikTok: tnktok.com (primary, og:video), vxtiktok.com (fallback, og:title only)
-const TIKTOK_FIXERS = ['tnktok.com', 'tnktok.com'];
+const TIKTOK_FIXERS = ['tnktok.com'];
 
 // Twitter: fxtwitter.com (primary), fixupx.com (fallback)
 const TWITTER_FIXERS = ['fxtwitter.com', 'fixupx.com'];
