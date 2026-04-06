@@ -1,4 +1,14 @@
 import dotenv from 'dotenv';
+dotenv.config();
+
+import * as Sentry from '@sentry/node';
+
+Sentry.init({
+  dsn: process.env.SENTRY_DSN,
+  environment: process.env.NODE_ENV || 'production',
+  tracesSampleRate: 0.2,
+});
+
 import TelegramBot from 'node-telegram-bot-api';
 import http from 'http';
 import { YtDlp } from 'ytdlp-nodejs';
@@ -6,8 +16,6 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { Client } from 'pg';
-
-dotenv.config();
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -33,7 +41,7 @@ const log = {
         ts: new Date().toISOString(),
       })
     ),
-  error: (msg: string, meta?: object) =>
+  error: (msg: string, meta?: object) => {
     console.error(
       JSON.stringify({
         level: 'error',
@@ -41,7 +49,11 @@ const log = {
         ...meta,
         ts: new Date().toISOString(),
       })
-    ),
+    );
+    Sentry.captureException(meta?.hasOwnProperty('err') ? (meta as any).err : new Error(msg), {
+      extra: meta as Record<string, unknown>,
+    });
+  },
 };
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));

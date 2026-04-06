@@ -11,6 +11,7 @@
     "watch": "tsc -w"
   },
   "dependencies": {
+    "@sentry/node": "^10.47.0",
     "@types/express": "^5.0.3",
     "dotenv": "^17.2.2",
     "express": "^5.1.0",
