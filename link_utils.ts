@@ -1,6 +1,6 @@
 // Shared pure helpers for social link parsing and URL rewriting.
 
-export const INSTA_FIX_DOMAIN = 'instafix-production-c2e8.up.railway.app';
+export const INSTA_FIX_DOMAIN = 'instapreviewservice-production.up.railway.app';
 export const INSTA_FIX_FALLBACK = 'kksave.com';
 export const TIKTOK_FIXERS = ['tnktok.com'];
 export const TWITTER_FIXERS = ['fxtwitter.com', 'fixupx.com'];
