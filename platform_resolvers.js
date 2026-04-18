@@ -14,47 +14,21 @@ async function fetchWithRetry(url, opts) {
         return await fetch(url, opts);
     }
 }
-async function hasOgVideo(url) {
-    try {
-        const resp = await fetchWithRetry(url, {
-            method: 'GET',
-            redirect: 'follow',
-            signal: AbortSignal.timeout(5000),
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (compatible; TelegramBot/1.0; +https://core.telegram.org/bots)',
-            },
-        });
-        const html = await resp.text();
-        return /og:video/.test(html);
-    }
-    catch {
-        return false;
-    }
-}
 function createPlatformResolvers(sendAdminAlert) {
     async function getWorkingInstaFixUrl(originalUrl, chatId, userId) {
-        const isReel = originalUrl.includes('/reel/') || originalUrl.includes('/reels/');
         const selfHostedUrl = originalUrl.replace(link_utils_1.instaRegex, link_utils_1.INSTA_FIX_DOMAIN);
         try {
-            if (isReel) {
-                const hasVideo = await hasOgVideo(`https://${selfHostedUrl}`);
-                if (hasVideo) {
-                    (0, db_1.logLinkEvent)('instagram', link_utils_1.INSTA_FIX_DOMAIN, false, chatId, userId);
-                    return selfHostedUrl;
-                }
-                runtime_1.log.warn('Self-hosted InstaFix missing og:video for reel, falling back', {
-                    url: originalUrl,
-                });
-            }
-            else {
-                await fetchWithRetry(`https://${link_utils_1.INSTA_FIX_DOMAIN}/`, {
-                    method: 'HEAD',
-                    redirect: 'manual',
-                    signal: AbortSignal.timeout(3000),
-                });
-                (0, db_1.logLinkEvent)('instagram', link_utils_1.INSTA_FIX_DOMAIN, false, chatId, userId);
-                return selfHostedUrl;
-            }
+            await fetchWithRetry(`https://${link_utils_1.INSTA_FIX_DOMAIN}/health`, {
+                method: 'GET',
+                redirect: 'manual',
+                signal: AbortSignal.timeout(3000),
+            });
+            fetch(`https://${selfHostedUrl}`, {
+                method: 'GET',
+                signal: AbortSignal.timeout(15000),
+            }).catch(() => { });
+            (0, db_1.logLinkEvent)('instagram', link_utils_1.INSTA_FIX_DOMAIN, false, chatId, userId);
+            return selfHostedUrl;
         }
         catch {
             runtime_1.log.warn('Instagram self-hosted unreachable, using fallback', {

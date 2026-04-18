@@ -26,53 +26,26 @@ async function fetchWithRetry(
   }
 }
 
-async function hasOgVideo(url: string): Promise<boolean> {
-  try {
-    const resp = await fetchWithRetry(url, {
-      method: 'GET',
-      redirect: 'follow',
-      signal: AbortSignal.timeout(5000),
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (compatible; TelegramBot/1.0; +https://core.telegram.org/bots)',
-      },
-    });
-    const html = await resp.text();
-    return /og:video/.test(html);
-  } catch {
-    return false;
-  }
-}
-
 export function createPlatformResolvers(sendAdminAlert: SendAdminAlert) {
   async function getWorkingInstaFixUrl(
     originalUrl: string,
     chatId?: number,
     userId?: number
   ): Promise<string> {
-    const isReel =
-      originalUrl.includes('/reel/') || originalUrl.includes('/reels/');
     const selfHostedUrl = originalUrl.replace(instaRegex, INSTA_FIX_DOMAIN);
 
     try {
-      if (isReel) {
-        const hasVideo = await hasOgVideo(`https://${selfHostedUrl}`);
-        if (hasVideo) {
-          logLinkEvent('instagram', INSTA_FIX_DOMAIN, false, chatId, userId);
-          return selfHostedUrl;
-        }
-        log.warn('Self-hosted InstaFix missing og:video for reel, falling back', {
-          url: originalUrl,
-        });
-      } else {
-        await fetchWithRetry(`https://${INSTA_FIX_DOMAIN}/`, {
-          method: 'HEAD',
-          redirect: 'manual',
-          signal: AbortSignal.timeout(3000),
-        });
-        logLinkEvent('instagram', INSTA_FIX_DOMAIN, false, chatId, userId);
-        return selfHostedUrl;
-      }
+      await fetchWithRetry(`https://${INSTA_FIX_DOMAIN}/health`, {
+        method: 'GET',
+        redirect: 'manual',
+        signal: AbortSignal.timeout(3000),
+      });
+      fetch(`https://${selfHostedUrl}`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(15000),
+      }).catch(() => {});
+      logLinkEvent('instagram', INSTA_FIX_DOMAIN, false, chatId, userId);
+      return selfHostedUrl;
     } catch {
       log.warn('Instagram self-hosted unreachable, using fallback', {
         url: originalUrl,
