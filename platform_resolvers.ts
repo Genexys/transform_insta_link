@@ -40,35 +40,40 @@ export function createPlatformResolvers(sendAdminAlert: SendAdminAlert) {
         redirect: 'manual',
         signal: AbortSignal.timeout(3000),
       });
-      fetch(`https://${selfHostedUrl}`, {
-        method: 'GET',
-        signal: AbortSignal.timeout(15000),
-      }).catch(() => {});
-      logLinkEvent('instagram', INSTA_FIX_DOMAIN, false, chatId, userId);
-      return selfHostedUrl;
     } catch {
       log.warn('Instagram self-hosted unreachable, using fallback', {
         url: originalUrl,
       });
+      const fallbackUrl = originalUrl.replace(instaRegex, INSTA_FIX_FALLBACK);
+      try {
+        await fetchWithRetry(`https://${INSTA_FIX_FALLBACK}/`, {
+          method: 'HEAD',
+          redirect: 'manual',
+          signal: AbortSignal.timeout(3000),
+        });
+        logLinkEvent('instagram', INSTA_FIX_FALLBACK, true, chatId, userId);
+        return fallbackUrl;
+      } catch {}
+      log.error('Both Instagram services are unreachable', { url: originalUrl });
+      logLinkEvent('instagram', 'none', true, chatId, userId);
+      sendAdminAlert(
+        `[INSTAGRAM] Оба сервиса недоступны\nURL: ${originalUrl}`
+      ).catch(() => {});
+      return fallbackUrl;
     }
 
-    const fallbackUrl = originalUrl.replace(instaRegex, INSTA_FIX_FALLBACK);
     try {
-      await fetchWithRetry(`https://${INSTA_FIX_FALLBACK}/`, {
-        method: 'HEAD',
-        redirect: 'manual',
-        signal: AbortSignal.timeout(3000),
+      await fetch(`https://${selfHostedUrl}`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(15000),
       });
-      logLinkEvent('instagram', INSTA_FIX_FALLBACK, true, chatId, userId);
-      return fallbackUrl;
-    } catch {}
-
-    log.error('Both Instagram services are unreachable', { url: originalUrl });
-    logLinkEvent('instagram', 'none', true, chatId, userId);
-    sendAdminAlert(
-      `[INSTAGRAM] Оба сервиса недоступны\nURL: ${originalUrl}`
-    ).catch(() => {});
-    return fallbackUrl;
+    } catch {
+      log.warn('Instagram extraction warmup failed or timed out', {
+        url: originalUrl,
+      });
+    }
+    logLinkEvent('instagram', INSTA_FIX_DOMAIN, false, chatId, userId);
+    return selfHostedUrl;
   }
 
   async function getWorkingTikTokUrl(
