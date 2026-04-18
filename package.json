@@ -5,26 +5,32 @@
   "main": "bot.js",
   "scripts": {
     "build": "tsc",
+    "db:local:up": "docker compose up -d postgres",
+    "db:local:down": "docker compose down",
+    "db:local:reset": "docker compose down -v",
+    "db:migrate": "node scripts/run-migrations.js up",
+    "db:migrate:optional": "node scripts/run-migrations.js up --skip-if-no-db",
+    "db:migrate:down": "node scripts/run-migrations.js down",
+    "db:migrate:create": "node-pg-migrate create --migrations-dir migrations --migration-file-language sql --migration-filename-format index",
     "start": "node bot.js",
     "dev": "ts-node bot.ts",
-    "railway:start": "npm start",
-    "watch": "tsc -w"
+    "railway:start": "npm run db:migrate:optional && npm start",
+    "watch": "tsc -w",
+    "test": "npm run build && node --test test/*.test.js"
   },
   "dependencies": {
     "@sentry/node": "^10.47.0",
-    "@types/express": "^5.0.3",
     "dotenv": "^17.2.2",
-    "express": "^5.1.0",
+    "node-pg-migrate": "^8.0.4",
     "node-telegram-bot-api": "^0.67.0",
     "pg": "^8.16.3",
-    "prettier": "^3.6.2",
-    "ytdl-core": "^4.11.5",
     "ytdlp-nodejs": "^2.3.4"
   },
   "devDependencies": {
     "@types/node": "^20.19.13",
     "@types/node-telegram-bot-api": "^0.63.0",
     "@types/pg": "^8.16.0",
+    "prettier": "^3.6.2",
     "ts-node": "^10.9.0",
     "typescript": "^5.9.2"
   },
@@ -45,5 +51,5 @@
     "url": "https://github.com/Genexys/transform_insta_link/issues"
   },
   "homepage": "https://github.com/Genexys/transform_insta_link#readme",
-  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
+  "packageManager": "npm@11.6.2"
 }

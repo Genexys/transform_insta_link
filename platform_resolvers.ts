@@ -1,0 +1,174 @@
+import { log } from './runtime';
+import { logLinkEvent } from './db';
+import {
+  INSTA_FIX_DOMAIN,
+  INSTA_FIX_FALLBACK,
+  instaRegex,
+  TIKTOK_FIXERS,
+  tiktokRegex,
+  TWITTER_FIXERS,
+  twitterRegex,
+} from './link_utils';
+
+type SendAdminAlert = (message: string) => Promise<void>;
+
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+async function fetchWithRetry(
+  url: string,
+  opts: RequestInit
+): Promise<Response> {
+  try {
+    return await fetch(url, opts);
+  } catch {
+    await sleep(300);
+    return await fetch(url, opts);
+  }
+}
+
+async function hasOgVideo(url: string): Promise<boolean> {
+  try {
+    const resp = await fetchWithRetry(url, {
+      method: 'GET',
+      redirect: 'follow',
+      signal: AbortSignal.timeout(5000),
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (compatible; TelegramBot/1.0; +https://core.telegram.org/bots)',
+      },
+    });
+    const html = await resp.text();
+    return /og:video/.test(html);
+  } catch {
+    return false;
+  }
+}
+
+export function createPlatformResolvers(sendAdminAlert: SendAdminAlert) {
+  async function getWorkingInstaFixUrl(
+    originalUrl: string,
+    chatId?: number,
+    userId?: number
+  ): Promise<string> {
+    const isReel =
+      originalUrl.includes('/reel/') || originalUrl.includes('/reels/');
+    const selfHostedUrl = originalUrl.replace(instaRegex, INSTA_FIX_DOMAIN);
+
+    try {
+      if (isReel) {
+        const hasVideo = await hasOgVideo(`https://${selfHostedUrl}`);
+        if (hasVideo) {
+          logLinkEvent('instagram', INSTA_FIX_DOMAIN, false, chatId, userId);
+          return selfHostedUrl;
+        }
+        log.warn('Self-hosted InstaFix missing og:video for reel, falling back', {
+          url: originalUrl,
+        });
+      } else {
+        await fetchWithRetry(`https://${INSTA_FIX_DOMAIN}/`, {
+          method: 'HEAD',
+          redirect: 'manual',
+          signal: AbortSignal.timeout(3000),
+        });
+        logLinkEvent('instagram', INSTA_FIX_DOMAIN, false, chatId, userId);
+        return selfHostedUrl;
+      }
+    } catch {
+      log.warn('Instagram self-hosted unreachable, using fallback', {
+        url: originalUrl,
+      });
+    }
+
+    const fallbackUrl = originalUrl.replace(instaRegex, INSTA_FIX_FALLBACK);
+    try {
+      await fetchWithRetry(`https://${INSTA_FIX_FALLBACK}/`, {
+        method: 'HEAD',
+        redirect: 'manual',
+        signal: AbortSignal.timeout(3000),
+      });
+      logLinkEvent('instagram', INSTA_FIX_FALLBACK, true, chatId, userId);
+      return fallbackUrl;
+    } catch {}
+
+    log.error('Both Instagram services are unreachable', { url: originalUrl });
+    logLinkEvent('instagram', 'none', true, chatId, userId);
+    sendAdminAlert(
+      `[INSTAGRAM] Оба сервиса недоступны\nURL: ${originalUrl}`
+    ).catch(() => {});
+    return fallbackUrl;
+  }
+
+  async function getWorkingTikTokUrl(
+    originalUrl: string,
+    chatId?: number,
+    userId?: number
+  ): Promise<string> {
+    const checks = TIKTOK_FIXERS.map(async fixer => {
+      const fixedUrl = originalUrl.replace(tiktokRegex, fixer);
+      const res = await fetchWithRetry(fixedUrl, {
+        method: 'HEAD',
+        redirect: 'manual',
+        signal: AbortSignal.timeout(3000),
+      });
+      if (res.status !== 200) throw new Error(`${fixer}: ${res.status}`);
+      return fixedUrl;
+    });
+    try {
+      const result = await Promise.any(checks);
+      const service =
+        TIKTOK_FIXERS.find(f => result.includes(f)) ?? TIKTOK_FIXERS[0];
+      logLinkEvent(
+        'tiktok',
+        service,
+        service !== TIKTOK_FIXERS[0],
+        chatId,
+        userId
+      );
+      return result;
+    } catch {
+      log.warn('All TikTok fixers failed', { url: originalUrl });
+      logLinkEvent('tiktok', 'none', true, chatId, userId);
+      return originalUrl.replace(tiktokRegex, TIKTOK_FIXERS[0]);
+    }
+  }
+
+  async function getWorkingTwitterUrl(
+    originalUrl: string,
+    chatId?: number,
+    userId?: number
+  ): Promise<string> {
+    const checks = TWITTER_FIXERS.map(async fixer => {
+      const fixedUrl = originalUrl.replace(twitterRegex, fixer);
+      const res = await fetchWithRetry(fixedUrl, {
+        method: 'HEAD',
+        redirect: 'manual',
+        signal: AbortSignal.timeout(3000),
+      });
+      if (res.status >= 500) throw new Error(`${fixer}: ${res.status}`);
+      return fixedUrl;
+    });
+    try {
+      const result = await Promise.any(checks);
+      const service =
+        TWITTER_FIXERS.find(f => result.includes(f)) ?? TWITTER_FIXERS[0];
+      logLinkEvent(
+        'twitter',
+        service,
+        service !== TWITTER_FIXERS[0],
+        chatId,
+        userId
+      );
+      return result;
+    } catch {
+      log.warn('All Twitter fixers failed', { url: originalUrl });
+      logLinkEvent('twitter', 'none', true, chatId, userId);
+      return originalUrl.replace(twitterRegex, TWITTER_FIXERS[0]);
+    }
+  }
+
+  return {
+    getWorkingInstaFixUrl,
+    getWorkingTikTokUrl,
+    getWorkingTwitterUrl,
+  };
+}
