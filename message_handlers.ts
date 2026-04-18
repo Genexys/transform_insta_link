@@ -103,6 +103,14 @@ export function registerMessageHandlers(
       const platformStr =
         platforms.size > 0 ? Array.from(platforms).join(' · ') : 'ссылка';
 
+      fixedLinks.forEach(url => {
+        if (!url.includes(INSTA_FIX_DOMAIN)) return;
+        fetch(url, {
+          method: 'GET',
+          signal: AbortSignal.timeout(15000),
+        }).catch(() => {});
+      });
+
       await bot.answerInlineQuery(
         queryId,
         [
@@ -116,7 +124,12 @@ export function registerMessageHandlers(
                 : `${fixedLinks.length} ссылок исправлено`,
             input_message_content: {
               message_text: fixedText,
-            },
+              link_preview_options: {
+                is_disabled: false,
+                url: fixedLinks[0],
+                prefer_large_media: true,
+              },
+            } as TelegramBot.InputTextMessageContent,
           },
         ],
         {
