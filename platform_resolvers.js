@@ -47,7 +47,7 @@ function createPlatformResolvers(sendAdminAlert) {
         try {
             await fetch(`https://${selfHostedUrl}`, {
                 method: 'GET',
-                signal: AbortSignal.timeout(15000),
+                signal: AbortSignal.timeout(25000),
             });
         }
         catch {
