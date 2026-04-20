@@ -1,7 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.twitterRegex = exports.tiktokRegex = exports.instaReelRegex = exports.instaRegex = exports.REDDIT_EMBED_DOMAIN = exports.TWITTER_FIXERS = exports.TIKTOK_FIXERS = exports.INSTA_FIX_FALLBACK = exports.INSTA_FIX_DOMAIN = void 0;
-exports.rewriteInstagramReelToMp4 = rewriteInstagramReelToMp4;
+exports.twitterRegex = exports.tiktokRegex = exports.instaRegex = exports.REDDIT_EMBED_DOMAIN = exports.TWITTER_FIXERS = exports.TIKTOK_FIXERS = exports.INSTA_FIX_FALLBACK = exports.INSTA_FIX_DOMAIN = void 0;
 exports.revertUrlForDownload = revertUrlForDownload;
 exports.convertToInstaFix = convertToInstaFix;
 exports.convertToInlineFix = convertToInlineFix;
@@ -12,15 +11,8 @@ exports.TIKTOK_FIXERS = ['tnktok.com'];
 exports.TWITTER_FIXERS = ['fxtwitter.com', 'fixupx.com'];
 exports.REDDIT_EMBED_DOMAIN = 'transforminstalink-production.up.railway.app';
 exports.instaRegex = /(?:www\.)?(?:instagram\.com|instagr\.am)/;
-exports.instaReelRegex = /(?:www\.)?(?:instagram\.com|instagr\.am)\/reels?\/([A-Za-z0-9_-]+)/;
 exports.tiktokRegex = /(?:(?:www|vm|vt)\.)?tiktok\.com/;
 exports.twitterRegex = /(?:(?:www|mobile)\.)?(?:x|twitter)\.com/;
-function rewriteInstagramReelToMp4(url) {
-    const match = url.match(exports.instaReelRegex);
-    if (!match)
-        return null;
-    return `https://${exports.INSTA_FIX_DOMAIN}/v/${match[1]}.mp4`;
-}
 function revertUrlForDownload(url) {
     let result = url
         .replace(exports.INSTA_FIX_DOMAIN, 'instagram.com')
@@ -40,9 +32,6 @@ function revertUrlForDownload(url) {
     return result;
 }
 function convertToInstaFix(url) {
-    const reelMp4 = rewriteInstagramReelToMp4(url);
-    if (reelMp4)
-        return reelMp4;
     let convertedUrl = url
         .replace(/(?:www\.)?instagram\.com/g, exports.INSTA_FIX_DOMAIN)
         .replace(/(?:www\.)?instagr\.am/g, exports.INSTA_FIX_DOMAIN)
@@ -60,9 +49,6 @@ function convertToInlineFix(url) {
         return url;
     }
     if (exports.instaRegex.test(url)) {
-        const reelMp4 = rewriteInstagramReelToMp4(url);
-        if (reelMp4)
-            return reelMp4;
         return url.replace(exports.instaRegex, exports.INSTA_FIX_DOMAIN);
     }
     if (exports.tiktokRegex.test(url)) {
