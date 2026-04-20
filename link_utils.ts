@@ -1,6 +1,8 @@
 // Shared pure helpers for social link parsing and URL rewriting.
 
 export const INSTA_FIX_DOMAIN = 'previewlinkbot.xyz';
+export const INSTA_FIX_DOMAIN_LEGACY =
+  'instapreviewservice-production.up.railway.app';
 export const INSTA_FIX_FALLBACK = 'kksave.com';
 export const TIKTOK_FIXERS = ['tnktok.com'];
 export const TWITTER_FIXERS = ['fxtwitter.com', 'fixupx.com'];
@@ -13,6 +15,7 @@ export const twitterRegex = /(?:(?:www|mobile)\.)?(?:x|twitter)\.com/;
 export function revertUrlForDownload(url: string): string {
   let result = url
     .replace(INSTA_FIX_DOMAIN, 'instagram.com')
+    .replace(INSTA_FIX_DOMAIN_LEGACY, 'instagram.com')
     .replace(INSTA_FIX_FALLBACK, 'instagram.com')
     .replace(REDDIT_EMBED_DOMAIN, 'reddit.com')
     .replace('vxthreads.net', 'threads.net')
@@ -86,6 +89,7 @@ export function findsocialLinks(text: string): string[] {
         !cleanWord.includes('ddinstagram.com') &&
         !cleanWord.includes('kkinstagram.com') &&
         !cleanWord.includes(INSTA_FIX_DOMAIN) &&
+        !cleanWord.includes(INSTA_FIX_DOMAIN_LEGACY) &&
         !cleanWord.includes('vxinstagram.com')
       ) {
         socialLinks.push(cleanWord);

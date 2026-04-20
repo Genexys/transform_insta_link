@@ -1,11 +1,12 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.twitterRegex = exports.tiktokRegex = exports.instaRegex = exports.REDDIT_EMBED_DOMAIN = exports.TWITTER_FIXERS = exports.TIKTOK_FIXERS = exports.INSTA_FIX_FALLBACK = exports.INSTA_FIX_DOMAIN = void 0;
+exports.twitterRegex = exports.tiktokRegex = exports.instaRegex = exports.REDDIT_EMBED_DOMAIN = exports.TWITTER_FIXERS = exports.TIKTOK_FIXERS = exports.INSTA_FIX_FALLBACK = exports.INSTA_FIX_DOMAIN_LEGACY = exports.INSTA_FIX_DOMAIN = void 0;
 exports.revertUrlForDownload = revertUrlForDownload;
 exports.convertToInstaFix = convertToInstaFix;
 exports.convertToInlineFix = convertToInlineFix;
 exports.findsocialLinks = findsocialLinks;
 exports.INSTA_FIX_DOMAIN = 'previewlinkbot.xyz';
+exports.INSTA_FIX_DOMAIN_LEGACY = 'instapreviewservice-production.up.railway.app';
 exports.INSTA_FIX_FALLBACK = 'kksave.com';
 exports.TIKTOK_FIXERS = ['tnktok.com'];
 exports.TWITTER_FIXERS = ['fxtwitter.com', 'fixupx.com'];
@@ -16,6 +17,7 @@ exports.twitterRegex = /(?:(?:www|mobile)\.)?(?:x|twitter)\.com/;
 function revertUrlForDownload(url) {
     let result = url
         .replace(exports.INSTA_FIX_DOMAIN, 'instagram.com')
+        .replace(exports.INSTA_FIX_DOMAIN_LEGACY, 'instagram.com')
         .replace(exports.INSTA_FIX_FALLBACK, 'instagram.com')
         .replace(exports.REDDIT_EMBED_DOMAIN, 'reddit.com')
         .replace('vxthreads.net', 'threads.net')
@@ -72,6 +74,7 @@ function findsocialLinks(text) {
             if (!cleanWord.includes('ddinstagram.com') &&
                 !cleanWord.includes('kkinstagram.com') &&
                 !cleanWord.includes(exports.INSTA_FIX_DOMAIN) &&
+                !cleanWord.includes(exports.INSTA_FIX_DOMAIN_LEGACY) &&
                 !cleanWord.includes('vxinstagram.com')) {
                 socialLinks.push(cleanWord);
             }
