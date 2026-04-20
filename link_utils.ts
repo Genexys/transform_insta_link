@@ -4,11 +4,20 @@ export const INSTA_FIX_DOMAIN = 'instapreviewservice-production.up.railway.app';
 export const INSTA_FIX_FALLBACK = 'kksave.com';
 export const TIKTOK_FIXERS = ['tnktok.com'];
 export const TWITTER_FIXERS = ['fxtwitter.com', 'fixupx.com'];
-export const REDDIT_EMBED_DOMAIN = 'transforminstalink-production.up.railway.app';
+export const REDDIT_EMBED_DOMAIN =
+  'transforminstalink-production.up.railway.app';
 
 export const instaRegex = /(?:www\.)?(?:instagram\.com|instagr\.am)/;
+export const instaReelRegex =
+  /(?:www\.)?(?:instagram\.com|instagr\.am)\/reels?\/([A-Za-z0-9_-]+)/;
 export const tiktokRegex = /(?:(?:www|vm|vt)\.)?tiktok\.com/;
 export const twitterRegex = /(?:(?:www|mobile)\.)?(?:x|twitter)\.com/;
+
+export function rewriteInstagramReelToMp4(url: string): string | null {
+  const match = url.match(instaReelRegex);
+  if (!match) return null;
+  return `https://${INSTA_FIX_DOMAIN}/v/${match[1]}.mp4`;
+}
 
 export function revertUrlForDownload(url: string): string {
   let result = url
@@ -30,6 +39,9 @@ export function revertUrlForDownload(url: string): string {
 }
 
 export function convertToInstaFix(url: string): string {
+  const reelMp4 = rewriteInstagramReelToMp4(url);
+  if (reelMp4) return reelMp4;
+
   let convertedUrl = url
     .replace(/(?:www\.)?instagram\.com/g, INSTA_FIX_DOMAIN)
     .replace(/(?:www\.)?instagr\.am/g, INSTA_FIX_DOMAIN)
@@ -54,6 +66,8 @@ export function convertToInlineFix(url: string): string {
   }
 
   if (instaRegex.test(url)) {
+    const reelMp4 = rewriteInstagramReelToMp4(url);
+    if (reelMp4) return reelMp4;
     return url.replace(instaRegex, INSTA_FIX_DOMAIN);
   }
 
