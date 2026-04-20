@@ -16,7 +16,9 @@ async function fetchWithRetry(url, opts) {
 }
 function createPlatformResolvers(sendAdminAlert) {
     async function getWorkingInstaFixUrl(originalUrl, chatId, userId) {
-        const selfHostedUrl = originalUrl.replace(link_utils_1.instaRegex, link_utils_1.INSTA_FIX_DOMAIN);
+        const reelMp4 = (0, link_utils_1.rewriteInstagramReelToMp4)(originalUrl);
+        const pagePath = originalUrl.replace(link_utils_1.instaRegex, link_utils_1.INSTA_FIX_DOMAIN);
+        const selfHostedUrl = reelMp4 ?? pagePath;
         try {
             await fetchWithRetry(`https://${link_utils_1.INSTA_FIX_DOMAIN}/health`, {
                 method: 'GET',
@@ -45,7 +47,7 @@ function createPlatformResolvers(sendAdminAlert) {
             return fallbackUrl;
         }
         try {
-            await fetch(`https://${selfHostedUrl}`, {
+            await fetch(`https://${pagePath}`, {
                 method: 'GET',
                 signal: AbortSignal.timeout(25000),
             });
