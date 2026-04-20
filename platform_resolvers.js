@@ -46,9 +46,10 @@ function createPlatformResolvers(sendAdminAlert) {
             sendAdminAlert(`[INSTAGRAM] Оба сервиса недоступны\nURL: ${originalUrl}`).catch(() => { });
             return fallbackUrl;
         }
+        const warmupUrl = reelMp4 ?? pagePath;
         try {
-            await fetch(`https://${pagePath}`, {
-                method: 'GET',
+            await fetch(warmupUrl, {
+                method: 'HEAD',
                 signal: AbortSignal.timeout(25000),
             });
         }

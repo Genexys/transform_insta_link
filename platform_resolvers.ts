@@ -65,9 +65,10 @@ export function createPlatformResolvers(sendAdminAlert: SendAdminAlert) {
       return fallbackUrl;
     }
 
+    const warmupUrl = reelMp4 ?? pagePath;
     try {
-      await fetch(`https://${pagePath}`, {
-        method: 'GET',
+      await fetch(warmupUrl, {
+        method: 'HEAD',
         signal: AbortSignal.timeout(25000),
       });
     } catch {
