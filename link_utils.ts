@@ -1,6 +1,6 @@
 // Shared pure helpers for social link parsing and URL rewriting.
 
-export const INSTA_FIX_DOMAIN = 'previewlinkbot.xyz';
+export const INSTA_FIX_DOMAIN = 'instapreviewservice-production.up.railway.app';
 export const INSTA_FIX_DOMAIN_LEGACY =
   'instapreviewservice-production.up.railway.app';
 export const INSTA_FIX_FALLBACK = 'kksave.com';
