@@ -326,7 +326,7 @@ export function registerMessageHandlers(
         });
       }
 
-      maybeSendInstaCarouselAlbum(bot, chatId, socialLinks).catch(err => {
+      maybeSendInstaCarouselAlbum(bot, chatId, socialLinks, msg).catch(err => {
         log.warn('insta carousel album send failed', {
           chatId,
           err: String(err),
@@ -339,7 +339,8 @@ export function registerMessageHandlers(
 async function maybeSendInstaCarouselAlbum(
   bot: TelegramBot,
   chatId: number,
-  socialLinks: string[]
+  socialLinks: string[],
+  sourceMsg: TelegramBot.Message
 ) {
   const igLinks = socialLinks.filter(
     link => link.includes('instagram.com') || link.includes('instagr.am')
@@ -396,21 +397,33 @@ async function maybeSendInstaCarouselAlbum(
     };
   });
 
+  const threadId = (sourceMsg as TelegramBot.Message & {
+    message_thread_id?: number;
+  }).message_thread_id;
+  const albumOptions: TelegramBot.SendMediaGroupOptions & {
+    message_thread_id?: number;
+  } = {
+    disable_notification: true,
+  };
+  if (threadId) albumOptions.message_thread_id = threadId;
+
   try {
     await bot.sendMediaGroup(
       chatId,
       album as TelegramBot.InputMedia[],
-      { disable_notification: true } as TelegramBot.SendMediaGroupOptions
+      albumOptions
     );
     log.info('Insta carousel album sent', {
       chatId,
       shortcode,
       count: slice.length,
+      threadId,
     });
   } catch (err) {
     log.warn('sendMediaGroup failed', {
       chatId,
       shortcode,
+      threadId,
       err: String(err),
     });
   }

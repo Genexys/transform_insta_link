@@ -251,7 +251,7 @@ function registerMessageHandlers(bot, resolvers, options) {
                     reply_markup: replyMarkup,
                 });
             }
-            maybeSendInstaCarouselAlbum(bot, chatId, socialLinks).catch(err => {
+            maybeSendInstaCarouselAlbum(bot, chatId, socialLinks, msg).catch(err => {
                 runtime_1.log.warn('insta carousel album send failed', {
                     chatId,
                     err: String(err),
@@ -260,7 +260,7 @@ function registerMessageHandlers(bot, resolvers, options) {
         }
     });
 }
-async function maybeSendInstaCarouselAlbum(bot, chatId, socialLinks) {
+async function maybeSendInstaCarouselAlbum(bot, chatId, socialLinks, sourceMsg) {
     const igLinks = socialLinks.filter(link => link.includes('instagram.com') || link.includes('instagr.am'));
     if (igLinks.length !== 1)
         return;
@@ -308,18 +308,26 @@ async function maybeSendInstaCarouselAlbum(bot, chatId, socialLinks) {
             ...base,
         };
     });
+    const threadId = sourceMsg.message_thread_id;
+    const albumOptions = {
+        disable_notification: true,
+    };
+    if (threadId)
+        albumOptions.message_thread_id = threadId;
     try {
-        await bot.sendMediaGroup(chatId, album, { disable_notification: true });
+        await bot.sendMediaGroup(chatId, album, albumOptions);
         runtime_1.log.info('Insta carousel album sent', {
             chatId,
             shortcode,
             count: slice.length,
+            threadId,
         });
     }
     catch (err) {
         runtime_1.log.warn('sendMediaGroup failed', {
             chatId,
             shortcode,
+            threadId,
             err: String(err),
         });
     }
