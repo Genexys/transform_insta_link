@@ -16,3 +16,5 @@ skills-lock.json
 mcp-config.json
 opencode.json
 opencode.jsonc
+.claude/
+Transform Insta Link Logs*.json

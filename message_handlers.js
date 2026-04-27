@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerMessageHandlers = registerMessageHandlers;
 const db_1 = require("./db");
 const link_utils_1 = require("./link_utils");
+const insta_preview_client_1 = require("./insta_preview_client");
 const runtime_1 = require("./runtime");
 function registerMessageHandlers(bot, resolvers, options) {
     bot.on('inline_query', async (query) => {
@@ -250,6 +251,63 @@ function registerMessageHandlers(bot, resolvers, options) {
                     reply_markup: replyMarkup,
                 });
             }
+            maybeSendInstaCarouselAlbum(bot, chatId, socialLinks).catch(err => {
+                runtime_1.log.warn('insta carousel album send failed', {
+                    chatId,
+                    err: String(err),
+                });
+            });
         }
     });
+}
+async function maybeSendInstaCarouselAlbum(bot, chatId, socialLinks) {
+    const igLinks = socialLinks.filter(link => link.includes('instagram.com') || link.includes('instagr.am'));
+    if (igLinks.length !== 1)
+        return;
+    const shortcode = (0, insta_preview_client_1.extractShortcodeFromUrl)(igLinks[0]);
+    if (!shortcode)
+        return;
+    const result = await (0, insta_preview_client_1.fetchInstaPreview)(shortcode);
+    if (!result.ok)
+        return;
+    const media = (result.data.media || []).filter((m) => Boolean(m && m.url));
+    if (media.length < 2)
+        return;
+    const slice = media.slice(0, 10);
+    const username = result.data.owner_username
+        ? `@${result.data.owner_username}`
+        : '';
+    const caption = (result.data.caption || '').slice(0, 900);
+    const headerText = [username, caption].filter(Boolean).join('\n\n');
+    const album = slice.map((entry, idx) => {
+        const base = {
+            media: entry.url,
+            caption: idx === 0 && headerText ? headerText : undefined,
+        };
+        if (entry.type === 'video') {
+            return {
+                type: 'video',
+                ...base,
+            };
+        }
+        return {
+            type: 'photo',
+            ...base,
+        };
+    });
+    try {
+        await bot.sendMediaGroup(chatId, album, { disable_notification: true });
+        runtime_1.log.info('Insta carousel album sent', {
+            chatId,
+            shortcode,
+            count: slice.length,
+        });
+    }
+    catch (err) {
+        runtime_1.log.warn('sendMediaGroup failed', {
+            chatId,
+            shortcode,
+            err: String(err),
+        });
+    }
 }

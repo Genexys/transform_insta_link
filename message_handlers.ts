@@ -10,6 +10,11 @@ import {
   TIKTOK_FIXERS,
   TWITTER_FIXERS,
 } from './link_utils';
+import {
+  extractShortcodeFromUrl,
+  fetchInstaPreview,
+  InstaMediaEntry,
+} from './insta_preview_client';
 import { log } from './runtime';
 
 type Resolvers = {
@@ -320,6 +325,78 @@ export function registerMessageHandlers(
           reply_markup: replyMarkup,
         });
       }
+
+      maybeSendInstaCarouselAlbum(bot, chatId, socialLinks).catch(err => {
+        log.warn('insta carousel album send failed', {
+          chatId,
+          err: String(err),
+        });
+      });
     }
   });
+}
+
+async function maybeSendInstaCarouselAlbum(
+  bot: TelegramBot,
+  chatId: number,
+  socialLinks: string[]
+) {
+  const igLinks = socialLinks.filter(
+    link => link.includes('instagram.com') || link.includes('instagr.am')
+  );
+  if (igLinks.length !== 1) return;
+
+  const shortcode = extractShortcodeFromUrl(igLinks[0]);
+  if (!shortcode) return;
+
+  const result = await fetchInstaPreview(shortcode);
+  if (!result.ok) return;
+
+  const media = (result.data.media || []).filter(
+    (m): m is InstaMediaEntry => Boolean(m && m.url)
+  );
+  if (media.length < 2) return;
+
+  const slice = media.slice(0, 10);
+  const username = result.data.owner_username
+    ? `@${result.data.owner_username}`
+    : '';
+  const caption = (result.data.caption || '').slice(0, 900);
+  const headerText = [username, caption].filter(Boolean).join('\n\n');
+
+  const album = slice.map((entry, idx) => {
+    const base = {
+      media: entry.url,
+      caption: idx === 0 && headerText ? headerText : undefined,
+    };
+    if (entry.type === 'video') {
+      return {
+        type: 'video' as const,
+        ...base,
+      };
+    }
+    return {
+      type: 'photo' as const,
+      ...base,
+    };
+  });
+
+  try {
+    await bot.sendMediaGroup(
+      chatId,
+      album as TelegramBot.InputMedia[],
+      { disable_notification: true } as TelegramBot.SendMediaGroupOptions
+    );
+    log.info('Insta carousel album sent', {
+      chatId,
+      shortcode,
+      count: slice.length,
+    });
+  } catch (err) {
+    log.warn('sendMediaGroup failed', {
+      chatId,
+      shortcode,
+      err: String(err),
+    });
+  }
 }
