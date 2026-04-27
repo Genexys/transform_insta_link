@@ -268,11 +268,24 @@ async function maybeSendInstaCarouselAlbum(bot, chatId, socialLinks) {
     if (!shortcode)
         return;
     const result = await (0, insta_preview_client_1.fetchInstaPreview)(shortcode);
-    if (!result.ok)
+    if (!result.ok) {
+        runtime_1.log.info('Insta carousel album skipped: extraction not ok', {
+            chatId,
+            shortcode,
+            errorCode: result.errorCode,
+            error: result.error,
+        });
         return;
+    }
     const media = (result.data.media || []).filter((m) => Boolean(m && m.url));
-    if (media.length < 2)
+    if (media.length < 2) {
+        runtime_1.log.info('Insta carousel album skipped: not a carousel', {
+            chatId,
+            shortcode,
+            mediaCount: media.length,
+        });
         return;
+    }
     const slice = media.slice(0, 10);
     const username = result.data.owner_username
         ? `@${result.data.owner_username}`
