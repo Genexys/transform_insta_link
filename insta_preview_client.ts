@@ -35,7 +35,7 @@ export function extractShortcodeFromUrl(url: string): string | null {
 
 export async function fetchInstaPreview(
   shortcode: string,
-  timeoutMs = 15000
+  timeoutMs = 35000
 ): Promise<InstaExtractResult> {
   const headers: Record<string, string> = {
     accept: 'application/json',
@@ -48,22 +48,33 @@ export async function fetchInstaPreview(
     shortcode
   )}`;
 
-  try {
-    const res = await fetch(url, {
-      method: 'GET',
-      headers,
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    const json = (await res.json().catch(() => null)) as InstaExtractResult | null;
-    if (!json) {
-      return { ok: false, error: `Empty response (status ${res.status})` };
+  const attempt = async (label: 'primary' | 'retry') => {
+    try {
+      const res = await fetch(url, {
+        method: 'GET',
+        headers,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      const json = (await res.json().catch(() => null)) as InstaExtractResult | null;
+      if (!json) {
+        return {
+          ok: false,
+          error: `Empty response (status ${res.status})`,
+        } as InstaExtractResult;
+      }
+      return json;
+    } catch (err) {
+      log.warn('insta preview fetch failed', {
+        shortcode,
+        attempt: label,
+        err: String(err),
+      });
+      return { ok: false, error: String(err) } as InstaExtractResult;
     }
-    return json;
-  } catch (err) {
-    log.warn('insta preview fetch failed', {
-      shortcode,
-      err: String(err),
-    });
-    return { ok: false, error: String(err) };
-  }
+  };
+
+  const primary = await attempt('primary');
+  if (primary.ok) return primary;
+  const retry = await attempt('retry');
+  return retry;
 }

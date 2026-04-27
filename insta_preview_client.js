@@ -9,7 +9,7 @@ function extractShortcodeFromUrl(url) {
     const match = url.match(INSTA_SHORTCODE_REGEX);
     return match ? match[1] : null;
 }
-async function fetchInstaPreview(shortcode, timeoutMs = 15000) {
+async function fetchInstaPreview(shortcode, timeoutMs = 35000) {
     const headers = {
         accept: 'application/json',
     };
@@ -17,23 +17,34 @@ async function fetchInstaPreview(shortcode, timeoutMs = 15000) {
         headers.authorization = `Bearer ${app_env_1.INSTA_PREVIEW_TOKEN}`;
     }
     const url = `https://${app_env_1.INSTA_PREVIEW_HOST}/extract/${encodeURIComponent(shortcode)}`;
-    try {
-        const res = await fetch(url, {
-            method: 'GET',
-            headers,
-            signal: AbortSignal.timeout(timeoutMs),
-        });
-        const json = (await res.json().catch(() => null));
-        if (!json) {
-            return { ok: false, error: `Empty response (status ${res.status})` };
+    const attempt = async (label) => {
+        try {
+            const res = await fetch(url, {
+                method: 'GET',
+                headers,
+                signal: AbortSignal.timeout(timeoutMs),
+            });
+            const json = (await res.json().catch(() => null));
+            if (!json) {
+                return {
+                    ok: false,
+                    error: `Empty response (status ${res.status})`,
+                };
+            }
+            return json;
         }
-        return json;
-    }
-    catch (err) {
-        runtime_1.log.warn('insta preview fetch failed', {
-            shortcode,
-            err: String(err),
-        });
-        return { ok: false, error: String(err) };
-    }
+        catch (err) {
+            runtime_1.log.warn('insta preview fetch failed', {
+                shortcode,
+                attempt: label,
+                err: String(err),
+            });
+            return { ok: false, error: String(err) };
+        }
+    };
+    const primary = await attempt('primary');
+    if (primary.ok)
+        return primary;
+    const retry = await attempt('retry');
+    return retry;
 }
