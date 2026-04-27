@@ -97,7 +97,7 @@ export function registerCommandHandlers(bot: TelegramBot) {
     );
   }
 
-  bot.onText(/\/start(?:\s+(.+))?/, async msg => {
+  bot.onText(/^\/start(?:@\w+)?(?:\s+(.+))?$/, async msg => {
     const chatId = msg.chat.id;
     const telegramId = msg.from?.id;
     const param = msg.text?.split(' ')[1];
@@ -133,7 +133,7 @@ export function registerCommandHandlers(bot: TelegramBot) {
     });
   });
 
-  bot.onText(/\/invite/, async msg => {
+  bot.onText(/^\/invite(?:@\w+)?(?:\s|$)/, async msg => {
     const chatId = msg.chat.id;
     const telegramId = msg.from?.id;
     if (!telegramId) return;
@@ -152,14 +152,24 @@ export function registerCommandHandlers(bot: TelegramBot) {
     );
   });
 
-  bot.onText(/\/help/, async msg => {
+  bot.onText(/^\/help(?:@\w+)?(?:\s|$)/, async msg => {
     const chatId = msg.chat.id;
     const helpText = await getHelpText();
     bot.sendMessage(chatId, helpText);
   });
 
-  bot.onText(/\/donate/, msg => {
+  bot.onText(/^\/donate(?:@\w+)?(?:\s|$)/, async msg => {
     const chatId = msg.chat.id;
+    const isPrivate = msg.chat.type === 'private';
+    if (!isPrivate) {
+      const botMention = await getBotMention();
+      await bot.sendMessage(
+        chatId,
+        `❤️ /donate доступна в личном чате. Напишите ${botMention} в личку.`,
+        { reply_to_message_id: msg.message_id }
+      );
+      return;
+    }
     const opts: TelegramBot.SendMessageOptions = {
       parse_mode: 'MarkdownV2',
       reply_markup: {
@@ -201,11 +211,22 @@ export function registerCommandHandlers(bot: TelegramBot) {
     );
   });
 
-  bot.onText(/\/pro/, async msg => {
+  bot.onText(/^\/pro(?:@\w+)?(?:\s|$)/, async msg => {
     const chatId = msg.chat.id;
     const telegramId = msg.from?.id;
 
     if (!telegramId) return;
+
+    const isPrivate = msg.chat.type === 'private';
+    if (!isPrivate) {
+      const botMention = await getBotMention();
+      await bot.sendMessage(
+        chatId,
+        `💎 /pro — личная подписка. Напишите ${botMention} в личку.`,
+        { reply_to_message_id: msg.message_id }
+      );
+      return;
+    }
 
     const user = DATABASE_URL ? await getUser(telegramId) : null;
     const hasPersonalPro =
@@ -244,7 +265,7 @@ export function registerCommandHandlers(bot: TelegramBot) {
     );
   });
 
-  bot.onText(/\/chatpro/, async msg => {
+  bot.onText(/^\/chatpro(?:@\w+)?(?:\s|$)/, async msg => {
     const chatId = msg.chat.id;
     const isGroup = msg.chat.type === 'group' || msg.chat.type === 'supergroup';
 
@@ -310,7 +331,7 @@ export function registerCommandHandlers(bot: TelegramBot) {
     );
   });
 
-  bot.onText(/\/settings/, async msg => {
+  bot.onText(/^\/settings(?:@\w+)?(?:\s|$)/, async msg => {
     const chatId = msg.chat.id;
     const isGroup = msg.chat.type === 'group' || msg.chat.type === 'supergroup';
 
@@ -367,7 +388,7 @@ export function registerCommandHandlers(bot: TelegramBot) {
     });
   });
 
-  bot.onText(/\/chatstats/, async msg => {
+  bot.onText(/^\/chatstats(?:@\w+)?(?:\s|$)/, async msg => {
     const chatId = msg.chat.id;
     const isGroup = msg.chat.type === 'group' || msg.chat.type === 'supergroup';
 

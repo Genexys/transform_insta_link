@@ -70,7 +70,7 @@ function registerCommandHandlers(bot) {
             '⚙️ Для удаления оригинального сообщения со сломанной ссылкой нужны права администратора → «Удаление сообщений»\n\n' +
             `Используй меня в инлайн-режиме: ${botMention} <ссылка>`);
     }
-    bot.onText(/\/start(?:\s+(.+))?/, async (msg) => {
+    bot.onText(/^\/start(?:@\w+)?(?:\s+(.+))?$/, async (msg) => {
         const chatId = msg.chat.id;
         const telegramId = msg.from?.id;
         const param = msg.text?.split(' ')[1];
@@ -103,7 +103,7 @@ function registerCommandHandlers(bot) {
                 : undefined,
         });
     });
-    bot.onText(/\/invite/, async (msg) => {
+    bot.onText(/^\/invite(?:@\w+)?(?:\s|$)/, async (msg) => {
         const chatId = msg.chat.id;
         const telegramId = msg.from?.id;
         if (!telegramId)
@@ -116,13 +116,19 @@ function registerCommandHandlers(bot) {
             : '🔗 Не удалось определить ссылку бота. Попробуйте позже.\n\n';
         await bot.sendMessage(chatId, referralText + `Ты пригласил: ${count} ${pluralizeUsers(count)}`, { disable_web_page_preview: true });
     });
-    bot.onText(/\/help/, async (msg) => {
+    bot.onText(/^\/help(?:@\w+)?(?:\s|$)/, async (msg) => {
         const chatId = msg.chat.id;
         const helpText = await getHelpText();
         bot.sendMessage(chatId, helpText);
     });
-    bot.onText(/\/donate/, msg => {
+    bot.onText(/^\/donate(?:@\w+)?(?:\s|$)/, async (msg) => {
         const chatId = msg.chat.id;
+        const isPrivate = msg.chat.type === 'private';
+        if (!isPrivate) {
+            const botMention = await getBotMention();
+            await bot.sendMessage(chatId, `❤️ /donate доступна в личном чате. Напишите ${botMention} в личку.`, { reply_to_message_id: msg.message_id });
+            return;
+        }
         const opts = {
             parse_mode: 'MarkdownV2',
             reply_markup: {
@@ -158,11 +164,17 @@ function registerCommandHandlers(bot) {
             '₿ BTC: `bc1q3ezgkak8swygvgfcqgtcxyswfmt4dzeeu93vq5`\n\n' +
             'Выберите сумму в Stars ниже или воспользуйтесь реквизитами 🙏', opts);
     });
-    bot.onText(/\/pro/, async (msg) => {
+    bot.onText(/^\/pro(?:@\w+)?(?:\s|$)/, async (msg) => {
         const chatId = msg.chat.id;
         const telegramId = msg.from?.id;
         if (!telegramId)
             return;
+        const isPrivate = msg.chat.type === 'private';
+        if (!isPrivate) {
+            const botMention = await getBotMention();
+            await bot.sendMessage(chatId, `💎 /pro — личная подписка. Напишите ${botMention} в личку.`, { reply_to_message_id: msg.message_id });
+            return;
+        }
         const user = app_env_1.DATABASE_URL ? await (0, db_1.getUser)(telegramId) : null;
         const hasPersonalPro = (user?.personal_pro ?? false) || (user?.is_premium ?? false);
         if (hasPersonalPro) {
@@ -188,7 +200,7 @@ function registerCommandHandlers(bot) {
             },
         });
     });
-    bot.onText(/\/chatpro/, async (msg) => {
+    bot.onText(/^\/chatpro(?:@\w+)?(?:\s|$)/, async (msg) => {
         const chatId = msg.chat.id;
         const isGroup = msg.chat.type === 'group' || msg.chat.type === 'supergroup';
         if (!isGroup) {
@@ -234,7 +246,7 @@ function registerCommandHandlers(bot) {
             },
         });
     });
-    bot.onText(/\/settings/, async (msg) => {
+    bot.onText(/^\/settings(?:@\w+)?(?:\s|$)/, async (msg) => {
         const chatId = msg.chat.id;
         const isGroup = msg.chat.type === 'group' || msg.chat.type === 'supergroup';
         if (!isGroup) {
@@ -276,7 +288,7 @@ function registerCommandHandlers(bot) {
             },
         });
     });
-    bot.onText(/\/chatstats/, async (msg) => {
+    bot.onText(/^\/chatstats(?:@\w+)?(?:\s|$)/, async (msg) => {
         const chatId = msg.chat.id;
         const isGroup = msg.chat.type === 'group' || msg.chat.type === 'supergroup';
         if (!isGroup) {
