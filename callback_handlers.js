@@ -57,28 +57,6 @@ function registerCallbackHandlers(bot, ytdlp) {
             });
             return;
         }
-        if (data === 'buy_personal_pro') {
-            await (0, payment_handlers_1.handleBuyPersonalProCallback)(bot, query);
-            return;
-        }
-        if (data === 'buy_chat_pro') {
-            let isAdmin = false;
-            try {
-                const member = await bot.getChatMember(chatId, telegramId);
-                isAdmin =
-                    member.status === 'administrator' || member.status === 'creator';
-            }
-            catch { }
-            if (!isAdmin) {
-                await bot.answerCallbackQuery(query.id, {
-                    text: '⛔ Купить Chat Pro может только администратор этого чата.',
-                    show_alert: true,
-                });
-                return;
-            }
-            await (0, payment_handlers_1.handleBuyChatProCallback)(bot, query);
-            return;
-        }
         if (data.startsWith('donate_')) {
             const amount = parseInt(data.split('_')[1]);
             await (0, payment_handlers_1.handleDonateCallback)(bot, query, amount);

@@ -19,37 +19,6 @@ async function handleDownloadCallback(bot, query, ytdlp) {
         return;
     if (app_env_1.DATABASE_URL) {
         await (0, db_1.createUser)(telegramId, username);
-        const user = await (0, db_1.getUser)(telegramId);
-        const hasUnlimitedDownloads = (user?.personal_pro ?? false) || (user?.is_premium ?? false);
-        if (user && !hasUnlimitedDownloads && user.downloads_count >= 10) {
-            await bot.answerCallbackQuery(query.id, {
-                text: '⛔ Лимит бесплатных скачиваний исчерпан!',
-                show_alert: true,
-            });
-            const opts = {
-                parse_mode: 'MarkdownV2',
-                reply_markup: {
-                    inline_keyboard: [
-                        [
-                            {
-                                text: '💎 Купить Personal Pro',
-                                callback_data: 'buy_personal_pro',
-                            },
-                        ],
-                        [
-                            {
-                                text: '❤️ Поддержать проект (50 Stars)',
-                                callback_data: 'donate_50',
-                            },
-                        ],
-                    ],
-                },
-            };
-            await bot.sendMessage(chatId, '🛑 *Бесплатный лимит исчерпан*\n\n' +
-                'Вы скачали 10 видео. Чтобы снять лимит и качать без ограничений, купите *Personal Pro*.\n\n' +
-                'Если хотите просто поддержать проект без premium-доступа, используйте отдельную кнопку доната ❤️', opts);
-            return;
-        }
     }
     const messageText = query.message.text;
     if (!messageText)

@@ -4,12 +4,7 @@ import os from 'os';
 import path from 'path';
 import { YtDlp } from 'ytdlp-nodejs';
 import { DATABASE_URL } from './app_env';
-import {
-  createUser,
-  getUser,
-  incrementDownloads,
-  saveErrorLog,
-} from './db';
+import { createUser, incrementDownloads, saveErrorLog } from './db';
 import { revertUrlForDownload } from './link_utils';
 import { log } from './runtime';
 
@@ -26,45 +21,6 @@ export async function handleDownloadCallback(
 
   if (DATABASE_URL) {
     await createUser(telegramId, username);
-    const user = await getUser(telegramId);
-    const hasUnlimitedDownloads =
-      (user?.personal_pro ?? false) || (user?.is_premium ?? false);
-
-    if (user && !hasUnlimitedDownloads && user.downloads_count >= 10) {
-      await bot.answerCallbackQuery(query.id, {
-        text: '⛔ Лимит бесплатных скачиваний исчерпан!',
-        show_alert: true,
-      });
-
-      const opts: TelegramBot.SendMessageOptions = {
-        parse_mode: 'MarkdownV2',
-        reply_markup: {
-          inline_keyboard: [
-            [
-              {
-                text: '💎 Купить Personal Pro',
-                callback_data: 'buy_personal_pro',
-              },
-            ],
-            [
-              {
-                text: '❤️ Поддержать проект (50 Stars)',
-                callback_data: 'donate_50',
-              },
-            ],
-          ],
-        },
-      };
-
-      await bot.sendMessage(
-        chatId,
-        '🛑 *Бесплатный лимит исчерпан*\n\n' +
-          'Вы скачали 10 видео. Чтобы снять лимит и качать без ограничений, купите *Personal Pro*.\n\n' +
-          'Если хотите просто поддержать проект без premium-доступа, используйте отдельную кнопку доната ❤️',
-        opts
-      );
-      return;
-    }
   }
 
   const messageText = query.message.text;

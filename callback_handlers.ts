@@ -3,8 +3,6 @@ import { YtDlp } from 'ytdlp-nodejs';
 import { upsertChatSettings } from './db';
 import { handleDownloadCallback } from './download_handlers';
 import {
-  handleBuyChatProCallback,
-  handleBuyPersonalProCallback,
   handleDonateCallback,
   registerPaymentHandlers,
 } from './payment_handlers';
@@ -73,31 +71,6 @@ export function registerCallbackHandlers(
       await bot.answerCallbackQuery(query.id, {
         text: `🔇 Тихий режим ${newQuietMode ? 'включён' : 'выключен'}`,
       });
-      return;
-    }
-
-    if (data === 'buy_personal_pro') {
-      await handleBuyPersonalProCallback(bot, query);
-      return;
-    }
-
-    if (data === 'buy_chat_pro') {
-      let isAdmin = false;
-      try {
-        const member = await bot.getChatMember(chatId, telegramId);
-        isAdmin =
-          member.status === 'administrator' || member.status === 'creator';
-      } catch {}
-
-      if (!isAdmin) {
-        await bot.answerCallbackQuery(query.id, {
-          text: '⛔ Купить Chat Pro может только администратор этого чата.',
-          show_alert: true,
-        });
-        return;
-      }
-
-      await handleBuyChatProCallback(bot, query);
       return;
     }
 

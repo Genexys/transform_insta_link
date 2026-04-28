@@ -59,8 +59,6 @@ function registerCommandHandlers(bot) {
             '   • Bluesky\n' +
             '   • DeviantArt\n' +
             '   • Pixiv\n\n' +
-            '💎 Personal Pro: /pro\n' +
-            '👥 Chat Pro: /chatpro\n' +
             '❤️ Поддержать проект: /donate');
     }
     async function getOnboardingText() {
@@ -90,12 +88,6 @@ function registerCommandHandlers(bot) {
                             {
                                 text: '➕ Добавить в чат',
                                 url: startGroupUrl,
-                            },
-                        ],
-                        [
-                            {
-                                text: `💎 Personal Pro · ${billing_1.PERSONAL_PRO_PRICE_STARS} Stars`,
-                                callback_data: 'buy_personal_pro',
                             },
                         ],
                     ],
@@ -164,88 +156,6 @@ function registerCommandHandlers(bot) {
             '₿ BTC: `bc1q3ezgkak8swygvgfcqgtcxyswfmt4dzeeu93vq5`\n\n' +
             'Выберите сумму в Stars ниже или воспользуйтесь реквизитами 🙏', opts);
     });
-    bot.onText(/^\/pro(?:@\w+)?(?:\s|$)/, async (msg) => {
-        const chatId = msg.chat.id;
-        const telegramId = msg.from?.id;
-        if (!telegramId)
-            return;
-        const isPrivate = msg.chat.type === 'private';
-        if (!isPrivate) {
-            const botMention = await getBotMention();
-            await bot.sendMessage(chatId, `💎 /pro — личная подписка. Напишите ${botMention} в личку.`, { reply_to_message_id: msg.message_id });
-            return;
-        }
-        const user = app_env_1.DATABASE_URL ? await (0, db_1.getUser)(telegramId) : null;
-        const hasPersonalPro = (user?.personal_pro ?? false) || (user?.is_premium ?? false);
-        if (hasPersonalPro) {
-            await bot.sendMessage(chatId, '💎 *Personal Pro активен*\n\nУ вас уже включены безлимитные скачивания.', { parse_mode: 'Markdown' });
-            return;
-        }
-        await bot.sendMessage(chatId, '💎 *Personal Pro*\n\n' +
-            'Подходит для личного использования.\n' +
-            'Что входит:\n' +
-            '• безлимитные скачивания\n' +
-            '• будущие персональные premium-функции\n\n' +
-            `Стоимость: *${billing_1.PERSONAL_PRO_PRICE_STARS} Stars*`, {
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [
-                    [
-                        {
-                            text: `💎 Купить Personal Pro · ${billing_1.PERSONAL_PRO_PRICE_STARS} Stars`,
-                            callback_data: 'buy_personal_pro',
-                        },
-                    ],
-                ],
-            },
-        });
-    });
-    bot.onText(/^\/chatpro(?:@\w+)?(?:\s|$)/, async (msg) => {
-        const chatId = msg.chat.id;
-        const isGroup = msg.chat.type === 'group' || msg.chat.type === 'supergroup';
-        if (!isGroup) {
-            await bot.sendMessage(chatId, '👥 /chatpro работает только в групповых чатах.');
-            return;
-        }
-        const fromId = msg.from?.id;
-        if (!fromId)
-            return;
-        let isAdmin = false;
-        try {
-            const member = await bot.getChatMember(chatId, fromId);
-            isAdmin = member.status === 'administrator' || member.status === 'creator';
-        }
-        catch { }
-        if (!isAdmin) {
-            await bot.sendMessage(chatId, '👥 Купить Chat Pro может только администратор этого чата.');
-            return;
-        }
-        const settings = await (0, db_1.getChatSettings)(chatId);
-        const hasChatPro = (settings?.chat_pro ?? false) || (settings?.is_premium ?? false);
-        if (hasChatPro) {
-            await bot.sendMessage(chatId, '👥 *Chat Pro активен*\n\nДля этого чата уже доступны настройки и статистика.', { parse_mode: 'Markdown' });
-            return;
-        }
-        await bot.sendMessage(chatId, '👥 *Chat Pro*\n\n' +
-            'Premium-функции для этого чата.\n' +
-            'Что входит:\n' +
-            '• настройки чата\n' +
-            '• тихий режим\n' +
-            '• статистика чата\n\n' +
-            `Стоимость: *${billing_1.CHAT_PRO_PRICE_STARS} Stars*`, {
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [
-                    [
-                        {
-                            text: `👥 Активировать Chat Pro · ${billing_1.CHAT_PRO_PRICE_STARS} Stars`,
-                            callback_data: 'buy_chat_pro',
-                        },
-                    ],
-                ],
-            },
-        });
-    });
     bot.onText(/^\/settings(?:@\w+)?(?:\s|$)/, async (msg) => {
         const chatId = msg.chat.id;
         const isGroup = msg.chat.type === 'group' || msg.chat.type === 'supergroup';
@@ -267,13 +177,8 @@ function registerCommandHandlers(bot) {
             return;
         }
         const settings = await (0, db_1.getChatSettings)(chatId);
-        const hasChatPro = (settings?.chat_pro ?? false) || (settings?.is_premium ?? false);
-        if (!hasChatPro) {
-            await bot.sendMessage(chatId, '⚙️ Настройки доступны только в Chat Pro. Активируйте Chat Pro для этого чата → /chatpro');
-            return;
-        }
         const quietMode = settings?.quiet_mode ?? false;
-        await bot.sendMessage(chatId, '⚙️ Настройки чата  [Chat Pro ✨]', {
+        await bot.sendMessage(chatId, '⚙️ Настройки чата', {
             reply_markup: {
                 inline_keyboard: [
                     [
@@ -306,11 +211,6 @@ function registerCommandHandlers(bot) {
         catch { }
         if (!isAdmin) {
             await bot.sendMessage(chatId, '📊 Статистика доступна только администраторам чата.');
-            return;
-        }
-        const settings = await (0, db_1.getChatSettings)(chatId);
-        if (!settings?.chat_pro && !settings?.is_premium) {
-            await bot.sendMessage(chatId, '📊 Статистика доступна только в Chat Pro. Активируйте Chat Pro для этого чата → /chatpro');
             return;
         }
         if (!app_env_1.DATABASE_URL) {

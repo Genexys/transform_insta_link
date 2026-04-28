@@ -1,18 +1,12 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { DATABASE_URL } from './app_env';
-import {
-  CHAT_PRO_PRICE_STARS,
-  DONATE_AMOUNTS_STARS,
-  PERSONAL_PRO_PRICE_STARS,
-} from './billing';
+import { DONATE_AMOUNTS_STARS } from './billing';
 import {
   createUser,
   dbClient,
   getChatSettings,
   getReferralCount,
-  getUser,
   setReferredBy,
-  upsertChatSettings,
 } from './db';
 import { log } from './runtime';
 
@@ -80,8 +74,6 @@ export function registerCommandHandlers(bot: TelegramBot) {
       '   • Bluesky\n' +
       '   • DeviantArt\n' +
       '   • Pixiv\n\n' +
-      '💎 Personal Pro: /pro\n' +
-      '👥 Chat Pro: /chatpro\n' +
       '❤️ Поддержать проект: /donate'
     );
   }
@@ -119,12 +111,6 @@ export function registerCommandHandlers(bot: TelegramBot) {
                 {
                   text: '➕ Добавить в чат',
                   url: startGroupUrl,
-                },
-              ],
-              [
-                {
-                  text: `💎 Personal Pro · ${PERSONAL_PRO_PRICE_STARS} Stars`,
-                  callback_data: 'buy_personal_pro',
                 },
               ],
             ],
@@ -211,126 +197,6 @@ export function registerCommandHandlers(bot: TelegramBot) {
     );
   });
 
-  bot.onText(/^\/pro(?:@\w+)?(?:\s|$)/, async msg => {
-    const chatId = msg.chat.id;
-    const telegramId = msg.from?.id;
-
-    if (!telegramId) return;
-
-    const isPrivate = msg.chat.type === 'private';
-    if (!isPrivate) {
-      const botMention = await getBotMention();
-      await bot.sendMessage(
-        chatId,
-        `💎 /pro — личная подписка. Напишите ${botMention} в личку.`,
-        { reply_to_message_id: msg.message_id }
-      );
-      return;
-    }
-
-    const user = DATABASE_URL ? await getUser(telegramId) : null;
-    const hasPersonalPro =
-      (user?.personal_pro ?? false) || (user?.is_premium ?? false);
-
-    if (hasPersonalPro) {
-      await bot.sendMessage(
-        chatId,
-        '💎 *Personal Pro активен*\n\nУ вас уже включены безлимитные скачивания.',
-        { parse_mode: 'Markdown' }
-      );
-      return;
-    }
-
-    await bot.sendMessage(
-      chatId,
-      '💎 *Personal Pro*\n\n' +
-        'Подходит для личного использования.\n' +
-        'Что входит:\n' +
-        '• безлимитные скачивания\n' +
-        '• будущие персональные premium-функции\n\n' +
-        `Стоимость: *${PERSONAL_PRO_PRICE_STARS} Stars*`,
-      {
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [
-            [
-              {
-                text: `💎 Купить Personal Pro · ${PERSONAL_PRO_PRICE_STARS} Stars`,
-                callback_data: 'buy_personal_pro',
-              },
-            ],
-          ],
-        },
-      }
-    );
-  });
-
-  bot.onText(/^\/chatpro(?:@\w+)?(?:\s|$)/, async msg => {
-    const chatId = msg.chat.id;
-    const isGroup = msg.chat.type === 'group' || msg.chat.type === 'supergroup';
-
-    if (!isGroup) {
-      await bot.sendMessage(
-        chatId,
-        '👥 /chatpro работает только в групповых чатах.'
-      );
-      return;
-    }
-
-    const fromId = msg.from?.id;
-    if (!fromId) return;
-
-    let isAdmin = false;
-    try {
-      const member = await bot.getChatMember(chatId, fromId);
-      isAdmin = member.status === 'administrator' || member.status === 'creator';
-    } catch {}
-
-    if (!isAdmin) {
-      await bot.sendMessage(
-        chatId,
-        '👥 Купить Chat Pro может только администратор этого чата.'
-      );
-      return;
-    }
-
-    const settings = await getChatSettings(chatId);
-    const hasChatPro = (settings?.chat_pro ?? false) || (settings?.is_premium ?? false);
-
-    if (hasChatPro) {
-      await bot.sendMessage(
-        chatId,
-        '👥 *Chat Pro активен*\n\nДля этого чата уже доступны настройки и статистика.',
-        { parse_mode: 'Markdown' }
-      );
-      return;
-    }
-
-    await bot.sendMessage(
-      chatId,
-      '👥 *Chat Pro*\n\n' +
-        'Premium-функции для этого чата.\n' +
-        'Что входит:\n' +
-        '• настройки чата\n' +
-        '• тихий режим\n' +
-        '• статистика чата\n\n' +
-        `Стоимость: *${CHAT_PRO_PRICE_STARS} Stars*`,
-      {
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [
-            [
-              {
-                text: `👥 Активировать Chat Pro · ${CHAT_PRO_PRICE_STARS} Stars`,
-                callback_data: 'buy_chat_pro',
-              },
-            ],
-          ],
-        },
-      }
-    );
-  });
-
   bot.onText(/^\/settings(?:@\w+)?(?:\s|$)/, async msg => {
     const chatId = msg.chat.id;
     const isGroup = msg.chat.type === 'group' || msg.chat.type === 'supergroup';
@@ -361,18 +227,9 @@ export function registerCommandHandlers(bot: TelegramBot) {
     }
 
     const settings = await getChatSettings(chatId);
-    const hasChatPro = (settings?.chat_pro ?? false) || (settings?.is_premium ?? false);
-
-    if (!hasChatPro) {
-      await bot.sendMessage(
-        chatId,
-        '⚙️ Настройки доступны только в Chat Pro. Активируйте Chat Pro для этого чата → /chatpro'
-      );
-      return;
-    }
     const quietMode = settings?.quiet_mode ?? false;
 
-    await bot.sendMessage(chatId, '⚙️ Настройки чата  [Chat Pro ✨]', {
+    await bot.sendMessage(chatId, '⚙️ Настройки чата', {
       reply_markup: {
         inline_keyboard: [
           [
@@ -413,15 +270,6 @@ export function registerCommandHandlers(bot: TelegramBot) {
       await bot.sendMessage(
         chatId,
         '📊 Статистика доступна только администраторам чата.'
-      );
-      return;
-    }
-
-    const settings = await getChatSettings(chatId);
-    if (!settings?.chat_pro && !settings?.is_premium) {
-      await bot.sendMessage(
-        chatId,
-        '📊 Статистика доступна только в Chat Pro. Активируйте Chat Pro для этого чата → /chatpro'
       );
       return;
     }
