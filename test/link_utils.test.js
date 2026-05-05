@@ -41,6 +41,20 @@ test('findsocialLinks detects supported links including twitter.com variants', (
   ]);
 });
 
+test('findsocialLinks detects instagram reel and reels paths', () => {
+  const text = [
+    'https://www.instagram.com/reel/DWcW6eMDFS3/?igsh=xyz',
+    'https://www.instagram.com/reels/DXjRHLGDXNz/?r=123123',
+    'https://instagram.com/tv/abc123',
+  ].join(' ');
+
+  assert.deepEqual(findsocialLinks(text), [
+    'https://www.instagram.com/reel/DWcW6eMDFS3/?igsh=xyz',
+    'https://www.instagram.com/reels/DXjRHLGDXNz/?r=123123',
+    'https://instagram.com/tv/abc123',
+  ]);
+});
+
 test('findsocialLinks skips disabled or already-fixed platforms', () => {
   const text = [
     'https://threads.net/post/123',

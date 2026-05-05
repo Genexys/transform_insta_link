@@ -84,6 +84,7 @@ function findsocialLinks(text) {
             cleanWord.includes('instagr.am')) &&
             (cleanWord.includes('/p/') ||
                 cleanWord.includes('/reel/') ||
+                cleanWord.includes('/reels/') ||
                 cleanWord.includes('/tv/'))) {
             if (!cleanWord.includes('ddinstagram.com') &&
                 !cleanWord.includes('kkinstagram.com') &&

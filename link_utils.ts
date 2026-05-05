@@ -97,6 +97,7 @@ export function findsocialLinks(text: string): string[] {
         cleanWord.includes('instagr.am')) &&
       (cleanWord.includes('/p/') ||
         cleanWord.includes('/reel/') ||
+        cleanWord.includes('/reels/') ||
         cleanWord.includes('/tv/'))
     ) {
       if (
