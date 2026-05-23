@@ -228,11 +228,12 @@ function registerMessageHandlers(bot, resolvers, options) {
                         reply_to_message_id: msg.message_id,
                         reply_markup: replyMarkup,
                     };
-                    await bot.sendMessage(chatId, finalMessage, sendOptions);
+                    const sent = await bot.sendMessage(chatId, finalMessage, sendOptions);
                     runtime_1.log.info('Reply sent successfully', {
                         chatId,
                         replyToMessageId: msg.message_id,
                     });
+                    scheduleInstaPreviewRefresh(bot, chatId, sent.message_id, finalMessage, fixedLinks);
                     await bot.deleteMessage(chatId, msg.message_id);
                 }
                 catch (error) {
@@ -246,10 +247,15 @@ function registerMessageHandlers(bot, resolvers, options) {
                 }
             }
             else {
-                bot.sendMessage(chatId, finalMessage, {
+                bot
+                    .sendMessage(chatId, finalMessage, {
                     disable_web_page_preview: false,
                     reply_markup: replyMarkup,
-                });
+                })
+                    .then(sent => {
+                    scheduleInstaPreviewRefresh(bot, chatId, sent.message_id, finalMessage, fixedLinks);
+                })
+                    .catch(() => { });
             }
             maybeSendInstaCarouselAlbum(bot, chatId, socialLinks, msg).catch(err => {
                 runtime_1.log.warn('insta carousel album send failed', {
@@ -258,6 +264,59 @@ function registerMessageHandlers(bot, resolvers, options) {
                 });
             });
         }
+    });
+}
+const PREVIEW_REFRESH_BUDGET_BYTES = 18 * 1024 * 1024;
+const PREVIEW_REFRESH_DELAY_MS = 75_000;
+const INSTA_PREVIEW_PATH_REGEX = new RegExp(`(https://${link_utils_1.INSTA_FIX_DOMAIN.replace(/\./g, '\\.')}/(?:reel|reels|p|tv)/[A-Za-z0-9_-]+)(\\?[^\\s]*)?`, 'g');
+function extractShortcodeFromPreviewUrl(url) {
+    if (!url.includes(link_utils_1.INSTA_FIX_DOMAIN))
+        return null;
+    const match = url.match(/\/(?:reel|reels|p|tv)\/([A-Za-z0-9_-]+)/);
+    return match ? match[1] : null;
+}
+function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, fixedLinks) {
+    const instaShortcodes = fixedLinks
+        .map(extractShortcodeFromPreviewUrl)
+        .filter((sc) => Boolean(sc));
+    if (instaShortcodes.length === 0)
+        return;
+    (async () => {
+        let anyOversized = false;
+        for (const sc of instaShortcodes) {
+            const result = await (0, insta_preview_client_1.fetchInstaPreview)(sc).catch(() => null);
+            if (!result?.ok)
+                continue;
+            const size = result.data.media?.[0]?.sizeBytes;
+            if (typeof size === 'number' && size > PREVIEW_REFRESH_BUDGET_BYTES) {
+                anyOversized = true;
+                break;
+            }
+        }
+        if (!anyOversized)
+            return;
+        setTimeout(async () => {
+            const refreshedText = text.replace(INSTA_PREVIEW_PATH_REGEX, (_match, base) => `${base}?v=ready`);
+            if (refreshedText === text)
+                return;
+            try {
+                await bot.editMessageText(refreshedText, {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    disable_web_page_preview: false,
+                });
+                runtime_1.log.info('Insta preview refresh edit sent', { chatId, messageId });
+            }
+            catch (err) {
+                runtime_1.log.warn('Insta preview refresh edit failed', {
+                    chatId,
+                    messageId,
+                    err: String(err),
+                });
+            }
+        }, PREVIEW_REFRESH_DELAY_MS);
+    })().catch(err => {
+        runtime_1.log.warn('Insta preview refresh probe failed', { chatId, messageId, err: String(err) });
     });
 }
 async function maybeSendInstaCarouselAlbum(bot, chatId, socialLinks, sourceMsg) {

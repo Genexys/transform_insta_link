@@ -8,6 +8,7 @@ export type InstaMediaEntry = {
   width?: number | null;
   height?: number | null;
   duration?: number;
+  sizeBytes?: number;
 };
 
 export type InstaExtractData = {
