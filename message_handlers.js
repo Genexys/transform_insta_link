@@ -233,7 +233,7 @@ function registerMessageHandlers(bot, resolvers, options) {
                         chatId,
                         replyToMessageId: msg.message_id,
                     });
-                    scheduleInstaPreviewRefresh(bot, chatId, sent.message_id, finalMessage, fixedLinks);
+                    scheduleInstaPreviewRefresh(bot, chatId, sent.message_id, finalMessage, fixedLinks, options.downloadsEnabled);
                     await bot.deleteMessage(chatId, msg.message_id);
                 }
                 catch (error) {
@@ -253,7 +253,7 @@ function registerMessageHandlers(bot, resolvers, options) {
                     reply_markup: replyMarkup,
                 })
                     .then(sent => {
-                    scheduleInstaPreviewRefresh(bot, chatId, sent.message_id, finalMessage, fixedLinks);
+                    scheduleInstaPreviewRefresh(bot, chatId, sent.message_id, finalMessage, fixedLinks, options.downloadsEnabled);
                 })
                     .catch(() => { });
             }
@@ -275,12 +275,20 @@ function extractShortcodeFromPreviewUrl(url) {
     const match = url.match(/\/(?:reel|reels|p|tv)\/([A-Za-z0-9_-]+)/);
     return match ? match[1] : null;
 }
-function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, fixedLinks) {
+function buildInstaDownloadMarkup() {
+    return {
+        inline_keyboard: [
+            [{ text: '📥 Скачать оригинал', callback_data: 'download_video' }],
+        ],
+    };
+}
+function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, fixedLinks, downloadsEnabled) {
     const instaShortcodes = fixedLinks
         .map(extractShortcodeFromPreviewUrl)
         .filter((sc) => Boolean(sc));
     if (instaShortcodes.length === 0)
         return;
+    const canOfferDownload = downloadsEnabled && fixedLinks.length === 1;
     (async () => {
         let anyOversized = false;
         for (const sc of instaShortcodes) {
@@ -295,6 +303,23 @@ function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, fixedLinks) {
         }
         if (!anyOversized)
             return;
+        const downloadMarkup = canOfferDownload ? buildInstaDownloadMarkup() : undefined;
+        if (downloadMarkup) {
+            try {
+                await bot.editMessageReplyMarkup(downloadMarkup, {
+                    chat_id: chatId,
+                    message_id: messageId,
+                });
+                runtime_1.log.info('Insta oversize download button attached', { chatId, messageId });
+            }
+            catch (err) {
+                runtime_1.log.warn('Insta oversize download button attach failed', {
+                    chatId,
+                    messageId,
+                    err: String(err),
+                });
+            }
+        }
         setTimeout(async () => {
             const refreshedText = text.replace(INSTA_PREVIEW_PATH_REGEX, (_match, base) => `${base}?v=ready`);
             if (refreshedText === text)
@@ -304,6 +329,7 @@ function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, fixedLinks) {
                     chat_id: chatId,
                     message_id: messageId,
                     disable_web_page_preview: false,
+                    reply_markup: downloadMarkup,
                 });
                 runtime_1.log.info('Insta preview refresh edit sent', { chatId, messageId });
             }

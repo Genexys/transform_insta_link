@@ -309,7 +309,14 @@ export function registerMessageHandlers(
             chatId,
             replyToMessageId: msg.message_id,
           });
-          scheduleInstaPreviewRefresh(bot, chatId, sent.message_id, finalMessage, fixedLinks);
+          scheduleInstaPreviewRefresh(
+            bot,
+            chatId,
+            sent.message_id,
+            finalMessage,
+            fixedLinks,
+            options.downloadsEnabled
+          );
           await bot.deleteMessage(chatId, msg.message_id);
         } catch (error) {
           if (error instanceof Error) {
@@ -327,7 +334,14 @@ export function registerMessageHandlers(
             reply_markup: replyMarkup,
           })
           .then(sent => {
-            scheduleInstaPreviewRefresh(bot, chatId, sent.message_id, finalMessage, fixedLinks);
+            scheduleInstaPreviewRefresh(
+              bot,
+              chatId,
+              sent.message_id,
+              finalMessage,
+              fixedLinks,
+              options.downloadsEnabled
+            );
           })
           .catch(() => {});
       }
@@ -355,17 +369,28 @@ function extractShortcodeFromPreviewUrl(url: string): string | null {
   return match ? match[1] : null;
 }
 
+function buildInstaDownloadMarkup(): TelegramBot.InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [{ text: '📥 Скачать оригинал', callback_data: 'download_video' }],
+    ],
+  };
+}
+
 function scheduleInstaPreviewRefresh(
   bot: TelegramBot,
   chatId: number,
   messageId: number,
   text: string,
-  fixedLinks: string[]
+  fixedLinks: string[],
+  downloadsEnabled: boolean
 ) {
   const instaShortcodes = fixedLinks
     .map(extractShortcodeFromPreviewUrl)
     .filter((sc): sc is string => Boolean(sc));
   if (instaShortcodes.length === 0) return;
+
+  const canOfferDownload = downloadsEnabled && fixedLinks.length === 1;
 
   (async () => {
     let anyOversized = false;
@@ -380,6 +405,24 @@ function scheduleInstaPreviewRefresh(
     }
     if (!anyOversized) return;
 
+    const downloadMarkup = canOfferDownload ? buildInstaDownloadMarkup() : undefined;
+
+    if (downloadMarkup) {
+      try {
+        await bot.editMessageReplyMarkup(downloadMarkup, {
+          chat_id: chatId,
+          message_id: messageId,
+        });
+        log.info('Insta oversize download button attached', { chatId, messageId });
+      } catch (err) {
+        log.warn('Insta oversize download button attach failed', {
+          chatId,
+          messageId,
+          err: String(err),
+        });
+      }
+    }
+
     setTimeout(async () => {
       const refreshedText = text.replace(
         INSTA_PREVIEW_PATH_REGEX,
@@ -391,6 +434,7 @@ function scheduleInstaPreviewRefresh(
           chat_id: chatId,
           message_id: messageId,
           disable_web_page_preview: false,
+          reply_markup: downloadMarkup,
         });
         log.info('Insta preview refresh edit sent', { chatId, messageId });
       } catch (err) {
