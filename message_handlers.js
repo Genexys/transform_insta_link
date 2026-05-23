@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerMessageHandlers = registerMessageHandlers;
+const app_env_1 = require("./app_env");
 const db_1 = require("./db");
 const link_utils_1 = require("./link_utils");
 const insta_preview_client_1 = require("./insta_preview_client");
@@ -77,7 +78,7 @@ function registerMessageHandlers(bot, resolvers, options) {
                     signal: AbortSignal.timeout(15000),
                 }).catch(() => { });
             });
-            await bot.answerInlineQuery(queryId, [
+            const results = [
                 {
                     type: 'article',
                     id: 'fixed_message',
@@ -94,7 +95,22 @@ function registerMessageHandlers(bot, resolvers, options) {
                         },
                     },
                 },
-            ], {
+            ];
+            if (options.downloadsEnabled && fixedLinks.length === 1) {
+                const instaShortcode = extractShortcodeFromPreviewUrl(fixedLinks[0]);
+                if (instaShortcode) {
+                    results.push({
+                        type: 'video',
+                        id: `video_${instaShortcode}`,
+                        title: '🎥 Видео в чат',
+                        description: 'Отправить видео файлом',
+                        video_url: `https://${app_env_1.INSTA_PREVIEW_HOST}/v/${encodeURIComponent(instaShortcode)}.mp4`,
+                        mime_type: 'video/mp4',
+                        thumb_url: `https://${app_env_1.INSTA_PREVIEW_HOST}/thumb/${encodeURIComponent(instaShortcode)}.jpg`,
+                    });
+                }
+            }
+            await bot.answerInlineQuery(queryId, results, {
                 cache_time: 0,
             });
         }

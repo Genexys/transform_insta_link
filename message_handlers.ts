@@ -1,4 +1,5 @@
 import TelegramBot from 'node-telegram-bot-api';
+import { INSTA_PREVIEW_HOST } from './app_env';
 import { getChatSettings, logLinkEvent } from './db';
 import {
   convertToInlineFix,
@@ -116,31 +117,44 @@ export function registerMessageHandlers(
         }).catch(() => {});
       });
 
-      await bot.answerInlineQuery(
-        queryId,
-        [
-          {
-            type: 'article' as const,
-            id: 'fixed_message',
-            title: `✅ ${platformStr}`,
-            description:
-              fixedLinks.length === 1
-                ? fixedLinks[0]
-                : `${fixedLinks.length} ссылок исправлено`,
-            input_message_content: {
-              message_text: fixedText,
-              link_preview_options: {
-                is_disabled: false,
-                url: fixedLinks[0],
-                prefer_large_media: true,
-              },
-            } as TelegramBot.InputTextMessageContent,
-          },
-        ],
+      const results: TelegramBot.InlineQueryResult[] = [
         {
-          cache_time: 0,
+          type: 'article' as const,
+          id: 'fixed_message',
+          title: `✅ ${platformStr}`,
+          description:
+            fixedLinks.length === 1
+              ? fixedLinks[0]
+              : `${fixedLinks.length} ссылок исправлено`,
+          input_message_content: {
+            message_text: fixedText,
+            link_preview_options: {
+              is_disabled: false,
+              url: fixedLinks[0],
+              prefer_large_media: true,
+            },
+          } as TelegramBot.InputTextMessageContent,
+        },
+      ];
+
+      if (options.downloadsEnabled && fixedLinks.length === 1) {
+        const instaShortcode = extractShortcodeFromPreviewUrl(fixedLinks[0]);
+        if (instaShortcode) {
+          results.push({
+            type: 'video',
+            id: `video_${instaShortcode}`,
+            title: '🎥 Видео в чат',
+            description: 'Отправить видео файлом',
+            video_url: `https://${INSTA_PREVIEW_HOST}/v/${encodeURIComponent(instaShortcode)}.mp4`,
+            mime_type: 'video/mp4',
+            thumb_url: `https://${INSTA_PREVIEW_HOST}/thumb/${encodeURIComponent(instaShortcode)}.jpg`,
+          } as TelegramBot.InlineQueryResultVideo);
         }
-      );
+      }
+
+      await bot.answerInlineQuery(queryId, results, {
+        cache_time: 0,
+      });
     } catch (error) {
       log.error('Inline query failed', {
         queryId,
