@@ -1,5 +1,5 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { DATABASE_URL } from './app_env';
+import { ADMIN_CHAT_ID, DATABASE_URL } from './app_env';
 import { DONATE_AMOUNTS_STARS } from './billing';
 import {
   createUser,
@@ -74,6 +74,7 @@ export function registerCommandHandlers(bot: TelegramBot) {
       '   • Bluesky\n' +
       '   • DeviantArt\n' +
       '   • Pixiv\n\n' +
+      '🛟 Что-то сломалось? Напишите /feedback <сообщение> — пришлю разработчику.\n' +
       '❤️ Поддержать проект: /donate'
     );
   }
@@ -364,6 +365,108 @@ export function registerCommandHandlers(bot: TelegramBot) {
         : '');
 
     await bot.sendMessage(chatId, text);
+  });
+
+  const FEEDBACK_REGEX = /^\/feedback(?:@\w+)?(?:\s+([\s\S]+))?$/i;
+  const FEEDBACK_MAX_LEN = 2000;
+
+  function buildFeedbackHeader(
+    msg: TelegramBot.Message,
+    text: string
+  ): string {
+    const from = msg.from;
+    const userTag = from?.username
+      ? `@${from.username}`
+      : from?.first_name
+        ? `${from.first_name}${from.last_name ? ' ' + from.last_name : ''}`
+        : `id ${from?.id ?? '?'}`;
+    const chatLabel =
+      msg.chat.type === 'private'
+        ? 'личка'
+        : `${msg.chat.title || 'без названия'} (${msg.chat.type})`;
+    const lines = [
+      '📣 Feedback',
+      `От: ${userTag} (id ${from?.id ?? '?'})`,
+      `Чат: ${chatLabel}`,
+    ];
+    if (text) lines.push('', text);
+    return lines.join('\n');
+  }
+
+  async function handleFeedback(
+    msg: TelegramBot.Message,
+    rawText: string | undefined
+  ) {
+    const chatId = msg.chat.id;
+    if (!ADMIN_CHAT_ID) {
+      await bot.sendMessage(
+        chatId,
+        '⚠️ Канал обратной связи не настроен. Попробуйте позже.',
+        { reply_to_message_id: msg.message_id }
+      );
+      return;
+    }
+
+    const trimmed = (rawText || '').trim().slice(0, FEEDBACK_MAX_LEN);
+    const hasPhoto = Array.isArray(msg.photo) && msg.photo.length > 0;
+
+    if (!trimmed && !hasPhoto) {
+      await bot.sendMessage(
+        chatId,
+        'ℹ️ Использование: /feedback <ваше сообщение>\n' +
+          'Можно прикрепить скриншот: отправьте фото и в подписи напишите /feedback <описание>.',
+        { reply_to_message_id: msg.message_id }
+      );
+      return;
+    }
+
+    const header = buildFeedbackHeader(msg, trimmed);
+
+    try {
+      if (hasPhoto) {
+        const largest = msg.photo![msg.photo!.length - 1];
+        await bot.sendPhoto(ADMIN_CHAT_ID, largest.file_id, {
+          caption: header.slice(0, 1024),
+        });
+      } else {
+        await bot.sendMessage(ADMIN_CHAT_ID, header);
+      }
+
+      await bot.sendMessage(
+        chatId,
+        '✅ Спасибо! Сообщение отправлено разработчику.',
+        { reply_to_message_id: msg.message_id }
+      );
+
+      log.info('Feedback forwarded', {
+        userId: msg.from?.id,
+        chatId,
+        hasPhoto,
+        textLength: trimmed.length,
+      });
+    } catch (err) {
+      log.error('Feedback delivery failed', {
+        userId: msg.from?.id,
+        chatId,
+        err: String(err),
+      });
+      await bot.sendMessage(
+        chatId,
+        '⚠️ Не удалось отправить отзыв. Попробуйте позже.',
+        { reply_to_message_id: msg.message_id }
+      );
+    }
+  }
+
+  bot.onText(FEEDBACK_REGEX, async (msg, match) => {
+    await handleFeedback(msg, match?.[1]);
+  });
+
+  bot.on('message', async msg => {
+    if (!msg.photo || !msg.caption) return;
+    const m = FEEDBACK_REGEX.exec(msg.caption);
+    if (!m) return;
+    await handleFeedback(msg, m[1]);
   });
 
   bot.on('my_chat_member', async update => {
