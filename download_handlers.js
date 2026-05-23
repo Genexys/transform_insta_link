@@ -7,8 +7,11 @@ exports.handleDownloadCallback = handleDownloadCallback;
 const fs_1 = __importDefault(require("fs"));
 const os_1 = __importDefault(require("os"));
 const path_1 = __importDefault(require("path"));
+const stream_1 = require("stream");
+const promises_1 = require("stream/promises");
 const app_env_1 = require("./app_env");
 const db_1 = require("./db");
+const insta_preview_client_1 = require("./insta_preview_client");
 const link_utils_1 = require("./link_utils");
 const runtime_1 = require("./runtime");
 async function handleDownloadCallback(bot, query, ytdlp) {
@@ -33,6 +36,7 @@ async function handleDownloadCallback(bot, query, ytdlp) {
     }
     const fixedUrl = urlMatch[0];
     const originalUrl = (0, link_utils_1.revertUrlForDownload)(fixedUrl);
+    const isInstagram = fixedUrl.includes(link_utils_1.INSTA_FIX_DOMAIN);
     await bot.answerCallbackQuery(query.id, { text: '⏳ Начинаю загрузку...' });
     const loadingMsg = await bot.sendMessage(chatId, '⏳ Скачиваю видео, это может занять несколько секунд...', { reply_to_message_id: query.message.message_id });
     const tempFilePath = path_1.default.join(os_1.default.tmpdir(), `video_${Date.now()}.mp4`);
@@ -42,12 +46,22 @@ async function handleDownloadCallback(bot, query, ytdlp) {
             telegramId,
             urlHost: new URL(originalUrl).hostname,
             tempFilePath,
+            via: isInstagram ? 'preview-service' : 'yt-dlp',
         });
-        await ytdlp.downloadAsync(originalUrl, {
-            output: tempFilePath,
-            format: 'best[ext=mp4]/best',
-            maxFilesize: '50M',
-        });
+        if (isInstagram) {
+            const shortcode = (0, insta_preview_client_1.extractShortcodeFromUrl)(originalUrl);
+            if (!shortcode) {
+                throw new Error('Не удалось распознать shortcode Instagram-ссылки.');
+            }
+            await downloadFromPreviewService(shortcode, tempFilePath);
+        }
+        else {
+            await ytdlp.downloadAsync(originalUrl, {
+                output: tempFilePath,
+                format: 'best[ext=mp4]/best',
+                maxFilesize: '50M',
+            });
+        }
         if (!fs_1.default.existsSync(tempFilePath)) {
             throw new Error('Файл не был создан после загрузки. Возможно, yt-dlp не установлен или ссылка не поддерживается.');
         }
@@ -76,8 +90,12 @@ async function handleDownloadCallback(bot, query, ytdlp) {
         });
         await (0, db_1.saveErrorLog)(telegramId, error.message || 'Unknown error', error.stack || '', originalUrl);
         let errorMsg = '❌ Ошибка при скачивании.';
-        if (error.message && error.message.includes('File is larger than')) {
+        const errStr = (error?.message || '').toLowerCase();
+        if (errStr.includes('file is larger than') || errStr.includes('too big')) {
             errorMsg = '❌ Видео слишком большое для отправки через Telegram (>50MB).';
+        }
+        else if (errStr.includes('preview_service_')) {
+            errorMsg = `❌ Сервис превью вернул ошибку: ${error.message}. Попробуйте через минуту.`;
         }
         else {
             errorMsg =
@@ -100,4 +118,20 @@ async function handleDownloadCallback(bot, query, ytdlp) {
             });
         }
     }
+}
+async function downloadFromPreviewService(shortcode, destPath) {
+    const url = `https://${app_env_1.INSTA_PREVIEW_HOST}/v/${encodeURIComponent(shortcode)}.mp4`;
+    const headers = {};
+    if (app_env_1.INSTA_PREVIEW_TOKEN) {
+        headers.authorization = `Bearer ${app_env_1.INSTA_PREVIEW_TOKEN}`;
+    }
+    const res = await fetch(url, {
+        method: 'GET',
+        headers,
+        signal: AbortSignal.timeout(120_000),
+    });
+    if (!res.ok || !res.body) {
+        throw new Error(`preview_service_${res.status}`);
+    }
+    await (0, promises_1.pipeline)(stream_1.Readable.fromWeb(res.body), fs_1.default.createWriteStream(destPath));
 }
