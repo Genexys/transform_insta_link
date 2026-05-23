@@ -372,7 +372,7 @@ function extractShortcodeFromPreviewUrl(url: string): string | null {
 function buildInstaDownloadMarkup(): TelegramBot.InlineKeyboardMarkup {
   return {
     inline_keyboard: [
-      [{ text: '📥 Скачать оригинал', callback_data: 'download_video' }],
+      [{ text: '📥 Скачать видео в чат', callback_data: 'download_video' }],
     ],
   };
 }

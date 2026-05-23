@@ -278,7 +278,7 @@ function extractShortcodeFromPreviewUrl(url) {
 function buildInstaDownloadMarkup() {
     return {
         inline_keyboard: [
-            [{ text: '📥 Скачать оригинал', callback_data: 'download_video' }],
+            [{ text: '📥 Скачать видео в чат', callback_data: 'download_video' }],
         ],
     };
 }
