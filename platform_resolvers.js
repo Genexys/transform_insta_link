@@ -16,9 +16,9 @@ async function fetchWithRetry(url, opts) {
 }
 function createPlatformResolvers(sendAdminAlert) {
     async function getWorkingInstaFixUrl(originalUrl, chatId, userId) {
-        const reelMp4 = (0, link_utils_1.rewriteInstagramReelToMp4)(originalUrl);
+        const reelPreview = (0, link_utils_1.rewriteInstagramReelToPreview)(originalUrl);
         const pagePath = originalUrl.replace(link_utils_1.instaRegex, link_utils_1.INSTA_FIX_DOMAIN);
-        const selfHostedUrl = reelMp4 ?? pagePath;
+        const selfHostedUrl = reelPreview ?? pagePath;
         try {
             await fetchWithRetry(`https://${link_utils_1.INSTA_FIX_DOMAIN}/health`, {
                 method: 'GET',
@@ -46,7 +46,7 @@ function createPlatformResolvers(sendAdminAlert) {
             sendAdminAlert(`[INSTAGRAM] Оба сервиса недоступны\nURL: ${originalUrl}`).catch(() => { });
             return fallbackUrl;
         }
-        const warmupUrl = reelMp4 ?? pagePath;
+        const warmupUrl = reelPreview ?? pagePath;
         try {
             await fetch(warmupUrl, {
                 method: 'HEAD',

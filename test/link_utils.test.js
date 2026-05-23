@@ -70,15 +70,15 @@ test('findsocialLinks skips disabled or already-fixed platforms', () => {
 test('convertToInstaFix rewrites supported pass-through platforms', () => {
   assert.equal(
     convertToInstaFix('https://instagram.com/reel/abc123'),
-    `https://${INSTA_FIX_DOMAIN}/v/abc123.mp4`
+    `https://${INSTA_FIX_DOMAIN}/reel/abc123`
   );
   assert.equal(
     convertToInstaFix('https://www.instagram.com/reel/DWcW6eMDFS3/?igsh=xyz'),
-    `https://${INSTA_FIX_DOMAIN}/v/DWcW6eMDFS3.mp4`
+    `https://${INSTA_FIX_DOMAIN}/reel/DWcW6eMDFS3`
   );
   assert.equal(
     convertToInstaFix('https://instagram.com/reels/DW_7Ow-EdaA/'),
-    `https://${INSTA_FIX_DOMAIN}/v/DW_7Ow-EdaA.mp4`
+    `https://${INSTA_FIX_DOMAIN}/reel/DW_7Ow-EdaA`
   );
   assert.equal(
     convertToInstaFix('https://instagram.com/p/abc123/'),
@@ -112,7 +112,7 @@ test('convertToInstaFix annotates reddit short links', () => {
 test('convertToInlineFix uses deterministic fast-path fixers for inline mode', () => {
   assert.equal(
     convertToInlineFix('https://instagram.com/reel/abc123'),
-    `https://${INSTA_FIX_DOMAIN}/v/abc123.mp4`
+    `https://${INSTA_FIX_DOMAIN}/reel/abc123`
   );
   assert.equal(
     convertToInlineFix('https://instagram.com/p/abc123/'),

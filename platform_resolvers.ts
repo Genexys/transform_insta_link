@@ -4,7 +4,7 @@ import {
   INSTA_FIX_DOMAIN,
   INSTA_FIX_FALLBACK,
   instaRegex,
-  rewriteInstagramReelToMp4,
+  rewriteInstagramReelToPreview,
   TIKTOK_FIXERS,
   tiktokRegex,
   TWITTER_FIXERS,
@@ -33,9 +33,9 @@ export function createPlatformResolvers(sendAdminAlert: SendAdminAlert) {
     chatId?: number,
     userId?: number
   ): Promise<string> {
-    const reelMp4 = rewriteInstagramReelToMp4(originalUrl);
+    const reelPreview = rewriteInstagramReelToPreview(originalUrl);
     const pagePath = originalUrl.replace(instaRegex, INSTA_FIX_DOMAIN);
-    const selfHostedUrl = reelMp4 ?? pagePath;
+    const selfHostedUrl = reelPreview ?? pagePath;
 
     try {
       await fetchWithRetry(`https://${INSTA_FIX_DOMAIN}/health`, {
@@ -65,7 +65,7 @@ export function createPlatformResolvers(sendAdminAlert: SendAdminAlert) {
       return fallbackUrl;
     }
 
-    const warmupUrl = reelMp4 ?? pagePath;
+    const warmupUrl = reelPreview ?? pagePath;
     try {
       await fetch(warmupUrl, {
         method: 'HEAD',

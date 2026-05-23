@@ -1,7 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.twitterRegex = exports.tiktokRegex = exports.instaReelRegex = exports.instaRegex = exports.REDDIT_EMBED_DOMAIN = exports.TWITTER_FIXERS = exports.TIKTOK_FIXERS = exports.INSTA_FIX_FALLBACK = exports.INSTA_FIX_DOMAIN_LEGACY = exports.INSTA_FIX_DOMAIN = void 0;
-exports.rewriteInstagramReelToMp4 = rewriteInstagramReelToMp4;
+exports.rewriteInstagramReelToPreview = rewriteInstagramReelToPreview;
 exports.revertUrlForDownload = revertUrlForDownload;
 exports.convertToInstaFix = convertToInstaFix;
 exports.convertToInlineFix = convertToInlineFix;
@@ -16,11 +16,11 @@ exports.instaRegex = /(?:www\.)?(?:instagram\.com|instagr\.am)/;
 exports.instaReelRegex = /(?:www\.)?(?:instagram\.com|instagr\.am)\/reels?\/([A-Za-z0-9_-]+)/;
 exports.tiktokRegex = /(?:(?:www|vm|vt)\.)?tiktok\.com/;
 exports.twitterRegex = /(?:(?:www|mobile)\.)?(?:x|twitter)\.com/;
-function rewriteInstagramReelToMp4(url) {
+function rewriteInstagramReelToPreview(url) {
     const match = url.match(exports.instaReelRegex);
     if (!match)
         return null;
-    return `https://${exports.INSTA_FIX_DOMAIN}/v/${match[1]}.mp4`;
+    return `https://${exports.INSTA_FIX_DOMAIN}/reel/${match[1]}`;
 }
 function revertUrlForDownload(url) {
     let result = url
@@ -42,9 +42,9 @@ function revertUrlForDownload(url) {
     return result;
 }
 function convertToInstaFix(url) {
-    const reelMp4 = rewriteInstagramReelToMp4(url);
-    if (reelMp4)
-        return reelMp4;
+    const reelPreview = rewriteInstagramReelToPreview(url);
+    if (reelPreview)
+        return reelPreview;
     let convertedUrl = url
         .replace(/(?:www\.)?instagram\.com/g, exports.INSTA_FIX_DOMAIN)
         .replace(/(?:www\.)?instagr\.am/g, exports.INSTA_FIX_DOMAIN)
@@ -62,9 +62,9 @@ function convertToInlineFix(url) {
         return url;
     }
     if (exports.instaRegex.test(url)) {
-        const reelMp4 = rewriteInstagramReelToMp4(url);
-        if (reelMp4)
-            return reelMp4;
+        const reelPreviewInline = rewriteInstagramReelToPreview(url);
+        if (reelPreviewInline)
+            return reelPreviewInline;
         return url.replace(exports.instaRegex, exports.INSTA_FIX_DOMAIN);
     }
     if (exports.tiktokRegex.test(url)) {
