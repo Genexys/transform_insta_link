@@ -18,7 +18,7 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 // The preview service /health is a cheap static check (~0.3s). A 3s budget
 // was tight enough that any transient Railway latency spike (or a redeploy
 // restart) tripped the "both services unavailable" fallback + admin alert and
-// degraded otherwise-working reels onto the kksave fallback. 8s leaves ample
+// degraded otherwise-working reels onto the vxinstagram fallback. 8s leaves ample
 // headroom while still catching a genuine outage.
 const INSTA_HEALTH_TIMEOUT_MS = 8000;
 

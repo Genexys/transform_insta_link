@@ -3,7 +3,7 @@
 export const INSTA_FIX_DOMAIN = 'previewlinkbot.xyz';
 export const INSTA_FIX_DOMAIN_LEGACY =
   'instapreviewservice-production.up.railway.app';
-export const INSTA_FIX_FALLBACK = 'kksave.com';
+export const INSTA_FIX_FALLBACK = 'vxinstagram.com';
 export const TIKTOK_FIXERS = ['tfxktok.com'];
 export const TWITTER_FIXERS = ['fxtwitter.com', 'fixupx.com'];
 export const REDDIT_EMBED_DOMAIN =
