@@ -5,6 +5,7 @@ const runtime_1 = require("./runtime");
 const db_1 = require("./db");
 const link_utils_1 = require("./link_utils");
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const INSTA_HEALTH_TIMEOUT_MS = 8000;
 async function fetchWithRetry(url, opts) {
     try {
         return await fetch(url, opts);
@@ -23,7 +24,7 @@ function createPlatformResolvers(sendAdminAlert) {
             await fetchWithRetry(`https://${link_utils_1.INSTA_FIX_DOMAIN}/health`, {
                 method: 'GET',
                 redirect: 'manual',
-                signal: AbortSignal.timeout(3000),
+                signal: AbortSignal.timeout(INSTA_HEALTH_TIMEOUT_MS),
             });
         }
         catch {
@@ -35,7 +36,7 @@ function createPlatformResolvers(sendAdminAlert) {
                 await fetchWithRetry(`https://${link_utils_1.INSTA_FIX_FALLBACK}/`, {
                     method: 'HEAD',
                     redirect: 'manual',
-                    signal: AbortSignal.timeout(3000),
+                    signal: AbortSignal.timeout(INSTA_HEALTH_TIMEOUT_MS),
                 });
                 (0, db_1.logLinkEvent)('instagram', link_utils_1.INSTA_FIX_FALLBACK, true, chatId, userId);
                 return fallbackUrl;

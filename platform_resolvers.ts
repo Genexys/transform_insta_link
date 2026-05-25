@@ -15,6 +15,13 @@ type SendAdminAlert = (message: string) => Promise<void>;
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
+// The preview service /health is a cheap static check (~0.3s). A 3s budget
+// was tight enough that any transient Railway latency spike (or a redeploy
+// restart) tripped the "both services unavailable" fallback + admin alert and
+// degraded otherwise-working reels onto the kksave fallback. 8s leaves ample
+// headroom while still catching a genuine outage.
+const INSTA_HEALTH_TIMEOUT_MS = 8000;
+
 async function fetchWithRetry(
   url: string,
   opts: RequestInit
@@ -41,7 +48,7 @@ export function createPlatformResolvers(sendAdminAlert: SendAdminAlert) {
       await fetchWithRetry(`https://${INSTA_FIX_DOMAIN}/health`, {
         method: 'GET',
         redirect: 'manual',
-        signal: AbortSignal.timeout(3000),
+        signal: AbortSignal.timeout(INSTA_HEALTH_TIMEOUT_MS),
       });
     } catch {
       log.warn('Instagram self-hosted unreachable, using fallback', {
@@ -52,7 +59,7 @@ export function createPlatformResolvers(sendAdminAlert: SendAdminAlert) {
         await fetchWithRetry(`https://${INSTA_FIX_FALLBACK}/`, {
           method: 'HEAD',
           redirect: 'manual',
-          signal: AbortSignal.timeout(3000),
+          signal: AbortSignal.timeout(INSTA_HEALTH_TIMEOUT_MS),
         });
         logLinkEvent('instagram', INSTA_FIX_FALLBACK, true, chatId, userId);
         return fallbackUrl;
