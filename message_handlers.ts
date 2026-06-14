@@ -341,16 +341,28 @@ export function registerMessageHandlers(
 
       if (isGroup) {
         try {
+          // If the link message is itself a reply (user B answering user A),
+          // anchor the rewrite to A's message — B's message is about to be
+          // deleted, so replying to it would drop the conversation thread B
+          // intended. Falls back to B's own message for non-reply posts.
+          const replyToMessageId =
+            msg.reply_to_message?.message_id ?? msg.message_id;
+          const threadId = (
+            msg as TelegramBot.Message & { message_thread_id?: number }
+          ).message_thread_id;
           const sendOptions: SendMessageOptionsWithEntities = {
             disable_web_page_preview: false,
-            reply_to_message_id: msg.message_id,
+            reply_to_message_id: replyToMessageId,
+            // A's message could itself be gone; don't fail the rewrite over it.
+            allow_sending_without_reply: true,
             reply_markup: replyMarkup,
           };
+          if (threadId) sendOptions.message_thread_id = threadId;
           if (finalEntities.length) sendOptions.entities = finalEntities;
           const sent = await bot.sendMessage(chatId, finalMessage, sendOptions);
           log.info('Reply sent successfully', {
             chatId,
-            replyToMessageId: msg.message_id,
+            replyToMessageId,
           });
           scheduleInstaPreviewRefresh(
             bot,

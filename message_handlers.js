@@ -243,17 +243,22 @@ function registerMessageHandlers(bot, resolvers, options) {
                 : undefined;
             if (isGroup) {
                 try {
+                    const replyToMessageId = msg.reply_to_message?.message_id ?? msg.message_id;
+                    const threadId = msg.message_thread_id;
                     const sendOptions = {
                         disable_web_page_preview: false,
-                        reply_to_message_id: msg.message_id,
+                        reply_to_message_id: replyToMessageId,
+                        allow_sending_without_reply: true,
                         reply_markup: replyMarkup,
                     };
+                    if (threadId)
+                        sendOptions.message_thread_id = threadId;
                     if (finalEntities.length)
                         sendOptions.entities = finalEntities;
                     const sent = await bot.sendMessage(chatId, finalMessage, sendOptions);
                     runtime_1.log.info('Reply sent successfully', {
                         chatId,
-                        replyToMessageId: msg.message_id,
+                        replyToMessageId,
                     });
                     scheduleInstaPreviewRefresh(bot, chatId, sent.message_id, finalMessage, finalEntities, fixedLinks, options.downloadsEnabled);
                     await bot.deleteMessage(chatId, msg.message_id);
