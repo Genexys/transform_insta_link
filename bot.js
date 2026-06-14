@@ -60,21 +60,48 @@ process.on('unhandledRejection', reason => {
     sendAdminAlert(`[CRITICAL] unhandledRejection:\n${String(reason)}`).catch(() => { });
 });
 async function runHourlyHealthCheck() {
-    const health = await (0, health_1.getDependencyHealth)();
+    const [health, instaAuth] = await Promise.all([
+        (0, health_1.getDependencyHealth)(),
+        (0, health_1.getInstaAuthHealth)(),
+    ]);
     const e = (s) => (s === 'ok' ? '✅' : '❌');
     const instaMain = health.instagram[link_utils_1.INSTA_FIX_DOMAIN];
     const instaFallback = health.instagram[link_utils_1.INSTA_FIX_FALLBACK];
+    const instaSession = instaAuth.state === 'ok'
+        ? '✅ IG-сессия жива'
+        : instaAuth.state === 'expired'
+            ? `❌ IG-сессия умерла${instaAuth.reason ? ` (${instaAuth.reason})` : ''}`
+            : `⚠️ IG-сессия: ${instaAuth.state}${instaAuth.reason ? ` (${instaAuth.reason})` : ''}`;
     const tiktokLines = link_utils_1.TIKTOK_FIXERS.map(fixer => `${e(health.tiktok[fixer])} ${fixer}`).join('\n');
     const twitterLines = link_utils_1.TWITTER_FIXERS.map(fixer => `${e(health.twitter[fixer])} ${fixer}`).join('\n');
     const bluesky = health.other['bskx.app'];
     const deviantart = health.other['fixdeviantart.com'];
     const pixiv = health.other['phixiv.net'];
     await sendAdminAlert(`📊 Статус сервисов: ${health.status}\n\n` +
-        `Instagram:\n${e(instaMain)} ${link_utils_1.INSTA_FIX_DOMAIN}\n${e(instaFallback)} ${link_utils_1.INSTA_FIX_FALLBACK}\n\n` +
+        `Instagram:\n${e(instaMain)} ${link_utils_1.INSTA_FIX_DOMAIN}\n${e(instaFallback)} ${link_utils_1.INSTA_FIX_FALLBACK}\n${instaSession}\n\n` +
         `TikTok:\n${tiktokLines}\n\n` +
         `Twitter:\n${twitterLines}\n\n` +
         `Другие:\n${e(bluesky)} bskx.app\n${e(deviantart)} fixdeviantart.com\n${e(pixiv)} phixiv.net`);
 }
+let lastInstaAuthState = null;
+async function runInstaAuthMonitor() {
+    const { state, reason } = await (0, health_1.getInstaAuthHealth)();
+    if (state !== 'ok' && state !== 'expired')
+        return;
+    const prev = lastInstaAuthState;
+    lastInstaAuthState = state;
+    if (prev === null || prev === state)
+        return;
+    if (state === 'expired') {
+        await sendAdminAlert(`[INSTAGRAM] IG-сессия умерла${reason ? `: ${reason}` : ''}\n` +
+            `Превью реелов отдаются пустыми. Обнови cookies на ${link_utils_1.INSTA_FIX_DOMAIN} (через немецкий прокси).`);
+    }
+    else {
+        await sendAdminAlert(`[INSTAGRAM] IG-сессия восстановлена ✅ (${link_utils_1.INSTA_FIX_DOMAIN})`);
+    }
+}
 setInterval(runHourlyHealthCheck, 3 * 60 * 60 * 1000);
+setInterval(runInstaAuthMonitor, 10 * 60 * 1000);
+setTimeout(runInstaAuthMonitor, 30 * 1000);
 (0, http_server_1.startHttpServer)();
 runtime_1.log.info('Fix Bot started');

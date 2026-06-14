@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.checkService = checkService;
+exports.getInstaAuthHealth = getInstaAuthHealth;
 exports.getDependencyHealth = getDependencyHealth;
 const link_utils_1 = require("./link_utils");
 async function checkService(url) {
@@ -14,6 +15,37 @@ async function checkService(url) {
     }
     catch {
         return 'down';
+    }
+}
+async function getInstaAuthHealth() {
+    try {
+        const res = await fetch(`https://${link_utils_1.INSTA_FIX_DOMAIN}/health`, {
+            method: 'GET',
+            signal: AbortSignal.timeout(8000),
+        });
+        if (!res.ok) {
+            return { igAuthOk: false, state: 'unknown', reason: `http_${res.status}` };
+        }
+        const body = (await res.json());
+        const status = body.igAuth?.status;
+        const known = [
+            'ok',
+            'expired',
+            'degraded',
+            'disabled',
+            'pending',
+        ];
+        const state = known.includes(status)
+            ? status
+            : 'unknown';
+        return {
+            igAuthOk: body.igAuthOk === true,
+            state,
+            reason: body.igAuth?.reason,
+        };
+    }
+    catch (err) {
+        return { igAuthOk: false, state: 'unknown', reason: String(err) };
     }
 }
 async function getDependencyHealth() {

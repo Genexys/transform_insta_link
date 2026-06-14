@@ -18,6 +18,59 @@ export async function checkService(url: string): Promise<'ok' | 'down'> {
   }
 }
 
+export type InstaAuthState =
+  | 'ok'
+  | 'expired'
+  | 'degraded'
+  | 'disabled'
+  | 'pending'
+  | 'unknown';
+
+export interface InstaAuthHealth {
+  igAuthOk: boolean;
+  state: InstaAuthState;
+  reason?: string;
+}
+
+// Reads the preview service's /health body, which exposes the live Instagram
+// session state via `igAuthOk`. The service's /health is deliberately a 200
+// liveness probe even when the IG cookie is expired (so a dead session can't
+// block redeploys), so reachability checks alone can't see session death —
+// this surfaces `igAuthOk` for alerting.
+export async function getInstaAuthHealth(): Promise<InstaAuthHealth> {
+  try {
+    const res = await fetch(`https://${INSTA_FIX_DOMAIN}/health`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) {
+      return { igAuthOk: false, state: 'unknown', reason: `http_${res.status}` };
+    }
+    const body = (await res.json()) as {
+      igAuthOk?: boolean;
+      igAuth?: { status?: string; reason?: string };
+    };
+    const status = body.igAuth?.status;
+    const known: InstaAuthState[] = [
+      'ok',
+      'expired',
+      'degraded',
+      'disabled',
+      'pending',
+    ];
+    const state: InstaAuthState = known.includes(status as InstaAuthState)
+      ? (status as InstaAuthState)
+      : 'unknown';
+    return {
+      igAuthOk: body.igAuthOk === true,
+      state,
+      reason: body.igAuth?.reason,
+    };
+  } catch (err) {
+    return { igAuthOk: false, state: 'unknown', reason: String(err) };
+  }
+}
+
 export async function getDependencyHealth() {
   const [instaMain, instaFallback, ...rest] = await Promise.all([
     checkService(`https://${INSTA_FIX_DOMAIN}/`),
