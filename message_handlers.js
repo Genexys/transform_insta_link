@@ -5,6 +5,7 @@ const app_env_1 = require("./app_env");
 const db_1 = require("./db");
 const link_utils_1 = require("./link_utils");
 const insta_preview_client_1 = require("./insta_preview_client");
+const entity_utils_1 = require("./entity_utils");
 const runtime_1 = require("./runtime");
 function registerMessageHandlers(bot, resolvers, options) {
     bot.on('inline_query', async (query) => {
@@ -188,10 +189,8 @@ function registerMessageHandlers(bot, resolvers, options) {
                 return (0, link_utils_1.convertToInstaFix)(fullLink);
             }));
             const username = msg.from?.username ? `@${msg.from.username}` : 'кто-то';
-            let finalText = messageText;
             const platforms = new Set();
-            fixedLinks.forEach((url, index) => {
-                finalText = finalText.replace(socialLinks[index], url);
+            fixedLinks.forEach(url => {
                 if (url.includes(link_utils_1.INSTA_FIX_DOMAIN) || url.includes(link_utils_1.INSTA_FIX_FALLBACK))
                     platforms.add('📸 Instagram');
                 else if (link_utils_1.TWITTER_FIXERS.some(f => url.includes(f)))
@@ -219,9 +218,14 @@ function registerMessageHandlers(bot, resolvers, options) {
             });
             const chatSettings = isGroup ? await (0, db_1.getChatSettings)(chatId) : null;
             const quietMode = chatSettings?.quiet_mode ?? false;
-            const finalMessage = quietMode
-                ? finalText
-                : `Saved ${username} a click ${platformStr}:\n\n${finalText}`;
+            const prefix = quietMode
+                ? ''
+                : `Saved ${username} a click ${platformStr}:\n\n`;
+            const replacements = socialLinks.map((original, index) => ({
+                original,
+                replacement: fixedLinks[index],
+            }));
+            const { text: finalMessage, entities: finalEntities } = (0, entity_utils_1.applyLinkReplacements)(messageText, msg.entities, replacements, prefix);
             const isDownloadable = (url) => link_utils_1.TIKTOK_FIXERS.some(f => url.includes(f));
             const replyMarkup = options.downloadsEnabled &&
                 fixedLinks.length === 1 &&
@@ -244,12 +248,14 @@ function registerMessageHandlers(bot, resolvers, options) {
                         reply_to_message_id: msg.message_id,
                         reply_markup: replyMarkup,
                     };
+                    if (finalEntities.length)
+                        sendOptions.entities = finalEntities;
                     const sent = await bot.sendMessage(chatId, finalMessage, sendOptions);
                     runtime_1.log.info('Reply sent successfully', {
                         chatId,
                         replyToMessageId: msg.message_id,
                     });
-                    scheduleInstaPreviewRefresh(bot, chatId, sent.message_id, finalMessage, fixedLinks, options.downloadsEnabled);
+                    scheduleInstaPreviewRefresh(bot, chatId, sent.message_id, finalMessage, finalEntities, fixedLinks, options.downloadsEnabled);
                     await bot.deleteMessage(chatId, msg.message_id);
                 }
                 catch (error) {
@@ -263,13 +269,16 @@ function registerMessageHandlers(bot, resolvers, options) {
                 }
             }
             else {
-                bot
-                    .sendMessage(chatId, finalMessage, {
+                const dmOptions = {
                     disable_web_page_preview: false,
                     reply_markup: replyMarkup,
-                })
+                };
+                if (finalEntities.length)
+                    dmOptions.entities = finalEntities;
+                bot
+                    .sendMessage(chatId, finalMessage, dmOptions)
                     .then(sent => {
-                    scheduleInstaPreviewRefresh(bot, chatId, sent.message_id, finalMessage, fixedLinks, options.downloadsEnabled);
+                    scheduleInstaPreviewRefresh(bot, chatId, sent.message_id, finalMessage, finalEntities, fixedLinks, options.downloadsEnabled);
                 })
                     .catch(() => { });
             }
@@ -298,7 +307,7 @@ function buildInstaDownloadMarkup() {
         ],
     };
 }
-function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, fixedLinks, downloadsEnabled) {
+function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, entities, fixedLinks, downloadsEnabled) {
     const instaShortcodes = fixedLinks
         .map(extractShortcodeFromPreviewUrl)
         .filter((sc) => Boolean(sc));
@@ -337,16 +346,31 @@ function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, fixedLinks, d
             }
         }
         setTimeout(async () => {
-            const refreshedText = text.replace(INSTA_PREVIEW_PATH_REGEX, (_match, base) => `${base}?v=ready`);
+            const edits = [];
+            INSTA_PREVIEW_PATH_REGEX.lastIndex = 0;
+            let match;
+            while ((match = INSTA_PREVIEW_PATH_REGEX.exec(text)) !== null) {
+                edits.push({
+                    start: match.index,
+                    end: match.index + match[0].length,
+                    replacement: `${match[1]}?v=ready`,
+                });
+            }
+            if (edits.length === 0)
+                return;
+            const { text: refreshedText, entities: refreshedEntities } = (0, entity_utils_1.applyEdits)(text, entities, edits);
             if (refreshedText === text)
                 return;
             try {
-                await bot.editMessageText(refreshedText, {
+                const editOptions = {
                     chat_id: chatId,
                     message_id: messageId,
                     disable_web_page_preview: false,
                     reply_markup: downloadMarkup,
-                });
+                };
+                if (refreshedEntities.length)
+                    editOptions.entities = refreshedEntities;
+                await bot.editMessageText(refreshedText, editOptions);
                 runtime_1.log.info('Insta preview refresh edit sent', { chatId, messageId });
             }
             catch (err) {

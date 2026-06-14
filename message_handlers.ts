@@ -16,6 +16,12 @@ import {
   fetchInstaPreview,
   InstaMediaEntry,
 } from './insta_preview_client';
+import {
+  applyEdits,
+  applyLinkReplacements,
+  SpanEdit,
+  TextEntity,
+} from './entity_utils';
 import { log } from './runtime';
 
 type Resolvers = {
@@ -34,6 +40,16 @@ type Resolvers = {
     chatId?: number,
     userId?: number
   ) => Promise<string>;
+};
+
+// @types/node-telegram-bot-api omits `entities` on the send/edit option types,
+// but the Bot API (and the lib) accept it. TextEntity values are structurally
+// MessageEntity-compatible, so attach them through these widened aliases.
+type SendMessageOptionsWithEntities = TelegramBot.SendMessageOptions & {
+  entities?: TextEntity[];
+};
+type EditMessageTextOptionsWithEntities = TelegramBot.EditMessageTextOptions & {
+  entities?: TextEntity[];
 };
 
 export function registerMessageHandlers(
@@ -256,12 +272,9 @@ export function registerMessageHandlers(
 
       const username = msg.from?.username ? `@${msg.from.username}` : 'кто-то';
 
-      let finalText = messageText;
       const platforms = new Set<string>();
 
-      fixedLinks.forEach((url, index) => {
-        finalText = finalText.replace(socialLinks[index], url);
-
+      fixedLinks.forEach(url => {
         if (url.includes(INSTA_FIX_DOMAIN) || url.includes(INSTA_FIX_FALLBACK))
           platforms.add('📸 Instagram');
         else if (TWITTER_FIXERS.some(f => url.includes(f)))
@@ -288,9 +301,24 @@ export function registerMessageHandlers(
 
       const chatSettings = isGroup ? await getChatSettings(chatId) : null;
       const quietMode = chatSettings?.quiet_mode ?? false;
-      const finalMessage = quietMode
-        ? finalText
-        : `Saved ${username} a click ${platformStr}:\n\n${finalText}`;
+      const prefix = quietMode
+        ? ''
+        : `Saved ${username} a click ${platformStr}:\n\n`;
+      // Rewrite links AND carry over the sender's message entities (notably
+      // `text_mention` pings of users without a @username, which live in the
+      // entity rather than the text), remapping their offsets for the prefix and
+      // link swaps so the reply keeps the original mentions/formatting.
+      const replacements = socialLinks.map((original, index) => ({
+        original,
+        replacement: fixedLinks[index],
+      }));
+      const { text: finalMessage, entities: finalEntities } =
+        applyLinkReplacements(
+          messageText,
+          msg.entities as TextEntity[] | undefined,
+          replacements,
+          prefix
+        );
 
       const isDownloadable = (url: string) =>
         TIKTOK_FIXERS.some(f => url.includes(f));
@@ -313,11 +341,12 @@ export function registerMessageHandlers(
 
       if (isGroup) {
         try {
-          const sendOptions: TelegramBot.SendMessageOptions = {
+          const sendOptions: SendMessageOptionsWithEntities = {
             disable_web_page_preview: false,
             reply_to_message_id: msg.message_id,
             reply_markup: replyMarkup,
           };
+          if (finalEntities.length) sendOptions.entities = finalEntities;
           const sent = await bot.sendMessage(chatId, finalMessage, sendOptions);
           log.info('Reply sent successfully', {
             chatId,
@@ -328,6 +357,7 @@ export function registerMessageHandlers(
             chatId,
             sent.message_id,
             finalMessage,
+            finalEntities,
             fixedLinks,
             options.downloadsEnabled
           );
@@ -342,17 +372,20 @@ export function registerMessageHandlers(
           }
         }
       } else {
+        const dmOptions: SendMessageOptionsWithEntities = {
+          disable_web_page_preview: false,
+          reply_markup: replyMarkup,
+        };
+        if (finalEntities.length) dmOptions.entities = finalEntities;
         bot
-          .sendMessage(chatId, finalMessage, {
-            disable_web_page_preview: false,
-            reply_markup: replyMarkup,
-          })
+          .sendMessage(chatId, finalMessage, dmOptions)
           .then(sent => {
             scheduleInstaPreviewRefresh(
               bot,
               chatId,
               sent.message_id,
               finalMessage,
+              finalEntities,
               fixedLinks,
               options.downloadsEnabled
             );
@@ -396,6 +429,7 @@ function scheduleInstaPreviewRefresh(
   chatId: number,
   messageId: number,
   text: string,
+  entities: TextEntity[],
   fixedLinks: string[],
   downloadsEnabled: boolean
 ) {
@@ -438,18 +472,35 @@ function scheduleInstaPreviewRefresh(
     }
 
     setTimeout(async () => {
-      const refreshedText = text.replace(
-        INSTA_PREVIEW_PATH_REGEX,
-        (_match, base) => `${base}?v=ready`
+      // Insert `?v=ready` into each insta preview URL via span edits so we can
+      // carry the message entities (mentions/formatting) through the edit too,
+      // remapping their offsets for the inserted characters.
+      const edits: SpanEdit[] = [];
+      INSTA_PREVIEW_PATH_REGEX.lastIndex = 0;
+      let match: RegExpExecArray | null;
+      while ((match = INSTA_PREVIEW_PATH_REGEX.exec(text)) !== null) {
+        edits.push({
+          start: match.index,
+          end: match.index + match[0].length,
+          replacement: `${match[1]}?v=ready`,
+        });
+      }
+      if (edits.length === 0) return;
+      const { text: refreshedText, entities: refreshedEntities } = applyEdits(
+        text,
+        entities,
+        edits
       );
       if (refreshedText === text) return;
       try {
-        await bot.editMessageText(refreshedText, {
+        const editOptions: EditMessageTextOptionsWithEntities = {
           chat_id: chatId,
           message_id: messageId,
           disable_web_page_preview: false,
           reply_markup: downloadMarkup,
-        });
+        };
+        if (refreshedEntities.length) editOptions.entities = refreshedEntities;
+        await bot.editMessageText(refreshedText, editOptions);
         log.info('Insta preview refresh edit sent', { chatId, messageId });
       } catch (err) {
         log.warn('Insta preview refresh edit failed', {
