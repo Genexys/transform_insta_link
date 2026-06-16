@@ -1,14 +1,16 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { ADMIN_CHAT_ID, DATABASE_URL } from './app_env';
-import { DONATE_AMOUNTS_STARS } from './billing';
+import { DONATE_AMOUNTS_STARS, PERSONAL_PRO_PRICE_STARS } from './billing';
 import {
   createUser,
   dbClient,
   getChatSettings,
   getReferralCount,
+  getUser,
   setReferredBy,
 } from './db';
 import { sendDownloadInvoice } from './payment_handlers';
+import { deliverInstaVideo } from './video_delivery';
 import { log } from './runtime';
 
 const START_TEXT =
@@ -104,7 +106,49 @@ export function registerCommandHandlers(bot: TelegramBot) {
         if (telegramId) {
           await createUser(telegramId, msg.from?.username).catch(() => {});
         }
-        await sendDownloadInvoice(bot, chatId, shortcode);
+        const user = telegramId ? await getUser(telegramId) : null;
+        if (user?.is_premium) {
+          // Premium: deliver the savable video for free.
+          try {
+            await deliverInstaVideo(bot, chatId, shortcode, {
+              protect: false,
+              caption: '🎥 Ваше видео (безлимит активен) — можно сохранять.',
+            });
+          } catch (err) {
+            log.error('Premium download delivery failed', {
+              telegramId,
+              shortcode,
+              err: String(err),
+            });
+            await bot
+              .sendMessage(
+                chatId,
+                '❌ Не удалось отправить видео. Попробуйте позже или /feedback.'
+              )
+              .catch(() => {});
+          }
+        } else {
+          // Pay-per-video invoice + a single upsell button for the pass.
+          await sendDownloadInvoice(bot, chatId, shortcode);
+          await bot
+            .sendMessage(
+              chatId,
+              'Часто качаешь? Купи безлимит — и сохраняй без оплаты за каждое видео.',
+              {
+                reply_markup: {
+                  inline_keyboard: [
+                    [
+                      {
+                        text: `♾️ Безлимит навсегда — ⭐${PERSONAL_PRO_PRICE_STARS}`,
+                        callback_data: `buy_pass:${shortcode}`,
+                      },
+                    ],
+                  ],
+                },
+              }
+            )
+            .catch(() => {});
+        }
         return;
       }
     }
@@ -132,6 +176,42 @@ export function registerCommandHandlers(bot: TelegramBot) {
           }
         : undefined,
     });
+  });
+
+  bot.onText(/^\/premium(?:@\w+)?(?:\s|$)/, async msg => {
+    const chatId = msg.chat.id;
+    const telegramId = msg.from?.id;
+    if (telegramId) {
+      await createUser(telegramId, msg.from?.username).catch(() => {});
+    }
+    const user = telegramId ? await getUser(telegramId) : null;
+    if (user?.is_premium) {
+      await bot.sendMessage(
+        chatId,
+        '♾️ У тебя активен безлимит на скачивание — сохраняй любые видео бесплатно.'
+      );
+      return;
+    }
+    await bot.sendMessage(
+      chatId,
+      `♾️ *Безлимит на скачивание*\n\n` +
+        `Разовая покупка — навсегда сохраняй любые видео без оплаты за каждое.\n` +
+        `Работает в любом чате, где есть бот, и в личке.\n\n` +
+        `Цена: ${PERSONAL_PRO_PRICE_STARS} ⭐`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: `Купить за ⭐${PERSONAL_PRO_PRICE_STARS}`,
+                callback_data: 'buy_pass:',
+              },
+            ],
+          ],
+        },
+      }
+    );
   });
 
   bot.onText(/^\/invite(?:@\w+)?(?:\s|$)/, async msg => {

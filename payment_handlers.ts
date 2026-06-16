@@ -4,8 +4,14 @@ import {
   buildBillingPayload,
   DOWNLOAD_PRICE_STARS,
   parseBillingPayload,
+  PERSONAL_PRO_PRICE_STARS,
 } from './billing';
-import { createUser, recordBillingEvent } from './db';
+import {
+  createUser,
+  grantPersonalPro,
+  recordBillingEvent,
+  setPremium,
+} from './db';
 import { deliverInstaVideo } from './video_delivery';
 import { log } from './runtime';
 
@@ -85,6 +91,28 @@ export async function sendDownloadInvoice(
   });
 }
 
+// Sends a Stars invoice for the one-time unlimited-download pass. If a shortcode
+// is passed (the upsell shown while buying a single video), it rides in the
+// payload so the bot delivers that video right after activating premium.
+export async function sendPassInvoice(
+  bot: TelegramBot,
+  chatId: number,
+  shortcode?: string
+) {
+  await sendStarsInvoice({
+    bot,
+    chatId,
+    title: 'Безлимит на скачивание',
+    description: `Разовая покупка — навсегда сохраняй любые видео без оплаты за каждое, в любом чате с ботом и в личке. ${PERSONAL_PRO_PRICE_STARS} Stars.`,
+    payload: buildBillingPayload('personal_pro', PERSONAL_PRO_PRICE_STARS, {
+      shortcode,
+    }),
+    amount: PERSONAL_PRO_PRICE_STARS,
+    label: 'Безлимит навсегда',
+    errorText: 'Не удалось сформировать счёт на безлимит.',
+  });
+}
+
 export async function handleDonateCallback(
   bot: TelegramBot,
   query: TelegramBot.CallbackQuery,
@@ -153,6 +181,36 @@ export function registerPaymentHandlers(bot: TelegramBot) {
         telegramPaymentChargeId: payment.telegram_payment_charge_id,
         providerPaymentChargeId: payment.provider_payment_charge_id,
       });
+    }
+
+    if (billingKind === 'personal_pro' && telegramId) {
+      await setPremium(telegramId);
+      await grantPersonalPro(telegramId, 'telegram_stars');
+      await bot
+        .sendMessage(
+          chatId,
+          '♾️ *Безлимит активирован!*\n\n' +
+            'Теперь сохраняй любые видео без оплаты — просто жми 💾 на любом ролике.\n' +
+            'Работает в *любом чате, где есть бот*, и здесь, в личке с ботом.',
+          { parse_mode: 'Markdown' }
+        )
+        .catch(() => {});
+      // If the pass was bought from a single-video flow, deliver that video too.
+      if (parsedPayload?.shortcode) {
+        try {
+          await deliverInstaVideo(bot, chatId, parsedPayload.shortcode, {
+            protect: false,
+            caption: '🎥 Ваше видео — можно сохранять и пересылать.',
+          });
+        } catch (err) {
+          log.error('Pass-flow video delivery failed', {
+            telegramId,
+            shortcode: parsedPayload.shortcode,
+            err: String(err),
+          });
+        }
+      }
+      return;
     }
 
     if (billingKind === 'download' && parsedPayload?.shortcode) {

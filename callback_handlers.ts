@@ -5,6 +5,7 @@ import { handleDownloadCallback } from './download_handlers';
 import {
   handleDonateCallback,
   registerPaymentHandlers,
+  sendPassInvoice,
 } from './payment_handlers';
 
 export function registerCallbackHandlers(
@@ -71,6 +72,13 @@ export function registerCallbackHandlers(
       await bot.answerCallbackQuery(query.id, {
         text: `🔇 Тихий режим ${newQuietMode ? 'включён' : 'выключен'}`,
       });
+      return;
+    }
+
+    if (data.startsWith('buy_pass:')) {
+      const shortcode = data.slice('buy_pass:'.length) || undefined;
+      await bot.answerCallbackQuery(query.id).catch(() => {});
+      await sendPassInvoice(bot, chatId, shortcode);
       return;
     }
 

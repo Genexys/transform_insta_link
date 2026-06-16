@@ -73,6 +73,31 @@ test('buildBillingPayload builds and parses download payloads', () => {
   });
 });
 
+test('personal_pro pass payload carries an optional video shortcode', () => {
+  assert.equal(
+    buildBillingPayload('personal_pro', 100),
+    'billing:personal_pro:100'
+  );
+  assert.equal(
+    buildBillingPayload('personal_pro', 100, { shortcode: 'DZxYz_-9' }),
+    'billing:personal_pro:100:DZxYz_-9'
+  );
+  assert.deepEqual(parseBillingPayload('billing:personal_pro:100'), {
+    kind: 'personal_pro',
+    amount: 100,
+    chatId: undefined,
+    raw: 'billing:personal_pro:100',
+    isLegacy: false,
+  });
+  assert.deepEqual(parseBillingPayload('billing:personal_pro:100:DZxYz_-9'), {
+    kind: 'personal_pro',
+    amount: 100,
+    shortcode: 'DZxYz_-9',
+    raw: 'billing:personal_pro:100:DZxYz_-9',
+    isLegacy: false,
+  });
+});
+
 test('parseBillingPayload rejects malformed payloads', () => {
   assert.equal(parseBillingPayload('billing:chat_pro:500'), null);
   assert.equal(parseBillingPayload('billing:unknown:50'), null);

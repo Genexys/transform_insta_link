@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendDownloadInvoice = sendDownloadInvoice;
+exports.sendPassInvoice = sendPassInvoice;
 exports.handleDonateCallback = handleDonateCallback;
 exports.registerPaymentHandlers = registerPaymentHandlers;
 const app_env_1 = require("./app_env");
@@ -43,6 +44,20 @@ async function sendDownloadInvoice(bot, chatId, shortcode) {
         amount: billing_1.DOWNLOAD_PRICE_STARS,
         label: 'Скачивание видео',
         errorText: 'Не удалось сформировать счёт на скачивание.',
+    });
+}
+async function sendPassInvoice(bot, chatId, shortcode) {
+    await sendStarsInvoice({
+        bot,
+        chatId,
+        title: 'Безлимит на скачивание',
+        description: `Разовая покупка — навсегда сохраняй любые видео без оплаты за каждое, в любом чате с ботом и в личке. ${billing_1.PERSONAL_PRO_PRICE_STARS} Stars.`,
+        payload: (0, billing_1.buildBillingPayload)('personal_pro', billing_1.PERSONAL_PRO_PRICE_STARS, {
+            shortcode,
+        }),
+        amount: billing_1.PERSONAL_PRO_PRICE_STARS,
+        label: 'Безлимит навсегда',
+        errorText: 'Не удалось сформировать счёт на безлимит.',
     });
 }
 async function handleDonateCallback(bot, query, amount) {
@@ -102,6 +117,31 @@ function registerPaymentHandlers(bot) {
                 telegramPaymentChargeId: payment.telegram_payment_charge_id,
                 providerPaymentChargeId: payment.provider_payment_charge_id,
             });
+        }
+        if (billingKind === 'personal_pro' && telegramId) {
+            await (0, db_1.setPremium)(telegramId);
+            await (0, db_1.grantPersonalPro)(telegramId, 'telegram_stars');
+            await bot
+                .sendMessage(chatId, '♾️ *Безлимит активирован!*\n\n' +
+                'Теперь сохраняй любые видео без оплаты — просто жми 💾 на любом ролике.\n' +
+                'Работает в *любом чате, где есть бот*, и здесь, в личке с ботом.', { parse_mode: 'Markdown' })
+                .catch(() => { });
+            if (parsedPayload?.shortcode) {
+                try {
+                    await (0, video_delivery_1.deliverInstaVideo)(bot, chatId, parsedPayload.shortcode, {
+                        protect: false,
+                        caption: '🎥 Ваше видео — можно сохранять и пересылать.',
+                    });
+                }
+                catch (err) {
+                    runtime_1.log.error('Pass-flow video delivery failed', {
+                        telegramId,
+                        shortcode: parsedPayload.shortcode,
+                        err: String(err),
+                    });
+                }
+            }
+            return;
         }
         if (billingKind === 'download' && parsedPayload?.shortcode) {
             await bot

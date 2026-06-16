@@ -37,6 +37,12 @@ export function buildBillingPayload(
     return `billing:${kind}:${amount}:${options.shortcode}`;
   }
 
+  // An unlimited pass bought from a single-video flow carries that video's
+  // shortcode so the bot can deliver it right after activating premium.
+  if (kind === 'personal_pro' && options?.shortcode) {
+    return `billing:personal_pro:${amount}:${options.shortcode}`;
+  }
+
   return `billing:${kind}:${amount}`;
 }
 
@@ -58,6 +64,23 @@ export function parseBillingPayload(
       kind: 'download',
       amount,
       shortcode,
+      raw: normalized,
+      isLegacy: false,
+    };
+  }
+
+  const passWithVideoMatch = normalized.match(
+    /^billing:personal_pro:(\d+):([A-Za-z0-9_-]+)$/
+  );
+  if (passWithVideoMatch) {
+    const amount = parseInt(passWithVideoMatch[1], 10);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return null;
+    }
+    return {
+      kind: 'personal_pro',
+      amount,
+      shortcode: passWithVideoMatch[2],
       raw: normalized,
       isLegacy: false,
     };

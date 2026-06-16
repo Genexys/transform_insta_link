@@ -57,6 +57,12 @@ function registerCallbackHandlers(bot, ytdlp) {
             });
             return;
         }
+        if (data.startsWith('buy_pass:')) {
+            const shortcode = data.slice('buy_pass:'.length) || undefined;
+            await bot.answerCallbackQuery(query.id).catch(() => { });
+            await (0, payment_handlers_1.sendPassInvoice)(bot, chatId, shortcode);
+            return;
+        }
         if (data.startsWith('donate_')) {
             const amount = parseInt(data.split('_')[1]);
             await (0, payment_handlers_1.handleDonateCallback)(bot, query, amount);

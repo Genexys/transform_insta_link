@@ -5,6 +5,7 @@ const app_env_1 = require("./app_env");
 const billing_1 = require("./billing");
 const db_1 = require("./db");
 const payment_handlers_1 = require("./payment_handlers");
+const video_delivery_1 = require("./video_delivery");
 const runtime_1 = require("./runtime");
 const START_TEXT = '👋 Привет! Я автоматически исправляю ссылки соцсетей, чтобы они показывали превью прямо в Telegram.\n\n' +
     'Поддерживаю: Instagram, TikTok, Twitter/X, Reddit, Bluesky, Pixiv, DeviantArt\n\n' +
@@ -80,7 +81,42 @@ function registerCommandHandlers(bot) {
                 if (telegramId) {
                     await (0, db_1.createUser)(telegramId, msg.from?.username).catch(() => { });
                 }
-                await (0, payment_handlers_1.sendDownloadInvoice)(bot, chatId, shortcode);
+                const user = telegramId ? await (0, db_1.getUser)(telegramId) : null;
+                if (user?.is_premium) {
+                    try {
+                        await (0, video_delivery_1.deliverInstaVideo)(bot, chatId, shortcode, {
+                            protect: false,
+                            caption: '🎥 Ваше видео (безлимит активен) — можно сохранять.',
+                        });
+                    }
+                    catch (err) {
+                        runtime_1.log.error('Premium download delivery failed', {
+                            telegramId,
+                            shortcode,
+                            err: String(err),
+                        });
+                        await bot
+                            .sendMessage(chatId, '❌ Не удалось отправить видео. Попробуйте позже или /feedback.')
+                            .catch(() => { });
+                    }
+                }
+                else {
+                    await (0, payment_handlers_1.sendDownloadInvoice)(bot, chatId, shortcode);
+                    await bot
+                        .sendMessage(chatId, 'Часто качаешь? Купи безлимит — и сохраняй без оплаты за каждое видео.', {
+                        reply_markup: {
+                            inline_keyboard: [
+                                [
+                                    {
+                                        text: `♾️ Безлимит навсегда — ⭐${billing_1.PERSONAL_PRO_PRICE_STARS}`,
+                                        callback_data: `buy_pass:${shortcode}`,
+                                    },
+                                ],
+                            ],
+                        },
+                    })
+                        .catch(() => { });
+                }
                 return;
             }
         }
@@ -105,6 +141,34 @@ function registerCommandHandlers(bot) {
                     ],
                 }
                 : undefined,
+        });
+    });
+    bot.onText(/^\/premium(?:@\w+)?(?:\s|$)/, async (msg) => {
+        const chatId = msg.chat.id;
+        const telegramId = msg.from?.id;
+        if (telegramId) {
+            await (0, db_1.createUser)(telegramId, msg.from?.username).catch(() => { });
+        }
+        const user = telegramId ? await (0, db_1.getUser)(telegramId) : null;
+        if (user?.is_premium) {
+            await bot.sendMessage(chatId, '♾️ У тебя активен безлимит на скачивание — сохраняй любые видео бесплатно.');
+            return;
+        }
+        await bot.sendMessage(chatId, `♾️ *Безлимит на скачивание*\n\n` +
+            `Разовая покупка — навсегда сохраняй любые видео без оплаты за каждое.\n` +
+            `Работает в любом чате, где есть бот, и в личке.\n\n` +
+            `Цена: ${billing_1.PERSONAL_PRO_PRICE_STARS} ⭐`, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        {
+                            text: `Купить за ⭐${billing_1.PERSONAL_PRO_PRICE_STARS}`,
+                            callback_data: 'buy_pass:',
+                        },
+                    ],
+                ],
+            },
         });
     });
     bot.onText(/^\/invite(?:@\w+)?(?:\s|$)/, async (msg) => {
