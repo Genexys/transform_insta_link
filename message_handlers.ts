@@ -423,6 +423,8 @@ export function registerMessageHandlers(
 
 const PREVIEW_REFRESH_BUDGET_BYTES = 18 * 1024 * 1024;
 const PREVIEW_REFRESH_DELAY_MS = 75_000;
+const OVERSIZED_VIDEO_NOTE =
+  '\n\n📦 Видео слишком большое для авто-превью — нажмите кнопку ниже, чтобы посмотреть в чате или сохранить себе.';
 const INSTA_PREVIEW_PATH_REGEX = new RegExp(
   `(https://${INSTA_FIX_DOMAIN.replace(/\./g, '\\.')}/(?:reel|reels|p|tv)/[A-Za-z0-9_-]+)(\\?[^\\s]*)?`,
   'g'
@@ -494,20 +496,29 @@ function scheduleInstaPreviewRefresh(
     const downloadMarkup: TelegramBot.InlineKeyboardMarkup | undefined =
       downloadKeyboard.length ? { inline_keyboard: downloadKeyboard } : undefined;
 
-    if (downloadMarkup) {
-      try {
-        await bot.editMessageReplyMarkup(downloadMarkup, {
-          chat_id: chatId,
-          message_id: messageId,
-        });
-        log.info('Insta oversize download button attached', { chatId, messageId });
-      } catch (err) {
-        log.warn('Insta oversize download button attach failed', {
-          chatId,
-          messageId,
-          err: String(err),
-        });
-      }
+    // Nothing to offer (downloads off and no save button) — leave the message be.
+    if (!downloadMarkup) return;
+
+    // Explain why the video is behind a button: oversized clips can't auto-play
+    // in the inline preview. Append the note (no entities, so existing
+    // mentions/offsets are untouched) and show it together with the buttons.
+    const notedText = text + OVERSIZED_VIDEO_NOTE;
+    try {
+      const editOptions: EditMessageTextOptionsWithEntities = {
+        chat_id: chatId,
+        message_id: messageId,
+        disable_web_page_preview: false,
+        reply_markup: downloadMarkup,
+      };
+      if (entities.length) editOptions.entities = entities;
+      await bot.editMessageText(notedText, editOptions);
+      log.info('Insta oversize note + buttons attached', { chatId, messageId });
+    } catch (err) {
+      log.warn('Insta oversize note attach failed', {
+        chatId,
+        messageId,
+        err: String(err),
+      });
     }
 
     setTimeout(async () => {
@@ -517,7 +528,7 @@ function scheduleInstaPreviewRefresh(
       const edits: SpanEdit[] = [];
       INSTA_PREVIEW_PATH_REGEX.lastIndex = 0;
       let match: RegExpExecArray | null;
-      while ((match = INSTA_PREVIEW_PATH_REGEX.exec(text)) !== null) {
+      while ((match = INSTA_PREVIEW_PATH_REGEX.exec(notedText)) !== null) {
         edits.push({
           start: match.index,
           end: match.index + match[0].length,
@@ -526,11 +537,11 @@ function scheduleInstaPreviewRefresh(
       }
       if (edits.length === 0) return;
       const { text: refreshedText, entities: refreshedEntities } = applyEdits(
-        text,
+        notedText,
         entities,
         edits
       );
-      if (refreshedText === text) return;
+      if (refreshedText === notedText) return;
       try {
         const editOptions: EditMessageTextOptionsWithEntities = {
           chat_id: chatId,

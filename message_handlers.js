@@ -300,6 +300,7 @@ function registerMessageHandlers(bot, resolvers, options) {
 }
 const PREVIEW_REFRESH_BUDGET_BYTES = 18 * 1024 * 1024;
 const PREVIEW_REFRESH_DELAY_MS = 75_000;
+const OVERSIZED_VIDEO_NOTE = '\n\n📦 Видео слишком большое для авто-превью — нажмите кнопку ниже, чтобы посмотреть в чате или сохранить себе.';
 const INSTA_PREVIEW_PATH_REGEX = new RegExp(`(https://${link_utils_1.INSTA_FIX_DOMAIN.replace(/\./g, '\\.')}/(?:reel|reels|p|tv)/[A-Za-z0-9_-]+)(\\?[^\\s]*)?`, 'g');
 function extractShortcodeFromPreviewUrl(url) {
     if (!url.includes(link_utils_1.INSTA_FIX_DOMAIN))
@@ -351,27 +352,33 @@ function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, entities, fix
         if (refreshSaveRow)
             downloadKeyboard.push(refreshSaveRow);
         const downloadMarkup = downloadKeyboard.length ? { inline_keyboard: downloadKeyboard } : undefined;
-        if (downloadMarkup) {
-            try {
-                await bot.editMessageReplyMarkup(downloadMarkup, {
-                    chat_id: chatId,
-                    message_id: messageId,
-                });
-                runtime_1.log.info('Insta oversize download button attached', { chatId, messageId });
-            }
-            catch (err) {
-                runtime_1.log.warn('Insta oversize download button attach failed', {
-                    chatId,
-                    messageId,
-                    err: String(err),
-                });
-            }
+        if (!downloadMarkup)
+            return;
+        const notedText = text + OVERSIZED_VIDEO_NOTE;
+        try {
+            const editOptions = {
+                chat_id: chatId,
+                message_id: messageId,
+                disable_web_page_preview: false,
+                reply_markup: downloadMarkup,
+            };
+            if (entities.length)
+                editOptions.entities = entities;
+            await bot.editMessageText(notedText, editOptions);
+            runtime_1.log.info('Insta oversize note + buttons attached', { chatId, messageId });
+        }
+        catch (err) {
+            runtime_1.log.warn('Insta oversize note attach failed', {
+                chatId,
+                messageId,
+                err: String(err),
+            });
         }
         setTimeout(async () => {
             const edits = [];
             INSTA_PREVIEW_PATH_REGEX.lastIndex = 0;
             let match;
-            while ((match = INSTA_PREVIEW_PATH_REGEX.exec(text)) !== null) {
+            while ((match = INSTA_PREVIEW_PATH_REGEX.exec(notedText)) !== null) {
                 edits.push({
                     start: match.index,
                     end: match.index + match[0].length,
@@ -380,8 +387,8 @@ function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, entities, fix
             }
             if (edits.length === 0)
                 return;
-            const { text: refreshedText, entities: refreshedEntities } = (0, entity_utils_1.applyEdits)(text, entities, edits);
-            if (refreshedText === text)
+            const { text: refreshedText, entities: refreshedEntities } = (0, entity_utils_1.applyEdits)(notedText, entities, edits);
+            if (refreshedText === notedText)
                 return;
             try {
                 const editOptions = {
