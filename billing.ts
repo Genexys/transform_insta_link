@@ -3,7 +3,7 @@ export type BillingKind = 'donate' | 'personal_pro' | 'chat_pro' | 'download';
 export const PERSONAL_PRO_PRICE_STARS = 100;
 export const CHAT_PRO_PRICE_STARS = 250;
 export const DONATE_AMOUNTS_STARS = [50, 100, 250, 500] as const;
-export const DOWNLOAD_PRICE_STARS = 15;
+export const DOWNLOAD_PRICE_STARS = 10;
 
 export type ParsedBillingPayload = {
   kind: BillingKind;
