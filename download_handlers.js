@@ -7,8 +7,11 @@ exports.handleDownloadCallback = handleDownloadCallback;
 const fs_1 = __importDefault(require("fs"));
 const os_1 = __importDefault(require("os"));
 const path_1 = __importDefault(require("path"));
+const child_process_1 = require("child_process");
+const util_1 = require("util");
 const stream_1 = require("stream");
 const promises_1 = require("stream/promises");
+const execFileAsync = (0, util_1.promisify)(child_process_1.execFile);
 const app_env_1 = require("./app_env");
 const db_1 = require("./db");
 const insta_preview_client_1 = require("./insta_preview_client");
@@ -72,10 +75,15 @@ async function handleDownloadCallback(bot, query, ytdlp) {
             sizeBytes: stats.size,
         });
         await bot.sendChatAction(chatId, 'upload_video');
+        const meta = await probeVideoMeta(tempFilePath);
         await bot.sendVideo(chatId, tempFilePath, {
             caption: '🎥 Ваше видео готово!',
             reply_to_message_id: query.message.message_id,
             protect_content: true,
+            ...(meta.width && meta.height
+                ? { width: meta.width, height: meta.height }
+                : {}),
+            ...(meta.duration ? { duration: meta.duration } : {}),
         });
         if (app_env_1.DATABASE_URL) {
             await (0, db_1.incrementDownloads)(telegramId);
@@ -117,6 +125,41 @@ async function handleDownloadCallback(bot, query, ytdlp) {
                 }
             });
         }
+    }
+}
+async function probeVideoMeta(filePath) {
+    try {
+        const { stdout } = await execFileAsync('ffprobe', [
+            '-v',
+            'error',
+            '-select_streams',
+            'v:0',
+            '-show_entries',
+            'stream=width,height:stream_side_data=rotation:stream_tags=rotate:format=duration',
+            '-of',
+            'json',
+            filePath,
+        ], { timeout: 20_000 });
+        const info = JSON.parse(stdout);
+        const stream = info.streams?.[0] ?? {};
+        let width = Number(stream.width) || undefined;
+        let height = Number(stream.height) || undefined;
+        let rotation = Number(stream.tags?.rotate);
+        if (!Number.isFinite(rotation)) {
+            const sideData = (stream.side_data_list || []).find((d) => d.rotation !== undefined);
+            rotation = sideData ? Number(sideData.rotation) : 0;
+        }
+        if (Number.isFinite(rotation) &&
+            Math.abs(rotation) % 180 === 90 &&
+            width &&
+            height) {
+            [width, height] = [height, width];
+        }
+        const duration = Math.round(Number(info.format?.duration)) || undefined;
+        return { width, height, duration };
+    }
+    catch {
+        return {};
     }
 }
 async function downloadFromPreviewService(shortcode, destPath) {

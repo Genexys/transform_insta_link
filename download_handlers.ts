@@ -2,9 +2,13 @@ import TelegramBot from 'node-telegram-bot-api';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { YtDlp } from 'ytdlp-nodejs';
+
+const execFileAsync = promisify(execFile);
 import {
   DATABASE_URL,
   INSTA_PREVIEW_HOST,
@@ -94,10 +98,19 @@ export async function handleDownloadCallback(
 
     await bot.sendChatAction(chatId, 'upload_video');
 
+    // Pass explicit dimensions so Telegram doesn't mis-guess the aspect ratio
+    // and render the video squished (common with Instagram clips that carry a
+    // rotation flag). probeVideoMeta returns display dimensions (rotation
+    // applied) so a portrait clip stays portrait.
+    const meta = await probeVideoMeta(tempFilePath);
     await bot.sendVideo(chatId, tempFilePath, {
       caption: '🎥 Ваше видео готово!',
       reply_to_message_id: query.message.message_id,
       protect_content: true,
+      ...(meta.width && meta.height
+        ? { width: meta.width, height: meta.height }
+        : {}),
+      ...(meta.duration ? { duration: meta.duration } : {}),
     });
 
     if (DATABASE_URL) {
@@ -146,6 +159,57 @@ export async function handleDownloadCallback(
         }
       });
     }
+  }
+}
+
+// ffprobe the downloaded file for the dimensions Telegram should display. When
+// sendVideo is given no width/height, Telegram guesses from the container and
+// gets it wrong for some clips (notably ones with a rotation flag), rendering
+// them squished. Returns DISPLAY dimensions (rotation applied) + duration.
+async function probeVideoMeta(
+  filePath: string
+): Promise<{ width?: number; height?: number; duration?: number }> {
+  try {
+    const { stdout } = await execFileAsync(
+      'ffprobe',
+      [
+        '-v',
+        'error',
+        '-select_streams',
+        'v:0',
+        '-show_entries',
+        'stream=width,height:stream_side_data=rotation:stream_tags=rotate:format=duration',
+        '-of',
+        'json',
+        filePath,
+      ],
+      { timeout: 20_000 }
+    );
+    const info = JSON.parse(stdout);
+    const stream = info.streams?.[0] ?? {};
+    let width = Number(stream.width) || undefined;
+    let height = Number(stream.height) || undefined;
+
+    let rotation = Number(stream.tags?.rotate);
+    if (!Number.isFinite(rotation)) {
+      const sideData = (stream.side_data_list || []).find(
+        (d: { rotation?: number }) => d.rotation !== undefined
+      );
+      rotation = sideData ? Number(sideData.rotation) : 0;
+    }
+    if (
+      Number.isFinite(rotation) &&
+      Math.abs(rotation) % 180 === 90 &&
+      width &&
+      height
+    ) {
+      [width, height] = [height, width];
+    }
+
+    const duration = Math.round(Number(info.format?.duration)) || undefined;
+    return { width, height, duration };
+  } catch {
+    return {};
   }
 }
 
