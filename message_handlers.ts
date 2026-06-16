@@ -325,25 +325,25 @@ export function registerMessageHandlers(
       const isDownloadable = (url: string) =>
         TIKTOK_FIXERS.some(f => url.includes(f));
 
-      const keyboard: TelegramBot.InlineKeyboardButton[][] = [];
-      if (
+      // Note: the paid "save for stars" button is attached only to oversized
+      // Instagram videos, where the inline preview can't show the full clip —
+      // see scheduleInstaPreviewRefresh. Small reels that play inline don't get
+      // it. The free TikTok download button stays here.
+      const replyMarkup =
         options.downloadsEnabled &&
         fixedLinks.length === 1 &&
         isDownloadable(fixedLinks[0])
-      ) {
-        keyboard.push([
-          { text: '📥 Скачать видео/фото', callback_data: 'download_video' },
-        ]);
-      }
-      const saveShortcode =
-        socialLinks.length === 1 ? instaSaveShortcode(socialLinks[0]) : null;
-      const saveRow = saveShortcode
-        ? await buildInstaSaveRow(bot, saveShortcode)
-        : null;
-      if (saveRow) keyboard.push(saveRow);
-      const replyMarkup = keyboard.length
-        ? { inline_keyboard: keyboard }
-        : undefined;
+          ? {
+              inline_keyboard: [
+                [
+                  {
+                    text: '📥 Скачать видео/фото',
+                    callback_data: 'download_video',
+                  },
+                ],
+              ],
+            }
+          : undefined;
 
       if (isGroup) {
         try {
@@ -434,25 +434,16 @@ function extractShortcodeFromPreviewUrl(url: string): string | null {
   return match ? match[1] : null;
 }
 
-// Shortcode for a single Instagram *video* link (reel/tv), to gate the paid
-// "save" button. Restricted to video paths so we never charge for an image post.
-function instaSaveShortcode(link: string): string | null {
-  if (!(link.includes('instagram.com') || link.includes('instagr.am'))) {
-    return null;
-  }
-  if (!/\/(reel|reels|tv)\//.test(link)) return null;
-  const shortcode = extractShortcodeFromUrl(link);
-  return shortcode && /^[A-Za-z0-9_-]{1,64}$/.test(shortcode)
-    ? shortcode
-    : null;
-}
-
 // Deep-link button that opens a paid-download invoice in the bot's DM. Works
 // from group chats (where the bot can't privately DM a non-starter directly).
+// Attached only to oversized videos (see scheduleInstaPreviewRefresh), whose
+// full clip can't be played from the inline preview and is reachable only via a
+// button. `shortcode` is validated since it lands in the deep-link URL.
 async function buildInstaSaveRow(
   bot: TelegramBot,
   shortcode: string
 ): Promise<TelegramBot.InlineKeyboardButton[] | null> {
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(shortcode)) return null;
   const username = await getBotUsername(bot);
   if (!username) return null;
   return [

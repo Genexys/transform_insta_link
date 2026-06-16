@@ -229,22 +229,19 @@ function registerMessageHandlers(bot, resolvers, options) {
             }));
             const { text: finalMessage, entities: finalEntities } = (0, entity_utils_1.applyLinkReplacements)(messageText, msg.entities, replacements, prefix);
             const isDownloadable = (url) => link_utils_1.TIKTOK_FIXERS.some(f => url.includes(f));
-            const keyboard = [];
-            if (options.downloadsEnabled &&
+            const replyMarkup = options.downloadsEnabled &&
                 fixedLinks.length === 1 &&
-                isDownloadable(fixedLinks[0])) {
-                keyboard.push([
-                    { text: '📥 Скачать видео/фото', callback_data: 'download_video' },
-                ]);
-            }
-            const saveShortcode = socialLinks.length === 1 ? instaSaveShortcode(socialLinks[0]) : null;
-            const saveRow = saveShortcode
-                ? await buildInstaSaveRow(bot, saveShortcode)
-                : null;
-            if (saveRow)
-                keyboard.push(saveRow);
-            const replyMarkup = keyboard.length
-                ? { inline_keyboard: keyboard }
+                isDownloadable(fixedLinks[0])
+                ? {
+                    inline_keyboard: [
+                        [
+                            {
+                                text: '📥 Скачать видео/фото',
+                                callback_data: 'download_video',
+                            },
+                        ],
+                    ],
+                }
                 : undefined;
             if (isGroup) {
                 try {
@@ -310,18 +307,9 @@ function extractShortcodeFromPreviewUrl(url) {
     const match = url.match(/\/(?:reel|reels|p|tv)\/([A-Za-z0-9_-]+)/);
     return match ? match[1] : null;
 }
-function instaSaveShortcode(link) {
-    if (!(link.includes('instagram.com') || link.includes('instagr.am'))) {
-        return null;
-    }
-    if (!/\/(reel|reels|tv)\//.test(link))
-        return null;
-    const shortcode = (0, insta_preview_client_1.extractShortcodeFromUrl)(link);
-    return shortcode && /^[A-Za-z0-9_-]{1,64}$/.test(shortcode)
-        ? shortcode
-        : null;
-}
 async function buildInstaSaveRow(bot, shortcode) {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(shortcode))
+        return null;
     const username = await (0, bot_identity_1.getBotUsername)(bot);
     if (!username)
         return null;
