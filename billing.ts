@@ -1,13 +1,17 @@
-export type BillingKind = 'donate' | 'personal_pro' | 'chat_pro';
+export type BillingKind = 'donate' | 'personal_pro' | 'chat_pro' | 'download';
 
 export const PERSONAL_PRO_PRICE_STARS = 100;
 export const CHAT_PRO_PRICE_STARS = 250;
 export const DONATE_AMOUNTS_STARS = [50, 100, 250, 500] as const;
+export const DOWNLOAD_PRICE_STARS = 15;
 
 export type ParsedBillingPayload = {
   kind: BillingKind;
   amount: number;
   chatId?: number;
+  // Instagram shortcode for `download` payloads — identifies which video to
+  // deliver once the Stars payment succeeds.
+  shortcode?: string;
   raw: string;
   isLegacy: boolean;
 };
@@ -15,7 +19,7 @@ export type ParsedBillingPayload = {
 export function buildBillingPayload(
   kind: BillingKind,
   amount: number,
-  options?: { chatId?: number }
+  options?: { chatId?: number; shortcode?: string }
 ): string {
   if (kind === 'chat_pro') {
     if (!options?.chatId) {
@@ -25,6 +29,14 @@ export function buildBillingPayload(
     return `billing:${kind}:${amount}:${options.chatId}`;
   }
 
+  if (kind === 'download') {
+    if (!options?.shortcode) {
+      throw new Error('shortcode is required for download billing payloads');
+    }
+
+    return `billing:${kind}:${amount}:${options.shortcode}`;
+  }
+
   return `billing:${kind}:${amount}`;
 }
 
@@ -32,6 +44,24 @@ export function parseBillingPayload(
   payload: string
 ): ParsedBillingPayload | null {
   const normalized = payload.trim();
+
+  const downloadMatch = normalized.match(
+    /^billing:download:(\d+):([A-Za-z0-9_-]+)$/
+  );
+  if (downloadMatch) {
+    const amount = parseInt(downloadMatch[1], 10);
+    const shortcode = downloadMatch[2];
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return null;
+    }
+    return {
+      kind: 'download',
+      amount,
+      shortcode,
+      raw: normalized,
+      isLegacy: false,
+    };
+  }
 
   const modernMatch = normalized.match(
     /^billing:(donate|personal_pro|chat_pro):(\d+)(?::(-?\d+))?$/

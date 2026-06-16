@@ -55,8 +55,28 @@ test('parseBillingPayload supports legacy donate payloads', () => {
   });
 });
 
+test('buildBillingPayload builds and parses download payloads', () => {
+  assert.equal(
+    buildBillingPayload('download', 15, { shortcode: 'DZkZ0xksxaZ' }),
+    'billing:download:15:DZkZ0xksxaZ'
+  );
+  assert.throws(
+    () => buildBillingPayload('download', 15),
+    /shortcode is required/
+  );
+  assert.deepEqual(parseBillingPayload('billing:download:15:DZkZ0xksxaZ'), {
+    kind: 'download',
+    amount: 15,
+    shortcode: 'DZkZ0xksxaZ',
+    raw: 'billing:download:15:DZkZ0xksxaZ',
+    isLegacy: false,
+  });
+});
+
 test('parseBillingPayload rejects malformed payloads', () => {
   assert.equal(parseBillingPayload('billing:chat_pro:500'), null);
   assert.equal(parseBillingPayload('billing:unknown:50'), null);
+  assert.equal(parseBillingPayload('billing:download:15'), null);
+  assert.equal(parseBillingPayload('billing:download:abc:XYZ'), null);
   assert.equal(parseBillingPayload(''), null);
 });

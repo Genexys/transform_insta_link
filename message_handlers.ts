@@ -22,6 +22,8 @@ import {
   SpanEdit,
   TextEntity,
 } from './entity_utils';
+import { getBotUsername } from './bot_identity';
+import { DOWNLOAD_PRICE_STARS } from './billing';
 import { log } from './runtime';
 
 type Resolvers = {
@@ -323,21 +325,25 @@ export function registerMessageHandlers(
       const isDownloadable = (url: string) =>
         TIKTOK_FIXERS.some(f => url.includes(f));
 
-    const replyMarkup =
-      options.downloadsEnabled &&
-      fixedLinks.length === 1 &&
-      isDownloadable(fixedLinks[0])
-        ? {
-            inline_keyboard: [
-              [
-                  {
-                    text: '📥 Скачать видео/фото',
-                    callback_data: 'download_video',
-                  },
-                ],
-              ],
-            }
-          : undefined;
+      const keyboard: TelegramBot.InlineKeyboardButton[][] = [];
+      if (
+        options.downloadsEnabled &&
+        fixedLinks.length === 1 &&
+        isDownloadable(fixedLinks[0])
+      ) {
+        keyboard.push([
+          { text: '📥 Скачать видео/фото', callback_data: 'download_video' },
+        ]);
+      }
+      const saveShortcode =
+        socialLinks.length === 1 ? instaSaveShortcode(socialLinks[0]) : null;
+      const saveRow = saveShortcode
+        ? await buildInstaSaveRow(bot, saveShortcode)
+        : null;
+      if (saveRow) keyboard.push(saveRow);
+      const replyMarkup = keyboard.length
+        ? { inline_keyboard: keyboard }
+        : undefined;
 
       if (isGroup) {
         try {
@@ -428,12 +434,33 @@ function extractShortcodeFromPreviewUrl(url: string): string | null {
   return match ? match[1] : null;
 }
 
-function buildInstaDownloadMarkup(): TelegramBot.InlineKeyboardMarkup {
-  return {
-    inline_keyboard: [
-      [{ text: '📥 Скачать видео в чат', callback_data: 'download_video' }],
-    ],
-  };
+// Shortcode for a single Instagram *video* link (reel/tv), to gate the paid
+// "save" button. Restricted to video paths so we never charge for an image post.
+function instaSaveShortcode(link: string): string | null {
+  if (!(link.includes('instagram.com') || link.includes('instagr.am'))) {
+    return null;
+  }
+  if (!/\/(reel|reels|tv)\//.test(link)) return null;
+  const shortcode = extractShortcodeFromUrl(link);
+  return shortcode && /^[A-Za-z0-9_-]{1,64}$/.test(shortcode)
+    ? shortcode
+    : null;
+}
+
+// Deep-link button that opens a paid-download invoice in the bot's DM. Works
+// from group chats (where the bot can't privately DM a non-starter directly).
+async function buildInstaSaveRow(
+  bot: TelegramBot,
+  shortcode: string
+): Promise<TelegramBot.InlineKeyboardButton[] | null> {
+  const username = await getBotUsername(bot);
+  if (!username) return null;
+  return [
+    {
+      text: `💾 Сохранить себе за ⭐${DOWNLOAD_PRICE_STARS}`,
+      url: `https://t.me/${username}?start=dl_${shortcode}`,
+    },
+  ];
 }
 
 function scheduleInstaPreviewRefresh(
@@ -465,7 +492,16 @@ function scheduleInstaPreviewRefresh(
     }
     if (!anyOversized) return;
 
-    const downloadMarkup = canOfferDownload ? buildInstaDownloadMarkup() : undefined;
+    const downloadKeyboard: TelegramBot.InlineKeyboardButton[][] = [];
+    if (canOfferDownload) {
+      downloadKeyboard.push([
+        { text: '📥 Скачать видео в чат', callback_data: 'download_video' },
+      ]);
+    }
+    const refreshSaveRow = await buildInstaSaveRow(bot, instaShortcodes[0]);
+    if (refreshSaveRow) downloadKeyboard.push(refreshSaveRow);
+    const downloadMarkup: TelegramBot.InlineKeyboardMarkup | undefined =
+      downloadKeyboard.length ? { inline_keyboard: downloadKeyboard } : undefined;
 
     if (downloadMarkup) {
       try {

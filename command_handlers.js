@@ -4,6 +4,7 @@ exports.registerCommandHandlers = registerCommandHandlers;
 const app_env_1 = require("./app_env");
 const billing_1 = require("./billing");
 const db_1 = require("./db");
+const payment_handlers_1 = require("./payment_handlers");
 const runtime_1 = require("./runtime");
 const START_TEXT = '👋 Привет! Я автоматически исправляю ссылки соцсетей, чтобы они показывали превью прямо в Telegram.\n\n' +
     'Поддерживаю: Instagram, TikTok, Twitter/X, Reddit, Bluesky, Pixiv, DeviantArt\n\n' +
@@ -73,6 +74,16 @@ function registerCommandHandlers(bot) {
         const chatId = msg.chat.id;
         const telegramId = msg.from?.id;
         const param = msg.text?.split(' ')[1];
+        if (param?.startsWith('dl_')) {
+            const shortcode = param.slice(3);
+            if (/^[A-Za-z0-9_-]{1,64}$/.test(shortcode)) {
+                if (telegramId) {
+                    await (0, db_1.createUser)(telegramId, msg.from?.username).catch(() => { });
+                }
+                await (0, payment_handlers_1.sendDownloadInvoice)(bot, chatId, shortcode);
+                return;
+            }
+        }
         if (telegramId && param?.startsWith('ref_')) {
             const referrerId = parseInt(param.replace('ref_', ''));
             if (!isNaN(referrerId) && referrerId !== telegramId) {

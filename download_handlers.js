@@ -7,15 +7,11 @@ exports.handleDownloadCallback = handleDownloadCallback;
 const fs_1 = __importDefault(require("fs"));
 const os_1 = __importDefault(require("os"));
 const path_1 = __importDefault(require("path"));
-const child_process_1 = require("child_process");
-const util_1 = require("util");
-const stream_1 = require("stream");
-const promises_1 = require("stream/promises");
-const execFileAsync = (0, util_1.promisify)(child_process_1.execFile);
 const app_env_1 = require("./app_env");
 const db_1 = require("./db");
 const insta_preview_client_1 = require("./insta_preview_client");
 const link_utils_1 = require("./link_utils");
+const video_delivery_1 = require("./video_delivery");
 const runtime_1 = require("./runtime");
 async function handleDownloadCallback(bot, query, ytdlp) {
     const chatId = query.message?.chat.id;
@@ -56,7 +52,7 @@ async function handleDownloadCallback(bot, query, ytdlp) {
             if (!shortcode) {
                 throw new Error('Не удалось распознать shortcode Instagram-ссылки.');
             }
-            await downloadFromPreviewService(shortcode, tempFilePath);
+            await (0, video_delivery_1.downloadInstaVideoFile)(shortcode, tempFilePath);
         }
         else {
             await ytdlp.downloadAsync(originalUrl, {
@@ -75,7 +71,7 @@ async function handleDownloadCallback(bot, query, ytdlp) {
             sizeBytes: stats.size,
         });
         await bot.sendChatAction(chatId, 'upload_video');
-        const meta = await probeVideoMeta(tempFilePath);
+        const meta = await (0, video_delivery_1.probeVideoMeta)(tempFilePath);
         await bot.sendVideo(chatId, tempFilePath, {
             caption: '🎥 Ваше видео готово!',
             reply_to_message_id: query.message.message_id,
@@ -126,55 +122,4 @@ async function handleDownloadCallback(bot, query, ytdlp) {
             });
         }
     }
-}
-async function probeVideoMeta(filePath) {
-    try {
-        const { stdout } = await execFileAsync('ffprobe', [
-            '-v',
-            'error',
-            '-select_streams',
-            'v:0',
-            '-show_entries',
-            'stream=width,height:stream_side_data=rotation:stream_tags=rotate:format=duration',
-            '-of',
-            'json',
-            filePath,
-        ], { timeout: 20_000 });
-        const info = JSON.parse(stdout);
-        const stream = info.streams?.[0] ?? {};
-        let width = Number(stream.width) || undefined;
-        let height = Number(stream.height) || undefined;
-        let rotation = Number(stream.tags?.rotate);
-        if (!Number.isFinite(rotation)) {
-            const sideData = (stream.side_data_list || []).find((d) => d.rotation !== undefined);
-            rotation = sideData ? Number(sideData.rotation) : 0;
-        }
-        if (Number.isFinite(rotation) &&
-            Math.abs(rotation) % 180 === 90 &&
-            width &&
-            height) {
-            [width, height] = [height, width];
-        }
-        const duration = Math.round(Number(info.format?.duration)) || undefined;
-        return { width, height, duration };
-    }
-    catch {
-        return {};
-    }
-}
-async function downloadFromPreviewService(shortcode, destPath) {
-    const url = `https://${app_env_1.INSTA_PREVIEW_HOST}/v/${encodeURIComponent(shortcode)}.mp4`;
-    const headers = {};
-    if (app_env_1.INSTA_PREVIEW_TOKEN) {
-        headers.authorization = `Bearer ${app_env_1.INSTA_PREVIEW_TOKEN}`;
-    }
-    const res = await fetch(url, {
-        method: 'GET',
-        headers,
-        signal: AbortSignal.timeout(120_000),
-    });
-    if (!res.ok || !res.body) {
-        throw new Error(`preview_service_${res.status}`);
-    }
-    await (0, promises_1.pipeline)(stream_1.Readable.fromWeb(res.body), fs_1.default.createWriteStream(destPath));
 }

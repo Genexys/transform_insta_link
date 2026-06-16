@@ -6,6 +6,8 @@ const db_1 = require("./db");
 const link_utils_1 = require("./link_utils");
 const insta_preview_client_1 = require("./insta_preview_client");
 const entity_utils_1 = require("./entity_utils");
+const bot_identity_1 = require("./bot_identity");
+const billing_1 = require("./billing");
 const runtime_1 = require("./runtime");
 function registerMessageHandlers(bot, resolvers, options) {
     bot.on('inline_query', async (query) => {
@@ -227,19 +229,22 @@ function registerMessageHandlers(bot, resolvers, options) {
             }));
             const { text: finalMessage, entities: finalEntities } = (0, entity_utils_1.applyLinkReplacements)(messageText, msg.entities, replacements, prefix);
             const isDownloadable = (url) => link_utils_1.TIKTOK_FIXERS.some(f => url.includes(f));
-            const replyMarkup = options.downloadsEnabled &&
+            const keyboard = [];
+            if (options.downloadsEnabled &&
                 fixedLinks.length === 1 &&
-                isDownloadable(fixedLinks[0])
-                ? {
-                    inline_keyboard: [
-                        [
-                            {
-                                text: '📥 Скачать видео/фото',
-                                callback_data: 'download_video',
-                            },
-                        ],
-                    ],
-                }
+                isDownloadable(fixedLinks[0])) {
+                keyboard.push([
+                    { text: '📥 Скачать видео/фото', callback_data: 'download_video' },
+                ]);
+            }
+            const saveShortcode = socialLinks.length === 1 ? instaSaveShortcode(socialLinks[0]) : null;
+            const saveRow = saveShortcode
+                ? await buildInstaSaveRow(bot, saveShortcode)
+                : null;
+            if (saveRow)
+                keyboard.push(saveRow);
+            const replyMarkup = keyboard.length
+                ? { inline_keyboard: keyboard }
                 : undefined;
             if (isGroup) {
                 try {
@@ -305,12 +310,27 @@ function extractShortcodeFromPreviewUrl(url) {
     const match = url.match(/\/(?:reel|reels|p|tv)\/([A-Za-z0-9_-]+)/);
     return match ? match[1] : null;
 }
-function buildInstaDownloadMarkup() {
-    return {
-        inline_keyboard: [
-            [{ text: '📥 Скачать видео в чат', callback_data: 'download_video' }],
-        ],
-    };
+function instaSaveShortcode(link) {
+    if (!(link.includes('instagram.com') || link.includes('instagr.am'))) {
+        return null;
+    }
+    if (!/\/(reel|reels|tv)\//.test(link))
+        return null;
+    const shortcode = (0, insta_preview_client_1.extractShortcodeFromUrl)(link);
+    return shortcode && /^[A-Za-z0-9_-]{1,64}$/.test(shortcode)
+        ? shortcode
+        : null;
+}
+async function buildInstaSaveRow(bot, shortcode) {
+    const username = await (0, bot_identity_1.getBotUsername)(bot);
+    if (!username)
+        return null;
+    return [
+        {
+            text: `💾 Сохранить себе за ⭐${billing_1.DOWNLOAD_PRICE_STARS}`,
+            url: `https://t.me/${username}?start=dl_${shortcode}`,
+        },
+    ];
 }
 function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, entities, fixedLinks, downloadsEnabled) {
     const instaShortcodes = fixedLinks
@@ -333,7 +353,16 @@ function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, entities, fix
         }
         if (!anyOversized)
             return;
-        const downloadMarkup = canOfferDownload ? buildInstaDownloadMarkup() : undefined;
+        const downloadKeyboard = [];
+        if (canOfferDownload) {
+            downloadKeyboard.push([
+                { text: '📥 Скачать видео в чат', callback_data: 'download_video' },
+            ]);
+        }
+        const refreshSaveRow = await buildInstaSaveRow(bot, instaShortcodes[0]);
+        if (refreshSaveRow)
+            downloadKeyboard.push(refreshSaveRow);
+        const downloadMarkup = downloadKeyboard.length ? { inline_keyboard: downloadKeyboard } : undefined;
         if (downloadMarkup) {
             try {
                 await bot.editMessageReplyMarkup(downloadMarkup, {

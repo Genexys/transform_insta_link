@@ -1,11 +1,12 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DONATE_AMOUNTS_STARS = exports.CHAT_PRO_PRICE_STARS = exports.PERSONAL_PRO_PRICE_STARS = void 0;
+exports.DOWNLOAD_PRICE_STARS = exports.DONATE_AMOUNTS_STARS = exports.CHAT_PRO_PRICE_STARS = exports.PERSONAL_PRO_PRICE_STARS = void 0;
 exports.buildBillingPayload = buildBillingPayload;
 exports.parseBillingPayload = parseBillingPayload;
 exports.PERSONAL_PRO_PRICE_STARS = 100;
 exports.CHAT_PRO_PRICE_STARS = 250;
 exports.DONATE_AMOUNTS_STARS = [50, 100, 250, 500];
+exports.DOWNLOAD_PRICE_STARS = 15;
 function buildBillingPayload(kind, amount, options) {
     if (kind === 'chat_pro') {
         if (!options?.chatId) {
@@ -13,10 +14,31 @@ function buildBillingPayload(kind, amount, options) {
         }
         return `billing:${kind}:${amount}:${options.chatId}`;
     }
+    if (kind === 'download') {
+        if (!options?.shortcode) {
+            throw new Error('shortcode is required for download billing payloads');
+        }
+        return `billing:${kind}:${amount}:${options.shortcode}`;
+    }
     return `billing:${kind}:${amount}`;
 }
 function parseBillingPayload(payload) {
     const normalized = payload.trim();
+    const downloadMatch = normalized.match(/^billing:download:(\d+):([A-Za-z0-9_-]+)$/);
+    if (downloadMatch) {
+        const amount = parseInt(downloadMatch[1], 10);
+        const shortcode = downloadMatch[2];
+        if (!Number.isFinite(amount) || amount <= 0) {
+            return null;
+        }
+        return {
+            kind: 'download',
+            amount,
+            shortcode,
+            raw: normalized,
+            isLegacy: false,
+        };
+    }
     const modernMatch = normalized.match(/^billing:(donate|personal_pro|chat_pro):(\d+)(?::(-?\d+))?$/);
     if (modernMatch) {
         const [, kind, amountRaw, chatIdRaw] = modernMatch;

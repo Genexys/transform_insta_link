@@ -1,7 +1,12 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { DATABASE_URL } from './app_env';
-import { buildBillingPayload, parseBillingPayload } from './billing';
+import {
+  buildBillingPayload,
+  DOWNLOAD_PRICE_STARS,
+  parseBillingPayload,
+} from './billing';
 import { createUser, recordBillingEvent } from './db';
+import { deliverInstaVideo } from './video_delivery';
 import { log } from './runtime';
 
 async function sendStarsInvoice(params: {
@@ -56,6 +61,28 @@ async function sendStarsInvoice(params: {
       });
     }
   }
+}
+
+// Sends a Stars invoice for a savable copy of an Instagram video. Triggered
+// from the t.me/<bot>?start=dl_<shortcode> deep link, so it always runs in the
+// payer's private chat with the bot.
+export async function sendDownloadInvoice(
+  bot: TelegramBot,
+  chatId: number,
+  shortcode: string
+) {
+  await sendStarsInvoice({
+    bot,
+    chatId,
+    title: 'Скачать видео',
+    description: `Сохраняемая копия видео за ${DOWNLOAD_PRICE_STARS} Stars. После оплаты бот пришлёт файл сюда.`,
+    payload: buildBillingPayload('download', DOWNLOAD_PRICE_STARS, {
+      shortcode,
+    }),
+    amount: DOWNLOAD_PRICE_STARS,
+    label: 'Скачивание видео',
+    errorText: 'Не удалось сформировать счёт на скачивание.',
+  });
 }
 
 export async function handleDonateCallback(
@@ -126,6 +153,31 @@ export function registerPaymentHandlers(bot: TelegramBot) {
         telegramPaymentChargeId: payment.telegram_payment_charge_id,
         providerPaymentChargeId: payment.provider_payment_charge_id,
       });
+    }
+
+    if (billingKind === 'download' && parsedPayload?.shortcode) {
+      await bot
+        .sendMessage(chatId, '✅ Оплата получена, отправляю видео…')
+        .catch(() => {});
+      try {
+        await deliverInstaVideo(bot, chatId, parsedPayload.shortcode, {
+          protect: false,
+          caption: '🎥 Ваше видео — можно сохранять и пересылать.',
+        });
+      } catch (err) {
+        log.error('Paid download delivery failed', {
+          telegramId,
+          shortcode: parsedPayload.shortcode,
+          err: String(err),
+        });
+        await bot
+          .sendMessage(
+            chatId,
+            '❌ Не удалось отправить видео. Напишите /feedback — вернём звёзды.'
+          )
+          .catch(() => {});
+      }
+      return;
     }
 
     const replyText =

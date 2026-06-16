@@ -2,21 +2,12 @@ import TelegramBot from 'node-telegram-bot-api';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
-import { Readable } from 'stream';
-import { pipeline } from 'stream/promises';
 import { YtDlp } from 'ytdlp-nodejs';
-
-const execFileAsync = promisify(execFile);
-import {
-  DATABASE_URL,
-  INSTA_PREVIEW_HOST,
-  INSTA_PREVIEW_TOKEN,
-} from './app_env';
+import { DATABASE_URL } from './app_env';
 import { createUser, incrementDownloads, saveErrorLog } from './db';
 import { extractShortcodeFromUrl } from './insta_preview_client';
 import { INSTA_FIX_DOMAIN, revertUrlForDownload } from './link_utils';
+import { downloadInstaVideoFile, probeVideoMeta } from './video_delivery';
 import { log } from './runtime';
 
 export async function handleDownloadCallback(
@@ -74,7 +65,7 @@ export async function handleDownloadCallback(
       if (!shortcode) {
         throw new Error('Не удалось распознать shortcode Instagram-ссылки.');
       }
-      await downloadFromPreviewService(shortcode, tempFilePath);
+      await downloadInstaVideoFile(shortcode, tempFilePath);
     } else {
       await ytdlp.downloadAsync(originalUrl, {
         output: tempFilePath,
@@ -162,78 +153,3 @@ export async function handleDownloadCallback(
   }
 }
 
-// ffprobe the downloaded file for the dimensions Telegram should display. When
-// sendVideo is given no width/height, Telegram guesses from the container and
-// gets it wrong for some clips (notably ones with a rotation flag), rendering
-// them squished. Returns DISPLAY dimensions (rotation applied) + duration.
-async function probeVideoMeta(
-  filePath: string
-): Promise<{ width?: number; height?: number; duration?: number }> {
-  try {
-    const { stdout } = await execFileAsync(
-      'ffprobe',
-      [
-        '-v',
-        'error',
-        '-select_streams',
-        'v:0',
-        '-show_entries',
-        'stream=width,height:stream_side_data=rotation:stream_tags=rotate:format=duration',
-        '-of',
-        'json',
-        filePath,
-      ],
-      { timeout: 20_000 }
-    );
-    const info = JSON.parse(stdout);
-    const stream = info.streams?.[0] ?? {};
-    let width = Number(stream.width) || undefined;
-    let height = Number(stream.height) || undefined;
-
-    let rotation = Number(stream.tags?.rotate);
-    if (!Number.isFinite(rotation)) {
-      const sideData = (stream.side_data_list || []).find(
-        (d: { rotation?: number }) => d.rotation !== undefined
-      );
-      rotation = sideData ? Number(sideData.rotation) : 0;
-    }
-    if (
-      Number.isFinite(rotation) &&
-      Math.abs(rotation) % 180 === 90 &&
-      width &&
-      height
-    ) {
-      [width, height] = [height, width];
-    }
-
-    const duration = Math.round(Number(info.format?.duration)) || undefined;
-    return { width, height, duration };
-  } catch {
-    return {};
-  }
-}
-
-async function downloadFromPreviewService(
-  shortcode: string,
-  destPath: string
-): Promise<void> {
-  const url = `https://${INSTA_PREVIEW_HOST}/v/${encodeURIComponent(
-    shortcode
-  )}.mp4`;
-  const headers: Record<string, string> = {};
-  if (INSTA_PREVIEW_TOKEN) {
-    headers.authorization = `Bearer ${INSTA_PREVIEW_TOKEN}`;
-  }
-
-  const res = await fetch(url, {
-    method: 'GET',
-    headers,
-    signal: AbortSignal.timeout(120_000),
-  });
-
-  if (!res.ok || !res.body) {
-    throw new Error(`preview_service_${res.status}`);
-  }
-
-  await pipeline(Readable.fromWeb(res.body as any), fs.createWriteStream(destPath));
-}

@@ -8,6 +8,7 @@ import {
   getReferralCount,
   setReferredBy,
 } from './db';
+import { sendDownloadInvoice } from './payment_handlers';
 import { log } from './runtime';
 
 const START_TEXT =
@@ -94,6 +95,19 @@ export function registerCommandHandlers(bot: TelegramBot) {
     const chatId = msg.chat.id;
     const telegramId = msg.from?.id;
     const param = msg.text?.split(' ')[1];
+
+    // Paid-download deep link: t.me/<bot>?start=dl_<shortcode>. Opens a Stars
+    // invoice in this private chat; on payment the bot delivers the savable file.
+    if (param?.startsWith('dl_')) {
+      const shortcode = param.slice(3);
+      if (/^[A-Za-z0-9_-]{1,64}$/.test(shortcode)) {
+        if (telegramId) {
+          await createUser(telegramId, msg.from?.username).catch(() => {});
+        }
+        await sendDownloadInvoice(bot, chatId, shortcode);
+        return;
+      }
+    }
 
     if (telegramId && param?.startsWith('ref_')) {
       const referrerId = parseInt(param.replace('ref_', ''));

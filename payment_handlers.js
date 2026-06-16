@@ -1,10 +1,12 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.sendDownloadInvoice = sendDownloadInvoice;
 exports.handleDonateCallback = handleDonateCallback;
 exports.registerPaymentHandlers = registerPaymentHandlers;
 const app_env_1 = require("./app_env");
 const billing_1 = require("./billing");
 const db_1 = require("./db");
+const video_delivery_1 = require("./video_delivery");
 const runtime_1 = require("./runtime");
 async function sendStarsInvoice(params) {
     const { bot, chatId, queryId, title, description, payload, amount, label, errorText, } = params;
@@ -28,6 +30,20 @@ async function sendStarsInvoice(params) {
             });
         }
     }
+}
+async function sendDownloadInvoice(bot, chatId, shortcode) {
+    await sendStarsInvoice({
+        bot,
+        chatId,
+        title: 'Скачать видео',
+        description: `Сохраняемая копия видео за ${billing_1.DOWNLOAD_PRICE_STARS} Stars. После оплаты бот пришлёт файл сюда.`,
+        payload: (0, billing_1.buildBillingPayload)('download', billing_1.DOWNLOAD_PRICE_STARS, {
+            shortcode,
+        }),
+        amount: billing_1.DOWNLOAD_PRICE_STARS,
+        label: 'Скачивание видео',
+        errorText: 'Не удалось сформировать счёт на скачивание.',
+    });
 }
 async function handleDonateCallback(bot, query, amount) {
     const chatId = query.message?.chat.id;
@@ -86,6 +102,28 @@ function registerPaymentHandlers(bot) {
                 telegramPaymentChargeId: payment.telegram_payment_charge_id,
                 providerPaymentChargeId: payment.provider_payment_charge_id,
             });
+        }
+        if (billingKind === 'download' && parsedPayload?.shortcode) {
+            await bot
+                .sendMessage(chatId, '✅ Оплата получена, отправляю видео…')
+                .catch(() => { });
+            try {
+                await (0, video_delivery_1.deliverInstaVideo)(bot, chatId, parsedPayload.shortcode, {
+                    protect: false,
+                    caption: '🎥 Ваше видео — можно сохранять и пересылать.',
+                });
+            }
+            catch (err) {
+                runtime_1.log.error('Paid download delivery failed', {
+                    telegramId,
+                    shortcode: parsedPayload.shortcode,
+                    err: String(err),
+                });
+                await bot
+                    .sendMessage(chatId, '❌ Не удалось отправить видео. Напишите /feedback — вернём звёзды.')
+                    .catch(() => { });
+            }
+            return;
         }
         const replyText = `🎉 *Спасибо большое, ${username}!*\n\n` +
             `Ваш донат в размере *${amount} Stars* успешно получен. ❤️`;
