@@ -6,7 +6,7 @@ exports.parseBillingPayload = parseBillingPayload;
 exports.PERSONAL_PRO_PRICE_STARS = 100;
 exports.CHAT_PRO_PRICE_STARS = 250;
 exports.DONATE_AMOUNTS_STARS = [50, 100, 250, 500];
-exports.DOWNLOAD_PRICE_STARS = 15;
+exports.DOWNLOAD_PRICE_STARS = 10;
 function buildBillingPayload(kind, amount, options) {
     if (kind === 'chat_pro') {
         if (!options?.chatId) {
