@@ -24,7 +24,11 @@ async function getInstaAuthHealth() {
             signal: AbortSignal.timeout(8000),
         });
         if (!res.ok) {
-            return { igAuthOk: false, state: 'unknown', reason: `http_${res.status}` };
+            return {
+                igAuthOk: false,
+                state: 'unknown',
+                reason: `http_${res.status}`,
+            };
         }
         const body = (await res.json());
         const status = body.igAuth?.status;
@@ -42,6 +46,7 @@ async function getInstaAuthHealth() {
             igAuthOk: body.igAuthOk === true,
             state,
             reason: body.igAuth?.reason,
+            consecutiveExtractFailures: body.igAuth?.consecutiveExtractFailures,
         };
     }
     catch (err) {

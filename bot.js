@@ -83,21 +83,37 @@ async function runHourlyHealthCheck() {
         `Twitter:\n${twitterLines}\n\n` +
         `Другие:\n${e(bluesky)} bskx.app\n${e(deviantart)} fixdeviantart.com\n${e(pixiv)} phixiv.net`);
 }
-let lastInstaAuthState = null;
+const INSTA_DEGRADED_ALERT_THRESHOLD = 3;
+let lastInstaPreviewBroken = null;
 async function runInstaAuthMonitor() {
-    const { state, reason } = await (0, health_1.getInstaAuthHealth)();
-    if (state !== 'ok' && state !== 'expired')
+    const { state, reason, consecutiveExtractFailures } = await (0, health_1.getInstaAuthHealth)();
+    let broken;
+    if (state === 'ok') {
+        broken = false;
+    }
+    else if (state === 'expired') {
+        broken = true;
+    }
+    else if (state === 'degraded' &&
+        (consecutiveExtractFailures ?? 0) >= INSTA_DEGRADED_ALERT_THRESHOLD) {
+        broken = true;
+    }
+    else {
         return;
-    const prev = lastInstaAuthState;
-    lastInstaAuthState = state;
-    if (prev === null || prev === state)
+    }
+    const prev = lastInstaPreviewBroken;
+    lastInstaPreviewBroken = broken;
+    if (prev === null || prev === broken)
         return;
-    if (state === 'expired') {
-        await sendAdminAlert(`[INSTAGRAM] IG-сессия умерла${reason ? `: ${reason}` : ''}\n` +
+    if (broken) {
+        const cause = state === 'expired'
+            ? `IG-сессия умерла${reason ? `: ${reason}` : ''}`
+            : `IG-извлечение падает${reason ? `: ${reason}` : ''} (превью пустые у всех)`;
+        await sendAdminAlert(`[INSTAGRAM] ${cause}\n` +
             `Превью реелов отдаются пустыми. Обнови cookies на ${link_utils_1.INSTA_FIX_DOMAIN} (через немецкий прокси).`);
     }
     else {
-        await sendAdminAlert(`[INSTAGRAM] IG-сессия восстановлена ✅ (${link_utils_1.INSTA_FIX_DOMAIN})`);
+        await sendAdminAlert(`[INSTAGRAM] IG-превью восстановлены ✅ (${link_utils_1.INSTA_FIX_DOMAIN})`);
     }
 }
 setInterval(runHourlyHealthCheck, 3 * 60 * 60 * 1000);

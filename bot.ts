@@ -8,7 +8,12 @@ import { initMediaRuntime } from './media_runtime';
 import { ADMIN_CHAT_ID, BOT_TOKEN } from './app_env';
 import { initDB } from './db';
 import { getDependencyHealth, getInstaAuthHealth } from './health';
-import { INSTA_FIX_DOMAIN, INSTA_FIX_FALLBACK, TIKTOK_FIXERS, TWITTER_FIXERS } from './link_utils';
+import {
+  INSTA_FIX_DOMAIN,
+  INSTA_FIX_FALLBACK,
+  TIKTOK_FIXERS,
+  TWITTER_FIXERS,
+} from './link_utils';
 import { log } from './runtime';
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
@@ -100,32 +105,61 @@ async function runHourlyHealthCheck() {
   );
 }
 
-// Tracks the last *decisive* IG session state so the monitor only alerts on a
-// real transition (alive↔dead). Only 'ok' and 'expired' are decisive — the
-// service reports these from a ground-truth extraction probe. Ambiguous states
-// ('degraded' = probe reel deleted, 'pending'/'unknown' = transient) are
-// ignored: they neither alert nor move the baseline, so we never cry wolf.
-let lastInstaAuthState: 'ok' | 'expired' | null = null;
+// Number of consecutive failed extraction probes the service must report before
+// a 'degraded' state is treated as a real outage (mirrors the service's own
+// relogin threshold). Below this a single 'degraded' is likely just a deleted
+// probe reel, so we stay quiet.
+const INSTA_DEGRADED_ALERT_THRESHOLD = 3;
+
+// Tracks the last *decisive* preview-availability verdict so the monitor only
+// alerts on a real transition (working↔broken). Decisive inputs:
+//   - 'ok'                  → previews work
+//   - 'expired'             → dead session, every preview empty
+//   - persistent 'degraded' → extraction failing for everyone (cookie still
+//                             dodges the login wall, but media comes back empty)
+// Ambiguous states ('pending'/'unknown'/a single 'degraded' that may just be a
+// deleted probe reel) neither alert nor move the baseline, so we never cry wolf.
+let lastInstaPreviewBroken: boolean | null = null;
 
 // The preview service's /health returns 200 even when the IG cookie is expired,
 // so the bot would otherwise keep routing users to a service that returns empty
 // previews without anyone noticing. Poll every 10 min and alert admin the moment
-// the session flips, so a dead session is caught before users report it.
+// previews flip working↔broken, so an outage is caught before users report it.
 async function runInstaAuthMonitor() {
-  const { state, reason } = await getInstaAuthHealth();
-  if (state !== 'ok' && state !== 'expired') return;
+  const { state, reason, consecutiveExtractFailures } =
+    await getInstaAuthHealth();
 
-  const prev = lastInstaAuthState;
-  lastInstaAuthState = state;
-  if (prev === null || prev === state) return;
+  let broken: boolean;
+  if (state === 'ok') {
+    broken = false;
+  } else if (state === 'expired') {
+    broken = true;
+  } else if (
+    state === 'degraded' &&
+    (consecutiveExtractFailures ?? 0) >= INSTA_DEGRADED_ALERT_THRESHOLD
+  ) {
+    broken = true;
+  } else {
+    return; // ambiguous — don't alert, don't move the baseline
+  }
 
-  if (state === 'expired') {
+  const prev = lastInstaPreviewBroken;
+  lastInstaPreviewBroken = broken;
+  if (prev === null || prev === broken) return;
+
+  if (broken) {
+    const cause =
+      state === 'expired'
+        ? `IG-сессия умерла${reason ? `: ${reason}` : ''}`
+        : `IG-извлечение падает${reason ? `: ${reason}` : ''} (превью пустые у всех)`;
     await sendAdminAlert(
-      `[INSTAGRAM] IG-сессия умерла${reason ? `: ${reason}` : ''}\n` +
+      `[INSTAGRAM] ${cause}\n` +
         `Превью реелов отдаются пустыми. Обнови cookies на ${INSTA_FIX_DOMAIN} (через немецкий прокси).`
     );
   } else {
-    await sendAdminAlert(`[INSTAGRAM] IG-сессия восстановлена ✅ (${INSTA_FIX_DOMAIN})`);
+    await sendAdminAlert(
+      `[INSTAGRAM] IG-превью восстановлены ✅ (${INSTA_FIX_DOMAIN})`
+    );
   }
 }
 

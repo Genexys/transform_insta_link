@@ -30,6 +30,11 @@ export interface InstaAuthHealth {
   igAuthOk: boolean;
   state: InstaAuthState;
   reason?: string;
+  // How many consecutive ground-truth extraction probes have failed while the
+  // session still dodges the login wall (only set by the service when
+  // state==='degraded'). Lets the monitor distinguish a one-off (deleted probe
+  // reel) from a real outage where every preview is failing.
+  consecutiveExtractFailures?: number;
 }
 
 // Reads the preview service's /health body, which exposes the live Instagram
@@ -44,11 +49,19 @@ export async function getInstaAuthHealth(): Promise<InstaAuthHealth> {
       signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) {
-      return { igAuthOk: false, state: 'unknown', reason: `http_${res.status}` };
+      return {
+        igAuthOk: false,
+        state: 'unknown',
+        reason: `http_${res.status}`,
+      };
     }
     const body = (await res.json()) as {
       igAuthOk?: boolean;
-      igAuth?: { status?: string; reason?: string };
+      igAuth?: {
+        status?: string;
+        reason?: string;
+        consecutiveExtractFailures?: number;
+      };
     };
     const status = body.igAuth?.status;
     const known: InstaAuthState[] = [
@@ -65,6 +78,7 @@ export async function getInstaAuthHealth(): Promise<InstaAuthHealth> {
       igAuthOk: body.igAuthOk === true,
       state,
       reason: body.igAuth?.reason,
+      consecutiveExtractFailures: body.igAuth?.consecutiveExtractFailures,
     };
   } catch (err) {
     return { igAuthOk: false, state: 'unknown', reason: String(err) };
