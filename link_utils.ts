@@ -4,7 +4,9 @@ export const INSTA_FIX_DOMAIN = 'previewlinkbot.xyz';
 export const INSTA_FIX_DOMAIN_LEGACY =
   'instapreviewservice-production.up.railway.app';
 export const INSTA_FIX_FALLBACK = 'vxinstagram.com';
-export const TIKTOK_FIXERS = ['tfxktok.com'];
+// tfxktok.com stopped emitting an og:video URL (only og:video:type), so Telegram
+// rendered no preview. tnktok.com returns a real og:video + HEAD 200.
+export const TIKTOK_FIXERS = ['tnktok.com'];
 export const TWITTER_FIXERS = ['fxtwitter.com', 'fixupx.com'];
 export const REDDIT_EMBED_DOMAIN =
   'transforminstalink-production.up.railway.app';
