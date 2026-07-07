@@ -25,15 +25,17 @@ async function handleDownloadCallback(bot, query, ytdlp) {
     const messageText = query.message.text;
     if (!messageText)
         return;
-    const urlMatch = messageText.match(/https?:\/\/\S+$/);
-    if (!urlMatch) {
+    const urlMatches = messageText.match(/https?:\/\/\S+/g) || [];
+    const fixedUrl = urlMatches.find(u => u.includes(link_utils_1.INSTA_FIX_DOMAIN)) ||
+        urlMatches.find(u => link_utils_1.TIKTOK_FIXERS.some(f => u.includes(f))) ||
+        urlMatches[0];
+    if (!fixedUrl) {
         await bot.answerCallbackQuery(query.id, {
             text: '❌ Ссылка не найдена',
             show_alert: true,
         });
         return;
     }
-    const fixedUrl = urlMatch[0];
     const originalUrl = (0, link_utils_1.revertUrlForDownload)(fixedUrl);
     const isInstagram = fixedUrl.includes(link_utils_1.INSTA_FIX_DOMAIN);
     await bot.answerCallbackQuery(query.id, { text: '⏳ Начинаю загрузку...' });

@@ -6,7 +6,11 @@ import { YtDlp } from 'ytdlp-nodejs';
 import { DATABASE_URL } from './app_env';
 import { createUser, incrementDownloads, saveErrorLog } from './db';
 import { extractShortcodeFromUrl } from './insta_preview_client';
-import { INSTA_FIX_DOMAIN, revertUrlForDownload } from './link_utils';
+import {
+  INSTA_FIX_DOMAIN,
+  TIKTOK_FIXERS,
+  revertUrlForDownload,
+} from './link_utils';
 import { downloadInstaVideoFile, probeVideoMeta } from './video_delivery';
 import { log } from './runtime';
 
@@ -28,8 +32,17 @@ export async function handleDownloadCallback(
   const messageText = query.message.text;
   if (!messageText) return;
 
-  const urlMatch = messageText.match(/https?:\/\/\S+$/);
-  if (!urlMatch) {
+  // The fixed link is no longer guaranteed to sit at the end of the message:
+  // oversized Instagram videos get a trailing "...нажмите кнопку ниже" note
+  // appended after the URL (see scheduleInstaPreviewRefresh), so an end-anchored
+  // match ($) failed with "Ссылка не найдена". Scan the whole text and prefer
+  // the known fixer URL wherever it sits.
+  const urlMatches = messageText.match(/https?:\/\/\S+/g) || [];
+  const fixedUrl =
+    urlMatches.find(u => u.includes(INSTA_FIX_DOMAIN)) ||
+    urlMatches.find(u => TIKTOK_FIXERS.some(f => u.includes(f))) ||
+    urlMatches[0];
+  if (!fixedUrl) {
     await bot.answerCallbackQuery(query.id, {
       text: '❌ Ссылка не найдена',
       show_alert: true,
@@ -37,7 +50,6 @@ export async function handleDownloadCallback(
     return;
   }
 
-  const fixedUrl = urlMatch[0];
   const originalUrl = revertUrlForDownload(fixedUrl);
   const isInstagram = fixedUrl.includes(INSTA_FIX_DOMAIN);
 
