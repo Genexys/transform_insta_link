@@ -35,7 +35,17 @@ export function revertUrlForDownload(url: string): string {
     .replace('vxvk.com', 'vk.com')
     .replace('phixiv.net', 'pixiv.net');
   for (const fixer of TIKTOK_FIXERS) {
-    result = result.replace(fixer, 'tiktok.com');
+    if (!result.includes(fixer)) continue;
+    // A tnktok short link (tnktok.com/<code>/) came from a vm/vt short URL whose
+    // subdomain was dropped on conversion. Reverting to bare tiktok.com/<code>/
+    // makes TikTok 404 (yt-dlp: "Unsupported URL"), so a bare shortcode path
+    // must revert to vt.tiktok.com. Full author/video links revert to
+    // tiktok.com as before.
+    const fixerEsc = fixer.replace(/\./g, '\\.');
+    const isShortCode = new RegExp(
+      `${fixerEsc}/[A-Za-z0-9._-]+/?(?:[?#]|$)`
+    ).test(result);
+    result = result.replace(fixer, isShortCode ? 'vt.tiktok.com' : 'tiktok.com');
   }
   for (const fixer of TWITTER_FIXERS) {
     result = result.replace(fixer, 'x.com');

@@ -150,3 +150,18 @@ test('revertUrlForDownload converts fixer links back to original domains', () =>
     'https://bsky.app/profile/example.com/post/3kxyz'
   );
 });
+
+test('revertUrlForDownload restores vt. subdomain for TikTok short links', () => {
+  // tnktok.com/<code>/ originates from a vm/vt short link whose subdomain was
+  // dropped on conversion. Reverting to bare tiktok.com/<code>/ 404s in yt-dlp,
+  // so short-code links must revert to vt.tiktok.com to stay downloadable.
+  assert.equal(
+    revertUrlForDownload(`https://${TIKTOK_FIXERS[0]}/ZSXhNchQu/`),
+    'https://vt.tiktok.com/ZSXhNchQu/'
+  );
+  // Full author/video links stay on tiktok.com (already resolvable).
+  assert.equal(
+    revertUrlForDownload(`https://${TIKTOK_FIXERS[0]}/@user/video/123`),
+    'https://tiktok.com/@user/video/123'
+  );
+});

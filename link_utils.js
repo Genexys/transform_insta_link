@@ -34,7 +34,11 @@ function revertUrlForDownload(url) {
         .replace('vxvk.com', 'vk.com')
         .replace('phixiv.net', 'pixiv.net');
     for (const fixer of exports.TIKTOK_FIXERS) {
-        result = result.replace(fixer, 'tiktok.com');
+        if (!result.includes(fixer))
+            continue;
+        const fixerEsc = fixer.replace(/\./g, '\\.');
+        const isShortCode = new RegExp(`${fixerEsc}/[A-Za-z0-9._-]+/?(?:[?#]|$)`).test(result);
+        result = result.replace(fixer, isShortCode ? 'vt.tiktok.com' : 'tiktok.com');
     }
     for (const fixer of exports.TWITTER_FIXERS) {
         result = result.replace(fixer, 'x.com');
