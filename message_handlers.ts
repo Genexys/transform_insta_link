@@ -15,6 +15,7 @@ import {
   extractShortcodeFromUrl,
   fetchInstaPreview,
   InstaMediaEntry,
+  pickDownloadablePhoto,
 } from './insta_preview_client';
 import {
   applyEdits,
@@ -474,15 +475,45 @@ function scheduleInstaPreviewRefresh(
 
   (async () => {
     let anyOversized = false;
+    let singlePhoto = false;
     for (const sc of instaShortcodes) {
       const result = await fetchInstaPreview(sc).catch(() => null);
       if (!result?.ok) continue;
+      // Single image-only post (photo + audio, no video): the inline preview
+      // already shows the photo, so we only offer a free download button.
+      if (fixedLinks.length === 1 && pickDownloadablePhoto(result.data)) {
+        singlePhoto = true;
+      }
       const size = result.data.media?.[0]?.sizeBytes;
       if (typeof size === 'number' && size > PREVIEW_REFRESH_BUDGET_BYTES) {
         anyOversized = true;
-        break;
       }
     }
+
+    // Image post: attach the download button via reply-markup only — no
+    // oversize note, no text edit — so the message text/entities stay untouched.
+    if (singlePhoto && !anyOversized) {
+      if (!canOfferDownload) return;
+      try {
+        await bot.editMessageReplyMarkup(
+          {
+            inline_keyboard: [
+              [{ text: '📥 Скачать фото', callback_data: 'download_video' }],
+            ],
+          },
+          { chat_id: chatId, message_id: messageId }
+        );
+        log.info('Insta photo download button attached', { chatId, messageId });
+      } catch (err) {
+        log.warn('Insta photo button attach failed', {
+          chatId,
+          messageId,
+          err: String(err),
+        });
+      }
+      return;
+    }
+
     if (!anyOversized) return;
 
     const downloadKeyboard: TelegramBot.InlineKeyboardButton[][] = [];

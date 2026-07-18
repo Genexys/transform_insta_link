@@ -34,6 +34,20 @@ export function extractShortcodeFromUrl(url: string): string | null {
   return match ? match[1] : null;
 }
 
+// Returns the single downloadable photo for an image-only Instagram post (exactly
+// one media entry, of type image, with a non-empty url). Returns null for videos,
+// carousels, or anything ambiguous — the photo download flow is single-image only
+// for now, so callers can treat null as "not a downloadable photo".
+export function pickDownloadablePhoto(
+  data: InstaExtractData
+): InstaMediaEntry | null {
+  const media = data.media || [];
+  if (media.length !== 1) return null;
+  const only = media[0];
+  if (!only || only.type !== 'image' || !only.url) return null;
+  return only;
+}
+
 export async function fetchInstaPreview(
   shortcode: string,
   timeoutMs = 35000

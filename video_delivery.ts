@@ -40,6 +40,35 @@ export async function downloadInstaVideoFile(
   );
 }
 
+// Download an Instagram image (direct CDN url from the preview service's media
+// entry) to a local file. We fetch the bytes ourselves rather than handing the
+// url to sendPhoto because Instagram's CDN can 403 Telegram's own fetcher; a
+// direct download from us is more reliable. Sends a browser-ish UA for the same
+// reason. Reuses the streaming pipeline pattern of downloadInstaVideoFile.
+export async function downloadInstaImageFile(
+  imageUrl: string,
+  destPath: string
+): Promise<void> {
+  const res = await fetch(imageUrl, {
+    method: 'GET',
+    headers: {
+      'user-agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+      accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
+    },
+    signal: AbortSignal.timeout(120_000),
+  });
+
+  if (!res.ok || !res.body) {
+    throw new Error(`insta_image_${res.status}`);
+  }
+
+  await pipeline(
+    Readable.fromWeb(res.body as any),
+    fs.createWriteStream(destPath)
+  );
+}
+
 // ffprobe the file for the dimensions Telegram should display. Without explicit
 // width/height, Telegram guesses from the container and renders some clips
 // squished (notably ones with a rotation flag). Returns DISPLAY dimensions

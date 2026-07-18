@@ -330,15 +330,38 @@ function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, entities, fix
     const canOfferDownload = downloadsEnabled && fixedLinks.length === 1;
     (async () => {
         let anyOversized = false;
+        let singlePhoto = false;
         for (const sc of instaShortcodes) {
             const result = await (0, insta_preview_client_1.fetchInstaPreview)(sc).catch(() => null);
             if (!result?.ok)
                 continue;
+            if (fixedLinks.length === 1 && (0, insta_preview_client_1.pickDownloadablePhoto)(result.data)) {
+                singlePhoto = true;
+            }
             const size = result.data.media?.[0]?.sizeBytes;
             if (typeof size === 'number' && size > PREVIEW_REFRESH_BUDGET_BYTES) {
                 anyOversized = true;
-                break;
             }
+        }
+        if (singlePhoto && !anyOversized) {
+            if (!canOfferDownload)
+                return;
+            try {
+                await bot.editMessageReplyMarkup({
+                    inline_keyboard: [
+                        [{ text: '📥 Скачать фото', callback_data: 'download_video' }],
+                    ],
+                }, { chat_id: chatId, message_id: messageId });
+                runtime_1.log.info('Insta photo download button attached', { chatId, messageId });
+            }
+            catch (err) {
+                runtime_1.log.warn('Insta photo button attach failed', {
+                    chatId,
+                    messageId,
+                    err: String(err),
+                });
+            }
+            return;
         }
         if (!anyOversized)
             return;

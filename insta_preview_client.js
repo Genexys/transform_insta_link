@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.extractShortcodeFromUrl = extractShortcodeFromUrl;
+exports.pickDownloadablePhoto = pickDownloadablePhoto;
 exports.fetchInstaPreview = fetchInstaPreview;
 const app_env_1 = require("./app_env");
 const runtime_1 = require("./runtime");
@@ -8,6 +9,15 @@ const INSTA_SHORTCODE_REGEX = /(?:instagram\.com|instagr\.am)\/(?:p|reel|reels|t
 function extractShortcodeFromUrl(url) {
     const match = url.match(INSTA_SHORTCODE_REGEX);
     return match ? match[1] : null;
+}
+function pickDownloadablePhoto(data) {
+    const media = data.media || [];
+    if (media.length !== 1)
+        return null;
+    const only = media[0];
+    if (!only || only.type !== 'image' || !only.url)
+        return null;
+    return only;
 }
 async function fetchInstaPreview(shortcode, timeoutMs = 35000) {
     const headers = {

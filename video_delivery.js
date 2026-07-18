@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.downloadInstaVideoFile = downloadInstaVideoFile;
+exports.downloadInstaImageFile = downloadInstaImageFile;
 exports.probeVideoMeta = probeVideoMeta;
 exports.deliverInstaVideo = deliverInstaVideo;
 const fs_1 = __importDefault(require("fs"));
@@ -29,6 +30,20 @@ async function downloadInstaVideoFile(shortcode, destPath) {
     });
     if (!res.ok || !res.body) {
         throw new Error(`preview_service_${res.status}`);
+    }
+    await (0, promises_1.pipeline)(stream_1.Readable.fromWeb(res.body), fs_1.default.createWriteStream(destPath));
+}
+async function downloadInstaImageFile(imageUrl, destPath) {
+    const res = await fetch(imageUrl, {
+        method: 'GET',
+        headers: {
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+            accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
+        },
+        signal: AbortSignal.timeout(120_000),
+    });
+    if (!res.ok || !res.body) {
+        throw new Error(`insta_image_${res.status}`);
     }
     await (0, promises_1.pipeline)(stream_1.Readable.fromWeb(res.body), fs_1.default.createWriteStream(destPath));
 }
