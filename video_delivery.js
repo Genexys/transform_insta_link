@@ -7,6 +7,7 @@ exports.downloadInstaVideoFile = downloadInstaVideoFile;
 exports.downloadInstaImageFile = downloadInstaImageFile;
 exports.probeVideoMeta = probeVideoMeta;
 exports.deliverInstaVideo = deliverInstaVideo;
+exports.deliverInstaMedia = deliverInstaMedia;
 const fs_1 = __importDefault(require("fs"));
 const os_1 = __importDefault(require("os"));
 const path_1 = __importDefault(require("path"));
@@ -15,6 +16,7 @@ const util_1 = require("util");
 const stream_1 = require("stream");
 const promises_1 = require("stream/promises");
 const app_env_1 = require("./app_env");
+const insta_preview_client_1 = require("./insta_preview_client");
 const runtime_1 = require("./runtime");
 const execFileAsync = (0, util_1.promisify)(child_process_1.execFile);
 async function downloadInstaVideoFile(shortcode, destPath) {
@@ -101,6 +103,49 @@ async function deliverInstaVideo(bot, chatId, shortcode, opts) {
                 ? { width: meta.width, height: meta.height }
                 : {}),
             ...(meta.duration ? { duration: meta.duration } : {}),
+        });
+    }
+    finally {
+        if (fs_1.default.existsSync(tempFilePath)) {
+            fs_1.default.unlink(tempFilePath, err => {
+                if (err) {
+                    runtime_1.log.error('Failed to delete temp file', {
+                        tempFilePath,
+                        err: String(err),
+                    });
+                }
+            });
+        }
+    }
+}
+async function deliverInstaMedia(bot, chatId, shortcode, opts) {
+    const preview = await (0, insta_preview_client_1.fetchInstaPreview)(shortcode);
+    const photo = preview.ok ? (0, insta_preview_client_1.pickDownloadablePhoto)(preview.data) : null;
+    if (!photo) {
+        await deliverInstaVideo(bot, chatId, shortcode, {
+            protect: opts.protect,
+            caption: opts.premium
+                ? '🎥 Ваше видео (безлимит активен) — можно сохранять.'
+                : '🎥 Ваше видео — можно сохранять и пересылать.',
+            replyToMessageId: opts.replyToMessageId,
+        });
+        return;
+    }
+    const tempFilePath = path_1.default.join(os_1.default.tmpdir(), `photo_${Date.now()}.jpg`);
+    try {
+        await downloadInstaImageFile(photo.url, tempFilePath);
+        if (!fs_1.default.existsSync(tempFilePath)) {
+            throw new Error('insta_image_no_file');
+        }
+        await bot.sendChatAction(chatId, 'upload_photo');
+        await bot.sendPhoto(chatId, tempFilePath, {
+            caption: opts.premium
+                ? '🖼 Ваше фото (безлимит активен) — можно сохранять.'
+                : '🖼 Ваше фото — можно сохранять и пересылать.',
+            protect_content: opts.protect,
+            ...(opts.replyToMessageId
+                ? { reply_to_message_id: opts.replyToMessageId }
+                : {}),
         });
     }
     finally {

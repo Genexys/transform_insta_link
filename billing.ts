@@ -4,6 +4,21 @@ export const PERSONAL_PRO_PRICE_STARS = 100;
 export const CHAT_PRO_PRICE_STARS = 250;
 export const DONATE_AMOUNTS_STARS = [50, 100, 250, 500] as const;
 export const DOWNLOAD_PRICE_STARS = 10;
+export const PHOTO_DOWNLOAD_PRICE_STARS = 5;
+
+export type DownloadMediaKind = 'photo' | 'video';
+
+// Pricing policy for the paid savable-copy flow: an image-only post is cheaper
+// than a video. Pure (no media detection here) so the price/noun pair can be
+// unit-tested and reused across the invoice, the button label, and captions.
+export function downloadPricing(kind: DownloadMediaKind): {
+  stars: number;
+  noun: string;
+} {
+  return kind === 'photo'
+    ? { stars: PHOTO_DOWNLOAD_PRICE_STARS, noun: 'фото' }
+    : { stars: DOWNLOAD_PRICE_STARS, noun: 'видео' };
+}
 
 export type ParsedBillingPayload = {
   kind: BillingKind;

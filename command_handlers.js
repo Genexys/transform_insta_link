@@ -84,9 +84,9 @@ function registerCommandHandlers(bot) {
                 const user = telegramId ? await (0, db_1.getUser)(telegramId) : null;
                 if (user?.is_premium) {
                     try {
-                        await (0, video_delivery_1.deliverInstaVideo)(bot, chatId, shortcode, {
+                        await (0, video_delivery_1.deliverInstaMedia)(bot, chatId, shortcode, {
                             protect: false,
-                            caption: '🎥 Ваше видео (безлимит активен) — можно сохранять.',
+                            premium: true,
                         });
                     }
                     catch (err) {
@@ -96,7 +96,7 @@ function registerCommandHandlers(bot) {
                             err: String(err),
                         });
                         await bot
-                            .sendMessage(chatId, '❌ Не удалось отправить видео. Попробуйте позже или /feedback.')
+                            .sendMessage(chatId, '❌ Не удалось отправить файл. Попробуйте позже или /feedback.')
                             .catch(() => { });
                     }
                 }

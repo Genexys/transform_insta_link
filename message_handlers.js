@@ -308,15 +308,17 @@ function extractShortcodeFromPreviewUrl(url) {
     const match = url.match(/\/(?:reel|reels|p|tv)\/([A-Za-z0-9_-]+)/);
     return match ? match[1] : null;
 }
-async function buildInstaSaveRow(bot, shortcode) {
+async function buildInstaSaveRow(bot, shortcode, opts) {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(shortcode))
         return null;
     const username = await (0, bot_identity_1.getBotUsername)(bot);
     if (!username)
         return null;
+    const priceStars = opts?.priceStars ?? billing_1.DOWNLOAD_PRICE_STARS;
+    const label = opts?.noun ? `Сохранить ${opts.noun}` : 'Сохранить себе';
     return [
         {
-            text: `💾 Сохранить себе за ⭐${billing_1.DOWNLOAD_PRICE_STARS}`,
+            text: `💾 ${label} за ⭐${priceStars}`,
             url: `https://t.me/${username}?start=dl_${shortcode}`,
         },
     ];
@@ -344,18 +346,21 @@ function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, entities, fix
             }
         }
         if (singlePhoto && !anyOversized) {
-            if (!canOfferDownload)
+            const saveRow = await buildInstaSaveRow(bot, instaShortcodes[0], {
+                priceStars: billing_1.PHOTO_DOWNLOAD_PRICE_STARS,
+                noun: 'фото',
+            });
+            if (!saveRow)
                 return;
             try {
-                await bot.editMessageReplyMarkup({
-                    inline_keyboard: [
-                        [{ text: '📥 Скачать фото', callback_data: 'download_video' }],
-                    ],
-                }, { chat_id: chatId, message_id: messageId });
-                runtime_1.log.info('Insta photo download button attached', { chatId, messageId });
+                await bot.editMessageReplyMarkup({ inline_keyboard: [saveRow] }, { chat_id: chatId, message_id: messageId });
+                runtime_1.log.info('Insta paid photo save button attached', {
+                    chatId,
+                    messageId,
+                });
             }
             catch (err) {
-                runtime_1.log.warn('Insta photo button attach failed', {
+                runtime_1.log.warn('Insta photo save button attach failed', {
                     chatId,
                     messageId,
                     err: String(err),

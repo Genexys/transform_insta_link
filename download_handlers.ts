@@ -5,21 +5,13 @@ import path from 'path';
 import { YtDlp } from 'ytdlp-nodejs';
 import { DATABASE_URL } from './app_env';
 import { createUser, incrementDownloads, saveErrorLog } from './db';
-import {
-  extractShortcodeFromUrl,
-  fetchInstaPreview,
-  pickDownloadablePhoto,
-} from './insta_preview_client';
+import { extractShortcodeFromUrl } from './insta_preview_client';
 import {
   INSTA_FIX_DOMAIN,
   TIKTOK_FIXERS,
   revertUrlForDownload,
 } from './link_utils';
-import {
-  downloadInstaImageFile,
-  downloadInstaVideoFile,
-  probeVideoMeta,
-} from './video_delivery';
+import { downloadInstaVideoFile, probeVideoMeta } from './video_delivery';
 import { log } from './runtime';
 
 export async function handleDownloadCallback(
@@ -69,8 +61,7 @@ export async function handleDownloadCallback(
     { reply_to_message_id: query.message.message_id }
   );
 
-  let tempFilePath = path.join(os.tmpdir(), `video_${Date.now()}.mp4`);
-  let isPhoto = false;
+  const tempFilePath = path.join(os.tmpdir(), `video_${Date.now()}.mp4`);
 
   try {
     log.info('Starting media download', {
@@ -86,19 +77,10 @@ export async function handleDownloadCallback(
       if (!shortcode) {
         throw new Error('Не удалось распознать shortcode Instagram-ссылки.');
       }
-      // Single-image posts (photo + audio, no video) can't be served via the
-      // /v/<sc>.mp4 endpoint, so decide photo vs video from the extracted media:
-      // for an image-only post download the image bytes directly and send them
-      // as a photo; otherwise fall back to the existing video path.
-      const preview = await fetchInstaPreview(shortcode);
-      const photo = preview.ok ? pickDownloadablePhoto(preview.data) : null;
-      if (photo) {
-        isPhoto = true;
-        tempFilePath = path.join(os.tmpdir(), `photo_${Date.now()}.jpg`);
-        await downloadInstaImageFile(photo.url, tempFilePath);
-      } else {
-        await downloadInstaVideoFile(shortcode, tempFilePath);
-      }
+      // This free in-chat button only ever fires for videos (TikTok, or an
+      // oversized Instagram video). Image-only posts are handled by the paid
+      // save flow (deliverInstaMedia), not here.
+      await downloadInstaVideoFile(shortcode, tempFilePath);
     } else {
       await ytdlp.downloadAsync(originalUrl, {
         output: tempFilePath,
@@ -118,34 +100,24 @@ export async function handleDownloadCallback(
       chatId,
       telegramId,
       sizeBytes: stats.size,
-      kind: isPhoto ? 'photo' : 'video',
     });
 
-    if (isPhoto) {
-      await bot.sendChatAction(chatId, 'upload_photo');
-      await bot.sendPhoto(chatId, tempFilePath, {
-        caption: '🖼 Ваше фото готово!',
-        reply_to_message_id: query.message.message_id,
-        protect_content: true,
-      });
-    } else {
-      await bot.sendChatAction(chatId, 'upload_video');
+    await bot.sendChatAction(chatId, 'upload_video');
 
-      // Pass explicit dimensions so Telegram doesn't mis-guess the aspect ratio
-      // and render the video squished (common with Instagram clips that carry a
-      // rotation flag). probeVideoMeta returns display dimensions (rotation
-      // applied) so a portrait clip stays portrait.
-      const meta = await probeVideoMeta(tempFilePath);
-      await bot.sendVideo(chatId, tempFilePath, {
-        caption: '🎥 Ваше видео готово!',
-        reply_to_message_id: query.message.message_id,
-        protect_content: true,
-        ...(meta.width && meta.height
-          ? { width: meta.width, height: meta.height }
-          : {}),
-        ...(meta.duration ? { duration: meta.duration } : {}),
-      });
-    }
+    // Pass explicit dimensions so Telegram doesn't mis-guess the aspect ratio
+    // and render the video squished (common with Instagram clips that carry a
+    // rotation flag). probeVideoMeta returns display dimensions (rotation
+    // applied) so a portrait clip stays portrait.
+    const meta = await probeVideoMeta(tempFilePath);
+    await bot.sendVideo(chatId, tempFilePath, {
+      caption: '🎥 Ваше видео готово!',
+      reply_to_message_id: query.message.message_id,
+      protect_content: true,
+      ...(meta.width && meta.height
+        ? { width: meta.width, height: meta.height }
+        : {}),
+      ...(meta.duration ? { duration: meta.duration } : {}),
+    });
 
     if (DATABASE_URL) {
       await incrementDownloads(telegramId);

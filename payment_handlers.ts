@@ -2,7 +2,7 @@ import TelegramBot from 'node-telegram-bot-api';
 import { DATABASE_URL } from './app_env';
 import {
   buildBillingPayload,
-  DOWNLOAD_PRICE_STARS,
+  downloadPricing,
   parseBillingPayload,
   PERSONAL_PRO_PRICE_STARS,
 } from './billing';
@@ -12,7 +12,11 @@ import {
   recordBillingEvent,
   setPremium,
 } from './db';
-import { deliverInstaVideo } from './video_delivery';
+import {
+  fetchInstaPreview,
+  pickDownloadablePhoto,
+} from './insta_preview_client';
+import { deliverInstaMedia } from './video_delivery';
 import { log } from './runtime';
 
 async function sendStarsInvoice(params: {
@@ -69,24 +73,29 @@ async function sendStarsInvoice(params: {
   }
 }
 
-// Sends a Stars invoice for a savable copy of an Instagram video. Triggered
-// from the t.me/<bot>?start=dl_<shortcode> deep link, so it always runs in the
-// payer's private chat with the bot.
+// Sends a Stars invoice for a savable copy of an Instagram post. Triggered from
+// the t.me/<bot>?start=dl_<shortcode> deep link, so it always runs in the
+// payer's private chat with the bot. Price/wording follow the media type: an
+// image-only post is cheaper than a video (see downloadPricing).
 export async function sendDownloadInvoice(
   bot: TelegramBot,
   chatId: number,
   shortcode: string
 ) {
+  const preview = await fetchInstaPreview(shortcode);
+  const isPhoto = preview.ok ? Boolean(pickDownloadablePhoto(preview.data)) : false;
+  const { stars, noun } = downloadPricing(isPhoto ? 'photo' : 'video');
+
   await sendStarsInvoice({
     bot,
     chatId,
-    title: 'Скачать видео',
-    description: `Сохраняемая копия видео за ${DOWNLOAD_PRICE_STARS} Stars. После оплаты бот пришлёт файл сюда.`,
-    payload: buildBillingPayload('download', DOWNLOAD_PRICE_STARS, {
+    title: `Скачать ${noun}`,
+    description: `Сохраняемая копия (${noun}) за ${stars} Stars. После оплаты бот пришлёт файл сюда.`,
+    payload: buildBillingPayload('download', stars, {
       shortcode,
     }),
-    amount: DOWNLOAD_PRICE_STARS,
-    label: 'Скачивание видео',
+    amount: stars,
+    label: `Скачивание (${noun})`,
     errorText: 'Не удалось сформировать счёт на скачивание.',
   });
 }
@@ -195,15 +204,14 @@ export function registerPaymentHandlers(bot: TelegramBot) {
           { parse_mode: 'Markdown' }
         )
         .catch(() => {});
-      // If the pass was bought from a single-video flow, deliver that video too.
+      // If the pass was bought from a single-media flow, deliver that item too.
       if (parsedPayload?.shortcode) {
         try {
-          await deliverInstaVideo(bot, chatId, parsedPayload.shortcode, {
+          await deliverInstaMedia(bot, chatId, parsedPayload.shortcode, {
             protect: false,
-            caption: '🎥 Ваше видео — можно сохранять и пересылать.',
           });
         } catch (err) {
-          log.error('Pass-flow video delivery failed', {
+          log.error('Pass-flow media delivery failed', {
             telegramId,
             shortcode: parsedPayload.shortcode,
             err: String(err),
@@ -215,12 +223,11 @@ export function registerPaymentHandlers(bot: TelegramBot) {
 
     if (billingKind === 'download' && parsedPayload?.shortcode) {
       await bot
-        .sendMessage(chatId, '✅ Оплата получена, отправляю видео…')
+        .sendMessage(chatId, '✅ Оплата получена, отправляю файл…')
         .catch(() => {});
       try {
-        await deliverInstaVideo(bot, chatId, parsedPayload.shortcode, {
+        await deliverInstaMedia(bot, chatId, parsedPayload.shortcode, {
           protect: false,
-          caption: '🎥 Ваше видео — можно сохранять и пересылать.',
         });
       } catch (err) {
         log.error('Paid download delivery failed', {
@@ -231,7 +238,7 @@ export function registerPaymentHandlers(bot: TelegramBot) {
         await bot
           .sendMessage(
             chatId,
-            '❌ Не удалось отправить видео. Напишите /feedback — вернём звёзды.'
+            '❌ Не удалось отправить файл. Напишите /feedback — вернём звёзды.'
           )
           .catch(() => {});
       }

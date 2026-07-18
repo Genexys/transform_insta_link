@@ -10,7 +10,7 @@ import {
   setReferredBy,
 } from './db';
 import { sendDownloadInvoice } from './payment_handlers';
-import { deliverInstaVideo } from './video_delivery';
+import { deliverInstaMedia } from './video_delivery';
 import { log } from './runtime';
 
 const START_TEXT =
@@ -108,11 +108,11 @@ export function registerCommandHandlers(bot: TelegramBot) {
         }
         const user = telegramId ? await getUser(telegramId) : null;
         if (user?.is_premium) {
-          // Premium: deliver the savable video for free.
+          // Premium: deliver the savable media (photo or video) for free.
           try {
-            await deliverInstaVideo(bot, chatId, shortcode, {
+            await deliverInstaMedia(bot, chatId, shortcode, {
               protect: false,
-              caption: '🎥 Ваше видео (безлимит активен) — можно сохранять.',
+              premium: true,
             });
           } catch (err) {
             log.error('Premium download delivery failed', {
@@ -123,7 +123,7 @@ export function registerCommandHandlers(bot: TelegramBot) {
             await bot
               .sendMessage(
                 chatId,
-                '❌ Не удалось отправить видео. Попробуйте позже или /feedback.'
+                '❌ Не удалось отправить файл. Попробуйте позже или /feedback.'
               )
               .catch(() => {});
           }

@@ -40,8 +40,7 @@ async function handleDownloadCallback(bot, query, ytdlp) {
     const isInstagram = fixedUrl.includes(link_utils_1.INSTA_FIX_DOMAIN);
     await bot.answerCallbackQuery(query.id, { text: '⏳ Начинаю загрузку...' });
     const loadingMsg = await bot.sendMessage(chatId, '⏳ Скачиваю, это может занять несколько секунд...', { reply_to_message_id: query.message.message_id });
-    let tempFilePath = path_1.default.join(os_1.default.tmpdir(), `video_${Date.now()}.mp4`);
-    let isPhoto = false;
+    const tempFilePath = path_1.default.join(os_1.default.tmpdir(), `video_${Date.now()}.mp4`);
     try {
         runtime_1.log.info('Starting media download', {
             chatId,
@@ -55,16 +54,7 @@ async function handleDownloadCallback(bot, query, ytdlp) {
             if (!shortcode) {
                 throw new Error('Не удалось распознать shortcode Instagram-ссылки.');
             }
-            const preview = await (0, insta_preview_client_1.fetchInstaPreview)(shortcode);
-            const photo = preview.ok ? (0, insta_preview_client_1.pickDownloadablePhoto)(preview.data) : null;
-            if (photo) {
-                isPhoto = true;
-                tempFilePath = path_1.default.join(os_1.default.tmpdir(), `photo_${Date.now()}.jpg`);
-                await (0, video_delivery_1.downloadInstaImageFile)(photo.url, tempFilePath);
-            }
-            else {
-                await (0, video_delivery_1.downloadInstaVideoFile)(shortcode, tempFilePath);
-            }
+            await (0, video_delivery_1.downloadInstaVideoFile)(shortcode, tempFilePath);
         }
         else {
             await ytdlp.downloadAsync(originalUrl, {
@@ -81,29 +71,18 @@ async function handleDownloadCallback(bot, query, ytdlp) {
             chatId,
             telegramId,
             sizeBytes: stats.size,
-            kind: isPhoto ? 'photo' : 'video',
         });
-        if (isPhoto) {
-            await bot.sendChatAction(chatId, 'upload_photo');
-            await bot.sendPhoto(chatId, tempFilePath, {
-                caption: '🖼 Ваше фото готово!',
-                reply_to_message_id: query.message.message_id,
-                protect_content: true,
-            });
-        }
-        else {
-            await bot.sendChatAction(chatId, 'upload_video');
-            const meta = await (0, video_delivery_1.probeVideoMeta)(tempFilePath);
-            await bot.sendVideo(chatId, tempFilePath, {
-                caption: '🎥 Ваше видео готово!',
-                reply_to_message_id: query.message.message_id,
-                protect_content: true,
-                ...(meta.width && meta.height
-                    ? { width: meta.width, height: meta.height }
-                    : {}),
-                ...(meta.duration ? { duration: meta.duration } : {}),
-            });
-        }
+        await bot.sendChatAction(chatId, 'upload_video');
+        const meta = await (0, video_delivery_1.probeVideoMeta)(tempFilePath);
+        await bot.sendVideo(chatId, tempFilePath, {
+            caption: '🎥 Ваше видео готово!',
+            reply_to_message_id: query.message.message_id,
+            protect_content: true,
+            ...(meta.width && meta.height
+                ? { width: meta.width, height: meta.height }
+                : {}),
+            ...(meta.duration ? { duration: meta.duration } : {}),
+        });
         if (app_env_1.DATABASE_URL) {
             await (0, db_1.incrementDownloads)(telegramId);
         }

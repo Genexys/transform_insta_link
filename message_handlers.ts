@@ -24,7 +24,7 @@ import {
   TextEntity,
 } from './entity_utils';
 import { getBotUsername } from './bot_identity';
-import { DOWNLOAD_PRICE_STARS } from './billing';
+import { DOWNLOAD_PRICE_STARS, PHOTO_DOWNLOAD_PRICE_STARS } from './billing';
 import { log } from './runtime';
 
 type Resolvers = {
@@ -444,14 +444,18 @@ function extractShortcodeFromPreviewUrl(url: string): string | null {
 // button. `shortcode` is validated since it lands in the deep-link URL.
 async function buildInstaSaveRow(
   bot: TelegramBot,
-  shortcode: string
+  shortcode: string,
+  opts?: { priceStars?: number; noun?: string }
 ): Promise<TelegramBot.InlineKeyboardButton[] | null> {
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(shortcode)) return null;
   const username = await getBotUsername(bot);
   if (!username) return null;
+  const priceStars = opts?.priceStars ?? DOWNLOAD_PRICE_STARS;
+  // "Сохранить себе" for video (no noun), "Сохранить фото" when a noun is given.
+  const label = opts?.noun ? `Сохранить ${opts.noun}` : 'Сохранить себе';
   return [
     {
-      text: `💾 Сохранить себе за ⭐${DOWNLOAD_PRICE_STARS}`,
+      text: `💾 ${label} за ⭐${priceStars}`,
       url: `https://t.me/${username}?start=dl_${shortcode}`,
     },
   ];
@@ -490,22 +494,29 @@ function scheduleInstaPreviewRefresh(
       }
     }
 
-    // Image post: attach the download button via reply-markup only — no
-    // oversize note, no text edit — so the message text/entities stay untouched.
+    // Image post: attach the paid "save to yourself" button via reply-markup
+    // only — no oversize note, no text edit — so the message text/entities stay
+    // untouched. The photo is already visible in the inline preview; the button
+    // opens the private-chat Stars flow that delivers a savable copy (protected
+    // preview photos can't be saved otherwise). Independent of downloadsEnabled,
+    // matching the video save button.
     if (singlePhoto && !anyOversized) {
-      if (!canOfferDownload) return;
+      const saveRow = await buildInstaSaveRow(bot, instaShortcodes[0], {
+        priceStars: PHOTO_DOWNLOAD_PRICE_STARS,
+        noun: 'фото',
+      });
+      if (!saveRow) return;
       try {
         await bot.editMessageReplyMarkup(
-          {
-            inline_keyboard: [
-              [{ text: '📥 Скачать фото', callback_data: 'download_video' }],
-            ],
-          },
+          { inline_keyboard: [saveRow] },
           { chat_id: chatId, message_id: messageId }
         );
-        log.info('Insta photo download button attached', { chatId, messageId });
+        log.info('Insta paid photo save button attached', {
+          chatId,
+          messageId,
+        });
       } catch (err) {
-        log.warn('Insta photo button attach failed', {
+        log.warn('Insta photo save button attach failed', {
           chatId,
           messageId,
           err: String(err),

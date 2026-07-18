@@ -7,6 +7,7 @@ exports.registerPaymentHandlers = registerPaymentHandlers;
 const app_env_1 = require("./app_env");
 const billing_1 = require("./billing");
 const db_1 = require("./db");
+const insta_preview_client_1 = require("./insta_preview_client");
 const video_delivery_1 = require("./video_delivery");
 const runtime_1 = require("./runtime");
 async function sendStarsInvoice(params) {
@@ -33,16 +34,19 @@ async function sendStarsInvoice(params) {
     }
 }
 async function sendDownloadInvoice(bot, chatId, shortcode) {
+    const preview = await (0, insta_preview_client_1.fetchInstaPreview)(shortcode);
+    const isPhoto = preview.ok ? Boolean((0, insta_preview_client_1.pickDownloadablePhoto)(preview.data)) : false;
+    const { stars, noun } = (0, billing_1.downloadPricing)(isPhoto ? 'photo' : 'video');
     await sendStarsInvoice({
         bot,
         chatId,
-        title: 'Скачать видео',
-        description: `Сохраняемая копия видео за ${billing_1.DOWNLOAD_PRICE_STARS} Stars. После оплаты бот пришлёт файл сюда.`,
-        payload: (0, billing_1.buildBillingPayload)('download', billing_1.DOWNLOAD_PRICE_STARS, {
+        title: `Скачать ${noun}`,
+        description: `Сохраняемая копия (${noun}) за ${stars} Stars. После оплаты бот пришлёт файл сюда.`,
+        payload: (0, billing_1.buildBillingPayload)('download', stars, {
             shortcode,
         }),
-        amount: billing_1.DOWNLOAD_PRICE_STARS,
-        label: 'Скачивание видео',
+        amount: stars,
+        label: `Скачивание (${noun})`,
         errorText: 'Не удалось сформировать счёт на скачивание.',
     });
 }
@@ -128,13 +132,12 @@ function registerPaymentHandlers(bot) {
                 .catch(() => { });
             if (parsedPayload?.shortcode) {
                 try {
-                    await (0, video_delivery_1.deliverInstaVideo)(bot, chatId, parsedPayload.shortcode, {
+                    await (0, video_delivery_1.deliverInstaMedia)(bot, chatId, parsedPayload.shortcode, {
                         protect: false,
-                        caption: '🎥 Ваше видео — можно сохранять и пересылать.',
                     });
                 }
                 catch (err) {
-                    runtime_1.log.error('Pass-flow video delivery failed', {
+                    runtime_1.log.error('Pass-flow media delivery failed', {
                         telegramId,
                         shortcode: parsedPayload.shortcode,
                         err: String(err),
@@ -145,12 +148,11 @@ function registerPaymentHandlers(bot) {
         }
         if (billingKind === 'download' && parsedPayload?.shortcode) {
             await bot
-                .sendMessage(chatId, '✅ Оплата получена, отправляю видео…')
+                .sendMessage(chatId, '✅ Оплата получена, отправляю файл…')
                 .catch(() => { });
             try {
-                await (0, video_delivery_1.deliverInstaVideo)(bot, chatId, parsedPayload.shortcode, {
+                await (0, video_delivery_1.deliverInstaMedia)(bot, chatId, parsedPayload.shortcode, {
                     protect: false,
-                    caption: '🎥 Ваше видео — можно сохранять и пересылать.',
                 });
             }
             catch (err) {
@@ -160,7 +162,7 @@ function registerPaymentHandlers(bot) {
                     err: String(err),
                 });
                 await bot
-                    .sendMessage(chatId, '❌ Не удалось отправить видео. Напишите /feedback — вернём звёзды.')
+                    .sendMessage(chatId, '❌ Не удалось отправить файл. Напишите /feedback — вернём звёзды.')
                     .catch(() => { });
             }
             return;

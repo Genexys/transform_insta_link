@@ -4,7 +4,33 @@ const assert = require('node:assert/strict');
 const {
   buildBillingPayload,
   parseBillingPayload,
+  downloadPricing,
+  DOWNLOAD_PRICE_STARS,
+  PHOTO_DOWNLOAD_PRICE_STARS,
 } = require('../billing.js');
+
+test('downloadPricing charges less for photos than videos', () => {
+  assert.deepEqual(downloadPricing('photo'), {
+    stars: PHOTO_DOWNLOAD_PRICE_STARS,
+    noun: 'фото',
+  });
+  assert.deepEqual(downloadPricing('video'), {
+    stars: DOWNLOAD_PRICE_STARS,
+    noun: 'видео',
+  });
+  assert.equal(PHOTO_DOWNLOAD_PRICE_STARS, 5);
+  assert.ok(PHOTO_DOWNLOAD_PRICE_STARS < DOWNLOAD_PRICE_STARS);
+});
+
+test('download billing payload round-trips the photo price', () => {
+  const payload = buildBillingPayload('download', PHOTO_DOWNLOAD_PRICE_STARS, {
+    shortcode: 'DanO1eQsGXN',
+  });
+  const parsed = parseBillingPayload(payload);
+  assert.equal(parsed.kind, 'download');
+  assert.equal(parsed.amount, PHOTO_DOWNLOAD_PRICE_STARS);
+  assert.equal(parsed.shortcode, 'DanO1eQsGXN');
+});
 
 test('buildBillingPayload builds donate and personal payloads', () => {
   assert.equal(buildBillingPayload('donate', 50), 'billing:donate:50');

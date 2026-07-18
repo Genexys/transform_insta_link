@@ -7,6 +7,7 @@ import { promisify } from 'util';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { INSTA_PREVIEW_HOST, INSTA_PREVIEW_TOKEN } from './app_env';
+import { fetchInstaPreview, pickDownloadablePhoto } from './insta_preview_client';
 import { log } from './runtime';
 
 const execFileAsync = promisify(execFile);
@@ -148,6 +149,62 @@ export async function deliverInstaVideo(
         ? { width: meta.width, height: meta.height }
         : {}),
       ...(meta.duration ? { duration: meta.duration } : {}),
+    });
+  } finally {
+    if (fs.existsSync(tempFilePath)) {
+      fs.unlink(tempFilePath, err => {
+        if (err) {
+          log.error('Failed to delete temp file', {
+            tempFilePath,
+            err: String(err),
+          });
+        }
+      });
+    }
+  }
+}
+
+// Deliver the savable copy for a shortcode, choosing photo vs video from the
+// extracted media. Single image-only posts (photo + audio, no video) can't be
+// served via /v/<sc>.mp4, so we download the image bytes and send a photo;
+// everything else goes through the existing video path. `premium` only tweaks
+// the caption wording. This is the single entry point for all paid/premium/pass
+// deliveries so both media types behave identically.
+export async function deliverInstaMedia(
+  bot: TelegramBot,
+  chatId: number,
+  shortcode: string,
+  opts: { protect: boolean; premium?: boolean; replyToMessageId?: number }
+): Promise<void> {
+  const preview = await fetchInstaPreview(shortcode);
+  const photo = preview.ok ? pickDownloadablePhoto(preview.data) : null;
+
+  if (!photo) {
+    await deliverInstaVideo(bot, chatId, shortcode, {
+      protect: opts.protect,
+      caption: opts.premium
+        ? '🎥 Ваше видео (безлимит активен) — можно сохранять.'
+        : '🎥 Ваше видео — можно сохранять и пересылать.',
+      replyToMessageId: opts.replyToMessageId,
+    });
+    return;
+  }
+
+  const tempFilePath = path.join(os.tmpdir(), `photo_${Date.now()}.jpg`);
+  try {
+    await downloadInstaImageFile(photo.url, tempFilePath);
+    if (!fs.existsSync(tempFilePath)) {
+      throw new Error('insta_image_no_file');
+    }
+    await bot.sendChatAction(chatId, 'upload_photo');
+    await bot.sendPhoto(chatId, tempFilePath, {
+      caption: opts.premium
+        ? '🖼 Ваше фото (безлимит активен) — можно сохранять.'
+        : '🖼 Ваше фото — можно сохранять и пересылать.',
+      protect_content: opts.protect,
+      ...(opts.replyToMessageId
+        ? { reply_to_message_id: opts.replyToMessageId }
+        : {}),
     });
   } finally {
     if (fs.existsSync(tempFilePath)) {
