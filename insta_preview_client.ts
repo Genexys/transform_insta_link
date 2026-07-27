@@ -22,9 +22,27 @@ export type InstaExtractData = {
   instagram_url?: string;
 };
 
+// Why an extraction failed, classified by the preview service (gate_classifier):
+// 'sensitive' (age/audience-gated), 'private', 'login_required', 'rate_limited',
+// 'unavailable' (deleted/404), or 'unknown'. The service already renders a
+// human preview card for these; the bot suppresses download buttons on any
+// failure (ok:false), so this is currently informational for logging/future use.
+export type InstaGateReason =
+  | 'sensitive'
+  | 'private'
+  | 'login_required'
+  | 'rate_limited'
+  | 'unavailable'
+  | 'unknown';
+
 export type InstaExtractResult =
   | { ok: true; data: InstaExtractData }
-  | { ok: false; error?: string; errorCode?: string };
+  | {
+      ok: false;
+      error?: string;
+      errorCode?: string;
+      gateReason?: InstaGateReason;
+    };
 
 const INSTA_SHORTCODE_REGEX =
   /(?:instagram\.com|instagr\.am)\/(?:p|reel|reels|tv)\/([A-Za-z0-9_-]+)/i;
