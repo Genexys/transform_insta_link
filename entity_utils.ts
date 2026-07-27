@@ -7,12 +7,18 @@
 // JavaScript string indices and `.length` — so plain string slicing keeps them
 // aligned (do NOT use spread/`[...str]`, which counts code points).
 
+import type { User } from 'node-telegram-bot-api';
+
+// Structurally a Bot API MessageEntity. `user` is typed from the lib (a
+// type-only import, so this module stays runtime-dependency-free) purely so
+// entities we remap here stay assignable to the send/edit params — nothing
+// below reads the field.
 export interface TextEntity {
   type: string;
   offset: number;
   length: number;
   url?: string;
-  user?: unknown;
+  user?: User;
   language?: string;
   custom_emoji_id?: string;
 }

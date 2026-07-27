@@ -1,4 +1,4 @@
-import TelegramBot from 'node-telegram-bot-api';
+import TelegramBot, { type CallbackQuery } from 'node-telegram-bot-api';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -16,7 +16,7 @@ import { log } from './runtime';
 
 export async function handleDownloadCallback(
   bot: TelegramBot,
-  query: TelegramBot.CallbackQuery,
+  query: CallbackQuery,
   ytdlp: YtDlp
 ) {
   const chatId = query.message?.chat.id;
@@ -29,8 +29,12 @@ export async function handleDownloadCallback(
     await createUser(telegramId, username);
   }
 
-  const messageText = query.message.text;
-  if (!messageText) return;
+  // `query.message` is a MaybeInaccessibleMessage: Telegram sends a stub with
+  // no content for messages the bot can no longer read (too old / deleted).
+  // Those carry no link to download from, so bail out the same way as no text.
+  const sourceMessage = 'text' in query.message ? query.message : null;
+  const messageText = sourceMessage?.text;
+  if (!sourceMessage || !messageText) return;
 
   // The fixed link is no longer guaranteed to sit at the end of the message:
   // oversized Instagram videos get a trailing "...нажмите кнопку ниже" note
@@ -58,7 +62,7 @@ export async function handleDownloadCallback(
   const loadingMsg = await bot.sendMessage(
     chatId,
     '⏳ Скачиваю, это может занять несколько секунд...',
-    { reply_to_message_id: query.message.message_id }
+    { reply_parameters: { message_id: sourceMessage.message_id } }
   );
 
   const tempFilePath = path.join(os.tmpdir(), `video_${Date.now()}.mp4`);
@@ -111,7 +115,7 @@ export async function handleDownloadCallback(
     const meta = await probeVideoMeta(tempFilePath);
     await bot.sendVideo(chatId, tempFilePath, {
       caption: '🎥 Ваше видео готово!',
-      reply_to_message_id: query.message.message_id,
+      reply_parameters: { message_id: sourceMessage.message_id },
       protect_content: true,
       ...(meta.width && meta.height
         ? { width: meta.width, height: meta.height }

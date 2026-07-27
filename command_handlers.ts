@@ -1,4 +1,7 @@
-import TelegramBot from 'node-telegram-bot-api';
+import TelegramBot, {
+  type Message,
+  type SendMessageParams,
+} from 'node-telegram-bot-api';
 import { ADMIN_CHAT_ID, DATABASE_URL } from './app_env';
 import { DONATE_AMOUNTS_STARS, PERSONAL_PRO_PRICE_STARS } from './billing';
 import {
@@ -229,7 +232,7 @@ export function registerCommandHandlers(bot: TelegramBot) {
     await bot.sendMessage(
       chatId,
       referralText + `Ты пригласил: ${count} ${pluralizeUsers(count)}`,
-      { disable_web_page_preview: true }
+      { link_preview_options: { is_disabled: true } }
     );
   });
 
@@ -247,11 +250,11 @@ export function registerCommandHandlers(bot: TelegramBot) {
       await bot.sendMessage(
         chatId,
         `❤️ /donate доступна в личном чате. Напишите ${botMention} в личку.`,
-        { reply_to_message_id: msg.message_id }
+        { reply_parameters: { message_id: msg.message_id } }
       );
       return;
     }
-    const opts: TelegramBot.SendMessageOptions = {
+    const opts: Omit<SendMessageParams, 'chat_id' | 'text'> = {
       parse_mode: 'MarkdownV2',
       reply_markup: {
         inline_keyboard: [
@@ -465,7 +468,7 @@ export function registerCommandHandlers(bot: TelegramBot) {
   const FEEDBACK_MAX_LEN = 2000;
 
   function buildFeedbackHeader(
-    msg: TelegramBot.Message,
+    msg: Message,
     text: string
   ): string {
     const from = msg.from;
@@ -488,7 +491,7 @@ export function registerCommandHandlers(bot: TelegramBot) {
   }
 
   async function handleFeedback(
-    msg: TelegramBot.Message,
+    msg: Message,
     rawText: string | undefined
   ) {
     const chatId = msg.chat.id;
@@ -496,7 +499,7 @@ export function registerCommandHandlers(bot: TelegramBot) {
       await bot.sendMessage(
         chatId,
         '⚠️ Канал обратной связи не настроен. Попробуйте позже.',
-        { reply_to_message_id: msg.message_id }
+        { reply_parameters: { message_id: msg.message_id } }
       );
       return;
     }
@@ -509,7 +512,7 @@ export function registerCommandHandlers(bot: TelegramBot) {
         chatId,
         'ℹ️ Использование: /feedback <ваше сообщение>\n' +
           'Можно прикрепить скриншот: отправьте фото и в подписи напишите /feedback <описание>.',
-        { reply_to_message_id: msg.message_id }
+        { reply_parameters: { message_id: msg.message_id } }
       );
       return;
     }
@@ -529,7 +532,7 @@ export function registerCommandHandlers(bot: TelegramBot) {
       await bot.sendMessage(
         chatId,
         '✅ Спасибо! Сообщение отправлено разработчику.',
-        { reply_to_message_id: msg.message_id }
+        { reply_parameters: { message_id: msg.message_id } }
       );
 
       log.info('Feedback forwarded', {
@@ -547,7 +550,7 @@ export function registerCommandHandlers(bot: TelegramBot) {
       await bot.sendMessage(
         chatId,
         '⚠️ Не удалось отправить отзыв. Попробуйте позже.',
-        { reply_to_message_id: msg.message_id }
+        { reply_parameters: { message_id: msg.message_id } }
       );
     }
   }

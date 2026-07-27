@@ -1,4 +1,4 @@
-import TelegramBot from 'node-telegram-bot-api';
+import TelegramBot, { type CallbackQuery } from 'node-telegram-bot-api';
 import { DATABASE_URL } from './app_env';
 import {
   buildBillingPayload,
@@ -124,7 +124,7 @@ export async function sendPassInvoice(
 
 export async function handleDonateCallback(
   bot: TelegramBot,
-  query: TelegramBot.CallbackQuery,
+  query: CallbackQuery,
   amount: number
 ) {
   const chatId = query.message?.chat.id;

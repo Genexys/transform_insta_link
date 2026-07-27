@@ -22,13 +22,12 @@
     "@sentry/node": "^10.68.0",
     "dotenv": "^17.4.2",
     "node-pg-migrate": "^8.0.4",
-    "node-telegram-bot-api": "^0.67.0",
+    "node-telegram-bot-api": "^1.2.0",
     "pg": "^8.22.0",
     "ytdlp-nodejs": "^2.3.5"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
-    "@types/node-telegram-bot-api": "^0.63.0",
     "@types/pg": "^8.20.0",
     "prettier": "^3.9.6",
     "ts-node": "^10.9.0",

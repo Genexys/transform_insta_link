@@ -97,7 +97,7 @@ async function deliverInstaVideo(bot, chatId, shortcode, opts) {
             caption: opts.caption,
             protect_content: opts.protect,
             ...(opts.replyToMessageId
-                ? { reply_to_message_id: opts.replyToMessageId }
+                ? { reply_parameters: { message_id: opts.replyToMessageId } }
                 : {}),
             ...(meta.width && meta.height
                 ? { width: meta.width, height: meta.height }
@@ -144,7 +144,7 @@ async function deliverInstaMedia(bot, chatId, shortcode, opts) {
                 : '🖼 Ваше фото — можно сохранять и пересылать.',
             protect_content: opts.protect,
             ...(opts.replyToMessageId
-                ? { reply_to_message_id: opts.replyToMessageId }
+                ? { reply_parameters: { message_id: opts.replyToMessageId } }
                 : {}),
         });
     }

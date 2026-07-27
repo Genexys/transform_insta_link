@@ -182,7 +182,7 @@ function registerCommandHandlers(bot) {
         const referralText = referralUrl
             ? `🔗 Твоя реферальная ссылка:\n${referralUrl}\n\n`
             : '🔗 Не удалось определить ссылку бота. Попробуйте позже.\n\n';
-        await bot.sendMessage(chatId, referralText + `Ты пригласил: ${count} ${pluralizeUsers(count)}`, { disable_web_page_preview: true });
+        await bot.sendMessage(chatId, referralText + `Ты пригласил: ${count} ${pluralizeUsers(count)}`, { link_preview_options: { is_disabled: true } });
     });
     bot.onText(/^\/help(?:@\w+)?(?:\s|$)/, async (msg) => {
         const chatId = msg.chat.id;
@@ -194,7 +194,7 @@ function registerCommandHandlers(bot) {
         const isPrivate = msg.chat.type === 'private';
         if (!isPrivate) {
             const botMention = await getBotMention();
-            await bot.sendMessage(chatId, `❤️ /donate доступна в личном чате. Напишите ${botMention} в личку.`, { reply_to_message_id: msg.message_id });
+            await bot.sendMessage(chatId, `❤️ /donate доступна в личном чате. Напишите ${botMention} в личку.`, { reply_parameters: { message_id: msg.message_id } });
             return;
         }
         const opts = {
@@ -380,14 +380,14 @@ function registerCommandHandlers(bot) {
     async function handleFeedback(msg, rawText) {
         const chatId = msg.chat.id;
         if (!app_env_1.ADMIN_CHAT_ID) {
-            await bot.sendMessage(chatId, '⚠️ Канал обратной связи не настроен. Попробуйте позже.', { reply_to_message_id: msg.message_id });
+            await bot.sendMessage(chatId, '⚠️ Канал обратной связи не настроен. Попробуйте позже.', { reply_parameters: { message_id: msg.message_id } });
             return;
         }
         const trimmed = (rawText || '').trim().slice(0, FEEDBACK_MAX_LEN);
         const hasPhoto = Array.isArray(msg.photo) && msg.photo.length > 0;
         if (!trimmed && !hasPhoto) {
             await bot.sendMessage(chatId, 'ℹ️ Использование: /feedback <ваше сообщение>\n' +
-                'Можно прикрепить скриншот: отправьте фото и в подписи напишите /feedback <описание>.', { reply_to_message_id: msg.message_id });
+                'Можно прикрепить скриншот: отправьте фото и в подписи напишите /feedback <описание>.', { reply_parameters: { message_id: msg.message_id } });
             return;
         }
         const header = buildFeedbackHeader(msg, trimmed);
@@ -401,7 +401,7 @@ function registerCommandHandlers(bot) {
             else {
                 await bot.sendMessage(app_env_1.ADMIN_CHAT_ID, header);
             }
-            await bot.sendMessage(chatId, '✅ Спасибо! Сообщение отправлено разработчику.', { reply_to_message_id: msg.message_id });
+            await bot.sendMessage(chatId, '✅ Спасибо! Сообщение отправлено разработчику.', { reply_parameters: { message_id: msg.message_id } });
             runtime_1.log.info('Feedback forwarded', {
                 userId: msg.from?.id,
                 chatId,
@@ -415,7 +415,7 @@ function registerCommandHandlers(bot) {
                 chatId,
                 err: String(err),
             });
-            await bot.sendMessage(chatId, '⚠️ Не удалось отправить отзыв. Попробуйте позже.', { reply_to_message_id: msg.message_id });
+            await bot.sendMessage(chatId, '⚠️ Не удалось отправить отзыв. Попробуйте позже.', { reply_parameters: { message_id: msg.message_id } });
         }
     }
     bot.onText(FEEDBACK_REGEX, async (msg, match) => {

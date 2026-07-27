@@ -22,8 +22,9 @@ async function handleDownloadCallback(bot, query, ytdlp) {
     if (app_env_1.DATABASE_URL) {
         await (0, db_1.createUser)(telegramId, username);
     }
-    const messageText = query.message.text;
-    if (!messageText)
+    const sourceMessage = 'text' in query.message ? query.message : null;
+    const messageText = sourceMessage?.text;
+    if (!sourceMessage || !messageText)
         return;
     const urlMatches = messageText.match(/https?:\/\/\S+/g) || [];
     const fixedUrl = urlMatches.find(u => u.includes(link_utils_1.INSTA_FIX_DOMAIN)) ||
@@ -39,7 +40,7 @@ async function handleDownloadCallback(bot, query, ytdlp) {
     const originalUrl = (0, link_utils_1.revertUrlForDownload)(fixedUrl);
     const isInstagram = fixedUrl.includes(link_utils_1.INSTA_FIX_DOMAIN);
     await bot.answerCallbackQuery(query.id, { text: '⏳ Начинаю загрузку...' });
-    const loadingMsg = await bot.sendMessage(chatId, '⏳ Скачиваю, это может занять несколько секунд...', { reply_to_message_id: query.message.message_id });
+    const loadingMsg = await bot.sendMessage(chatId, '⏳ Скачиваю, это может занять несколько секунд...', { reply_parameters: { message_id: sourceMessage.message_id } });
     const tempFilePath = path_1.default.join(os_1.default.tmpdir(), `video_${Date.now()}.mp4`);
     try {
         runtime_1.log.info('Starting media download', {
@@ -76,7 +77,7 @@ async function handleDownloadCallback(bot, query, ytdlp) {
         const meta = await (0, video_delivery_1.probeVideoMeta)(tempFilePath);
         await bot.sendVideo(chatId, tempFilePath, {
             caption: '🎥 Ваше видео готово!',
-            reply_to_message_id: query.message.message_id,
+            reply_parameters: { message_id: sourceMessage.message_id },
             protect_content: true,
             ...(meta.width && meta.height
                 ? { width: meta.width, height: meta.height }

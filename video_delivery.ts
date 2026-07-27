@@ -143,7 +143,7 @@ export async function deliverInstaVideo(
       caption: opts.caption,
       protect_content: opts.protect,
       ...(opts.replyToMessageId
-        ? { reply_to_message_id: opts.replyToMessageId }
+        ? { reply_parameters: { message_id: opts.replyToMessageId } }
         : {}),
       ...(meta.width && meta.height
         ? { width: meta.width, height: meta.height }
@@ -203,7 +203,7 @@ export async function deliverInstaMedia(
         : '🖼 Ваше фото — можно сохранять и пересылать.',
       protect_content: opts.protect,
       ...(opts.replyToMessageId
-        ? { reply_to_message_id: opts.replyToMessageId }
+        ? { reply_parameters: { message_id: opts.replyToMessageId } }
         : {}),
     });
   } finally {

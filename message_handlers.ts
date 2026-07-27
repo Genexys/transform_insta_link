@@ -1,4 +1,15 @@
-import TelegramBot from 'node-telegram-bot-api';
+import TelegramBot, {
+  type EditMessageTextParams,
+  type InlineKeyboardButton,
+  type InlineKeyboardMarkup,
+  type InlineQueryResult,
+  type InlineQueryResultVideo,
+  type InputMedia,
+  type InputTextMessageContent,
+  type Message,
+  type SendMediaGroupParams,
+  type SendMessageParams,
+} from 'node-telegram-bot-api';
 import { INSTA_PREVIEW_HOST } from './app_env';
 import { getChatSettings, logLinkEvent } from './db';
 import {
@@ -45,15 +56,14 @@ type Resolvers = {
   ) => Promise<string>;
 };
 
-// @types/node-telegram-bot-api omits `entities` on the send/edit option types,
-// but the Bot API (and the lib) accept it. TextEntity values are structurally
-// MessageEntity-compatible, so attach them through these widened aliases.
-type SendMessageOptionsWithEntities = TelegramBot.SendMessageOptions & {
-  entities?: TextEntity[];
-};
-type EditMessageTextOptionsWithEntities = TelegramBot.EditMessageTextOptions & {
-  entities?: TextEntity[];
-};
+// The lib's own types carry `entities`, so these are just the send/edit param
+// shapes minus the positional arguments. TextEntity is structurally a
+// MessageEntity, so remapped entities drop straight in.
+type SendMessageOptionsWithEntities = Omit<
+  SendMessageParams,
+  'chat_id' | 'text'
+>;
+type EditMessageTextOptionsWithEntities = Omit<EditMessageTextParams, 'text'>;
 
 export function registerMessageHandlers(
   bot: TelegramBot,
@@ -136,7 +146,7 @@ export function registerMessageHandlers(
         }).catch(() => {});
       });
 
-      const results: TelegramBot.InlineQueryResult[] = [
+      const results: InlineQueryResult[] = [
         {
           type: 'article' as const,
           id: 'fixed_message',
@@ -152,7 +162,7 @@ export function registerMessageHandlers(
               url: fixedLinks[0],
               prefer_large_media: true,
             },
-          } as TelegramBot.InputTextMessageContent,
+          } as InputTextMessageContent,
         },
       ];
 
@@ -166,8 +176,8 @@ export function registerMessageHandlers(
             description: 'Отправить видео файлом',
             video_url: `https://${INSTA_PREVIEW_HOST}/v/${encodeURIComponent(instaShortcode)}.mp4`,
             mime_type: 'video/mp4',
-            thumb_url: `https://${INSTA_PREVIEW_HOST}/thumb/${encodeURIComponent(instaShortcode)}.jpg`,
-          } as TelegramBot.InlineQueryResultVideo);
+            thumbnail_url: `https://${INSTA_PREVIEW_HOST}/thumb/${encodeURIComponent(instaShortcode)}.jpg`,
+          } as InlineQueryResultVideo);
         }
       }
 
@@ -355,13 +365,15 @@ export function registerMessageHandlers(
           const replyToMessageId =
             msg.reply_to_message?.message_id ?? msg.message_id;
           const threadId = (
-            msg as TelegramBot.Message & { message_thread_id?: number }
+            msg as Message & { message_thread_id?: number }
           ).message_thread_id;
           const sendOptions: SendMessageOptionsWithEntities = {
-            disable_web_page_preview: false,
-            reply_to_message_id: replyToMessageId,
-            // A's message could itself be gone; don't fail the rewrite over it.
-            allow_sending_without_reply: true,
+            link_preview_options: { is_disabled: false },
+            reply_parameters: {
+              message_id: replyToMessageId,
+              // A's message could itself be gone; don't fail the rewrite over it.
+              allow_sending_without_reply: true,
+            },
             reply_markup: replyMarkup,
           };
           if (threadId) sendOptions.message_thread_id = threadId;
@@ -392,7 +404,7 @@ export function registerMessageHandlers(
         }
       } else {
         const dmOptions: SendMessageOptionsWithEntities = {
-          disable_web_page_preview: false,
+          link_preview_options: { is_disabled: false },
           reply_markup: replyMarkup,
         };
         if (finalEntities.length) dmOptions.entities = finalEntities;
@@ -446,7 +458,7 @@ async function buildInstaSaveRow(
   bot: TelegramBot,
   shortcode: string,
   opts?: { priceStars?: number; noun?: string }
-): Promise<TelegramBot.InlineKeyboardButton[] | null> {
+): Promise<InlineKeyboardButton[] | null> {
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(shortcode)) return null;
   const username = await getBotUsername(bot);
   if (!username) return null;
@@ -527,7 +539,7 @@ function scheduleInstaPreviewRefresh(
 
     if (!anyOversized) return;
 
-    const downloadKeyboard: TelegramBot.InlineKeyboardButton[][] = [];
+    const downloadKeyboard: InlineKeyboardButton[][] = [];
     if (canOfferDownload) {
       downloadKeyboard.push([
         { text: '📥 Скачать видео в чат', callback_data: 'download_video' },
@@ -535,7 +547,7 @@ function scheduleInstaPreviewRefresh(
     }
     const refreshSaveRow = await buildInstaSaveRow(bot, instaShortcodes[0]);
     if (refreshSaveRow) downloadKeyboard.push(refreshSaveRow);
-    const downloadMarkup: TelegramBot.InlineKeyboardMarkup | undefined =
+    const downloadMarkup: InlineKeyboardMarkup | undefined =
       downloadKeyboard.length ? { inline_keyboard: downloadKeyboard } : undefined;
 
     // Nothing to offer (downloads off and no save button) — leave the message be.
@@ -549,7 +561,7 @@ function scheduleInstaPreviewRefresh(
       const editOptions: EditMessageTextOptionsWithEntities = {
         chat_id: chatId,
         message_id: messageId,
-        disable_web_page_preview: false,
+        link_preview_options: { is_disabled: false },
         reply_markup: downloadMarkup,
       };
       if (entities.length) editOptions.entities = entities;
@@ -588,7 +600,7 @@ function scheduleInstaPreviewRefresh(
         const editOptions: EditMessageTextOptionsWithEntities = {
           chat_id: chatId,
           message_id: messageId,
-          disable_web_page_preview: false,
+          link_preview_options: { is_disabled: false },
           reply_markup: downloadMarkup,
         };
         if (refreshedEntities.length) editOptions.entities = refreshedEntities;
@@ -611,7 +623,7 @@ async function maybeSendInstaCarouselAlbum(
   bot: TelegramBot,
   chatId: number,
   socialLinks: string[],
-  sourceMsg: TelegramBot.Message
+  sourceMsg: Message
 ) {
   const igLinks = socialLinks.filter(
     link => link.includes('instagram.com') || link.includes('instagr.am')
@@ -668,10 +680,10 @@ async function maybeSendInstaCarouselAlbum(
     };
   });
 
-  const threadId = (sourceMsg as TelegramBot.Message & {
+  const threadId = (sourceMsg as Message & {
     message_thread_id?: number;
   }).message_thread_id;
-  const albumOptions: TelegramBot.SendMediaGroupOptions & {
+  const albumOptions: Omit<SendMediaGroupParams, 'chat_id' | 'media'> & {
     message_thread_id?: number;
   } = {
     disable_notification: true,
@@ -681,7 +693,7 @@ async function maybeSendInstaCarouselAlbum(
   try {
     await bot.sendMediaGroup(
       chatId,
-      album as TelegramBot.InputMedia[],
+      album as InputMedia[],
       albumOptions
     );
     log.info('Insta carousel album sent', {

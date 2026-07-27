@@ -109,7 +109,7 @@ function registerMessageHandlers(bot, resolvers, options) {
                         description: 'Отправить видео файлом',
                         video_url: `https://${app_env_1.INSTA_PREVIEW_HOST}/v/${encodeURIComponent(instaShortcode)}.mp4`,
                         mime_type: 'video/mp4',
-                        thumb_url: `https://${app_env_1.INSTA_PREVIEW_HOST}/thumb/${encodeURIComponent(instaShortcode)}.jpg`,
+                        thumbnail_url: `https://${app_env_1.INSTA_PREVIEW_HOST}/thumb/${encodeURIComponent(instaShortcode)}.jpg`,
                     });
                 }
             }
@@ -248,9 +248,11 @@ function registerMessageHandlers(bot, resolvers, options) {
                     const replyToMessageId = msg.reply_to_message?.message_id ?? msg.message_id;
                     const threadId = msg.message_thread_id;
                     const sendOptions = {
-                        disable_web_page_preview: false,
-                        reply_to_message_id: replyToMessageId,
-                        allow_sending_without_reply: true,
+                        link_preview_options: { is_disabled: false },
+                        reply_parameters: {
+                            message_id: replyToMessageId,
+                            allow_sending_without_reply: true,
+                        },
                         reply_markup: replyMarkup,
                     };
                     if (threadId)
@@ -277,7 +279,7 @@ function registerMessageHandlers(bot, resolvers, options) {
             }
             else {
                 const dmOptions = {
-                    disable_web_page_preview: false,
+                    link_preview_options: { is_disabled: false },
                     reply_markup: replyMarkup,
                 };
                 if (finalEntities.length)
@@ -387,7 +389,7 @@ function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, entities, fix
             const editOptions = {
                 chat_id: chatId,
                 message_id: messageId,
-                disable_web_page_preview: false,
+                link_preview_options: { is_disabled: false },
                 reply_markup: downloadMarkup,
             };
             if (entities.length)
@@ -422,7 +424,7 @@ function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, entities, fix
                 const editOptions = {
                     chat_id: chatId,
                     message_id: messageId,
-                    disable_web_page_preview: false,
+                    link_preview_options: { is_disabled: false },
                     reply_markup: downloadMarkup,
                 };
                 if (refreshedEntities.length)
