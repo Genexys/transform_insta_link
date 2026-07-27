@@ -1,6 +1,12 @@
 import { requireEnv } from './runtime';
 
-export const BOT_TOKEN = requireEnv('TELEGRAM_BOT_TOKEN');
+// Resolved lazily: importing app_env must not kill the process. Only the bot
+// entrypoint needs the token, and it calls this at boot, so startup still
+// fails fast when the token is missing.
+export function getBotToken(): string {
+  return requireEnv('TELEGRAM_BOT_TOKEN');
+}
+
 export const DATABASE_URL = process.env.DATABASE_URL;
 export const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID;
 export const PORT = process.env.PORT || 3000;

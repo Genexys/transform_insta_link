@@ -15,7 +15,7 @@ const db_1 = require("./db");
 const health_1 = require("./health");
 const link_utils_1 = require("./link_utils");
 const runtime_1 = require("./runtime");
-const bot = new node_telegram_bot_api_1.default(app_env_1.BOT_TOKEN, { polling: true });
+const bot = new node_telegram_bot_api_1.default((0, app_env_1.getBotToken)(), { polling: true });
 const mediaRuntime = (0, media_runtime_1.initMediaRuntime)();
 bot
     .getMe()

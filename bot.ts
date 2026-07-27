@@ -5,7 +5,7 @@ import { registerMessageHandlers } from './message_handlers';
 import { createPlatformResolvers } from './platform_resolvers';
 import { startHttpServer } from './http_server';
 import { initMediaRuntime } from './media_runtime';
-import { ADMIN_CHAT_ID, BOT_TOKEN } from './app_env';
+import { ADMIN_CHAT_ID, getBotToken } from './app_env';
 import { initDB } from './db';
 import { getDependencyHealth, getInstaAuthHealth } from './health';
 import {
@@ -16,7 +16,7 @@ import {
 } from './link_utils';
 import { log } from './runtime';
 
-const bot = new TelegramBot(BOT_TOKEN, { polling: true });
+const bot = new TelegramBot(getBotToken(), { polling: true });
 const mediaRuntime = initMediaRuntime();
 
 bot
