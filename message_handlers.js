@@ -339,7 +339,8 @@ function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, entities, fix
             const result = await (0, insta_preview_client_1.fetchInstaPreview)(sc).catch(() => null);
             if (!result?.ok)
                 continue;
-            if (fixedLinks.length === 1 && (0, insta_preview_client_1.pickDownloadablePhoto)(result.data)) {
+            if (fixedLinks.length === 1 &&
+                (0, insta_preview_client_1.isSavablePhoto)((0, insta_preview_client_1.pickDownloadablePhoto)(result.data))) {
                 singlePhoto = true;
             }
             const size = result.data.media?.[0]?.sizeBytes;

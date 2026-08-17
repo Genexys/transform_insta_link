@@ -26,6 +26,7 @@ import {
   extractShortcodeFromUrl,
   fetchInstaPreview,
   InstaMediaEntry,
+  isSavablePhoto,
   pickDownloadablePhoto,
 } from './insta_preview_client';
 import {
@@ -495,9 +496,15 @@ function scheduleInstaPreviewRefresh(
     for (const sc of instaShortcodes) {
       const result = await fetchInstaPreview(sc).catch(() => null);
       if (!result?.ok) continue;
-      // Single image-only post (photo + audio, no video): the inline preview
-      // already shows the photo, so we only offer a free download button.
-      if (fixedLinks.length === 1 && pickDownloadablePhoto(result.data)) {
+      // Single image-only post (photo + audio, no video): offer the paid
+      // savable-photo button only when we can produce the FULL image. A
+      // preview_only entry is Instagram's cropped og:image (the session-less
+      // fallback) — selling that would deliver a cropped file, so skip the
+      // button and leave just the inline preview card.
+      if (
+        fixedLinks.length === 1 &&
+        isSavablePhoto(pickDownloadablePhoto(result.data))
+      ) {
         singlePhoto = true;
       }
       const size = result.data.media?.[0]?.sizeBytes;

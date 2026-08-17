@@ -9,6 +9,12 @@ export type InstaMediaEntry = {
   height?: number | null;
   duration?: number;
   sizeBytes?: number;
+  // True when `url` is Instagram's cropped og:image (the service's session-less
+  // fallback for image posts). Fine to render in the inline preview card, but
+  // it's a center-cropped, preview-grade image — NOT a faithful copy — so it
+  // must never be delivered as the paid savable photo. Callers that download or
+  // sell the image must check this flag.
+  preview_only?: boolean;
 };
 
 export type InstaExtractData = {
@@ -52,10 +58,14 @@ export function extractShortcodeFromUrl(url: string): string | null {
   return match ? match[1] : null;
 }
 
-// Returns the single downloadable photo for an image-only Instagram post (exactly
-// one media entry, of type image, with a non-empty url). Returns null for videos,
+// Returns the single image entry for an image-only Instagram post (exactly one
+// media entry, of type image, with a non-empty url). Returns null for videos,
 // carousels, or anything ambiguous — the photo download flow is single-image only
-// for now, so callers can treat null as "not a downloadable photo".
+// for now, so callers can treat null as "not a single image".
+//
+// NOTE: the returned entry may be `preview_only` (Instagram's cropped og:image).
+// It's safe to show in the inline card but must not be sold/delivered as a
+// savable copy — use `isSavablePhoto()` for that decision.
 export function pickDownloadablePhoto(
   data: InstaExtractData
 ): InstaMediaEntry | null {
@@ -64,6 +74,12 @@ export function pickDownloadablePhoto(
   const only = media[0];
   if (!only || only.type !== 'image' || !only.url) return null;
   return only;
+}
+
+// A single image is "savable" (deliverable as the paid full-quality copy) only
+// when it's a faithful image, not the cropped og:image preview fallback.
+export function isSavablePhoto(entry: InstaMediaEntry | null): boolean {
+  return Boolean(entry && entry.type === 'image' && entry.url && !entry.preview_only);
 }
 
 export async function fetchInstaPreview(

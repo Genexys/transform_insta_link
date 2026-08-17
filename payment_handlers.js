@@ -35,7 +35,14 @@ async function sendStarsInvoice(params) {
 }
 async function sendDownloadInvoice(bot, chatId, shortcode) {
     const preview = await (0, insta_preview_client_1.fetchInstaPreview)(shortcode);
-    const isPhoto = preview.ok ? Boolean((0, insta_preview_client_1.pickDownloadablePhoto)(preview.data)) : false;
+    const photo = preview.ok ? (0, insta_preview_client_1.pickDownloadablePhoto)(preview.data) : null;
+    if (photo && !(0, insta_preview_client_1.isSavablePhoto)(photo)) {
+        await bot
+            .sendMessage(chatId, 'ℹ️ Этот пост сейчас доступен только как превью — сохранить фото в полном качестве не получится. Попробуйте позже.')
+            .catch(() => { });
+        return;
+    }
+    const isPhoto = Boolean(photo);
     const { stars, noun } = (0, billing_1.downloadPricing)(isPhoto ? 'photo' : 'video');
     await sendStarsInvoice({
         bot,
