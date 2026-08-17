@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.extractShortcodeFromUrl = extractShortcodeFromUrl;
 exports.pickDownloadablePhoto = pickDownloadablePhoto;
+exports.isSavablePhoto = isSavablePhoto;
 exports.fetchInstaPreview = fetchInstaPreview;
 const app_env_1 = require("./app_env");
 const runtime_1 = require("./runtime");
@@ -18,6 +19,9 @@ function pickDownloadablePhoto(data) {
     if (!only || only.type !== 'image' || !only.url)
         return null;
     return only;
+}
+function isSavablePhoto(entry) {
+    return Boolean(entry && entry.type === 'image' && entry.url && !entry.preview_only);
 }
 async function fetchInstaPreview(shortcode, timeoutMs = 35000) {
     const headers = {

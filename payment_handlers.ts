@@ -14,6 +14,7 @@ import {
 } from './db';
 import {
   fetchInstaPreview,
+  isSavablePhoto,
   pickDownloadablePhoto,
 } from './insta_preview_client';
 import { deliverInstaMedia } from './video_delivery';
@@ -83,7 +84,23 @@ export async function sendDownloadInvoice(
   shortcode: string
 ) {
   const preview = await fetchInstaPreview(shortcode);
-  const isPhoto = preview.ok ? Boolean(pickDownloadablePhoto(preview.data)) : false;
+  const photo = preview.ok ? pickDownloadablePhoto(preview.data) : null;
+
+  // An image post whose only available image is Instagram's cropped og:image
+  // (preview_only) can't be delivered as a full savable copy. Refuse to invoice
+  // rather than charge Stars for a cropped file the user can already see in the
+  // preview card. Video posts and full-quality photos fall through as before.
+  if (photo && !isSavablePhoto(photo)) {
+    await bot
+      .sendMessage(
+        chatId,
+        'ℹ️ Этот пост сейчас доступен только как превью — сохранить фото в полном качестве не получится. Попробуйте позже.'
+      )
+      .catch(() => {});
+    return;
+  }
+
+  const isPhoto = Boolean(photo);
   const { stars, noun } = downloadPricing(isPhoto ? 'photo' : 'video');
 
   await sendStarsInvoice({

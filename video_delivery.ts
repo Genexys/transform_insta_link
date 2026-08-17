@@ -7,7 +7,11 @@ import { promisify } from 'util';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { INSTA_PREVIEW_HOST, INSTA_PREVIEW_TOKEN } from './app_env';
-import { fetchInstaPreview, pickDownloadablePhoto } from './insta_preview_client';
+import {
+  fetchInstaPreview,
+  isSavablePhoto,
+  pickDownloadablePhoto,
+} from './insta_preview_client';
 import { log } from './runtime';
 
 const execFileAsync = promisify(execFile);
@@ -178,6 +182,14 @@ export async function deliverInstaMedia(
 ): Promise<void> {
   const preview = await fetchInstaPreview(shortcode);
   const photo = preview.ok ? pickDownloadablePhoto(preview.data) : null;
+
+  // Backstop: never hand back a preview_only (cropped og:image) as a savable
+  // photo. sendDownloadInvoice already refuses to charge for these, but a stale
+  // button or a manual dl_ deep link could still reach here — fail loudly so
+  // the caller shows the refund/error path instead of delivering a cropped file.
+  if (photo && !isSavablePhoto(photo)) {
+    throw new Error('photo_preview_only');
+  }
 
   if (!photo) {
     await deliverInstaVideo(bot, chatId, shortcode, {

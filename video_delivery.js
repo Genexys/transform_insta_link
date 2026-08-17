@@ -121,6 +121,9 @@ async function deliverInstaVideo(bot, chatId, shortcode, opts) {
 async function deliverInstaMedia(bot, chatId, shortcode, opts) {
     const preview = await (0, insta_preview_client_1.fetchInstaPreview)(shortcode);
     const photo = preview.ok ? (0, insta_preview_client_1.pickDownloadablePhoto)(preview.data) : null;
+    if (photo && !(0, insta_preview_client_1.isSavablePhoto)(photo)) {
+        throw new Error('photo_preview_only');
+    }
     if (!photo) {
         await deliverInstaVideo(bot, chatId, shortcode, {
             protect: opts.protect,
