@@ -223,11 +223,16 @@ function registerMessageHandlers(bot, resolvers, options) {
             const prefix = quietMode
                 ? ''
                 : `Saved ${username} a click ${platformStr}:\n\n`;
+            const ping = (0, entity_utils_1.buildMentionPing)(messageText, msg.entities);
+            const fullPrefix = (ping?.text ?? '') + prefix;
             const replacements = socialLinks.map((original, index) => ({
                 original,
                 replacement: fixedLinks[index],
             }));
-            const { text: finalMessage, entities: finalEntities } = (0, entity_utils_1.applyLinkReplacements)(messageText, msg.entities, replacements, prefix);
+            const { text: finalMessage, entities: bodyEntities } = (0, entity_utils_1.applyLinkReplacements)(messageText, msg.entities, replacements, fullPrefix);
+            const finalEntities = ping
+                ? [...ping.entities, ...bodyEntities]
+                : bodyEntities;
             const isDownloadable = (url) => link_utils_1.TIKTOK_FIXERS.some(f => url.includes(f));
             const replyMarkup = options.downloadsEnabled &&
                 fixedLinks.length === 1 &&
