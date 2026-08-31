@@ -84,6 +84,58 @@ export function applyEdits(
   return { text: prefix + out, entities: remapped };
 }
 
+// Surface the people mentioned in the original message as a short, prominent
+// header line ("🔔 Отметили: @bob, Jane"), so a ping buried mid-message
+// ("эй @bob глянь <link>") stays obvious after the bot deletes the original and
+// reposts its rewrite. Returns the header text plus the entities needed to keep
+// `text_mention` pings alive — those target users have no @username, so the ping
+// only works through the entity, and its offset must point into the header.
+// Plain `@username` mentions ride as text (Telegram auto-links and pings them),
+// so they need no entity. Dedupes (by user id for text_mentions, by the visible
+// @handle otherwise) and caps the list so a message spamming mentions can't
+// blow up the header. Returns null when there is nothing to surface.
+export function buildMentionPing(
+  text: string,
+  entities: TextEntity[] | undefined,
+  opts: { max?: number } = {}
+): RemapResult | null {
+  if (!entities?.length) return null;
+  const max = opts.max ?? 5;
+  const mentions = entities.filter(
+    e => e.type === 'mention' || e.type === 'text_mention'
+  );
+  if (mentions.length === 0) return null;
+
+  let out = '🔔 Отметили: ';
+  const outEntities: TextEntity[] = [];
+  const seen = new Set<string>();
+  let count = 0;
+  for (const m of mentions) {
+    if (count >= max) break;
+    const display = text.slice(m.offset, m.offset + m.length);
+    if (!display) continue;
+    const key =
+      m.type === 'text_mention' && m.user ? `id:${m.user.id}` : `t:${display}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (count > 0) out += ', ';
+    const start = out.length;
+    out += display;
+    if (m.type === 'text_mention' && m.user) {
+      outEntities.push({
+        type: 'text_mention',
+        offset: start,
+        length: display.length,
+        user: m.user,
+      });
+    }
+    count += 1;
+  }
+  if (count === 0) return null;
+  out += '\n\n';
+  return { text: out, entities: outEntities };
+}
+
 // Convenience wrapper: locate each `original` link in `text` (left to right) and
 // replace it with its fixer URL, preserving entities. Links not found verbatim
 // are skipped — mirroring the original `String.replace` behaviour.

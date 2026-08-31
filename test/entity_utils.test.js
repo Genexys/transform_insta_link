@@ -1,7 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { applyEdits, applyLinkReplacements } = require('../entity_utils.js');
+const {
+  applyEdits,
+  applyLinkReplacements,
+  buildMentionPing,
+} = require('../entity_utils.js');
 
 test('applyLinkReplacements shifts a mention after the link by link delta + prefix', () => {
   // "see " (4) + link(27) + " from " (6) + "Bob"(37..40)
@@ -69,6 +73,80 @@ test('applyLinkReplacements with no entities still rewrites the link', () => {
   );
   assert.equal(out, 'see http://y/1');
   assert.deepEqual(entities, []);
+});
+
+test('buildMentionPing returns null when there are no mentions', () => {
+  assert.equal(buildMentionPing('hello world', undefined), null);
+  assert.equal(buildMentionPing('hello world', []), null);
+  assert.equal(
+    buildMentionPing('hi', [{ type: 'bold', offset: 0, length: 2 }]),
+    null
+  );
+});
+
+test('buildMentionPing surfaces a @username mention as plain text (no entity)', () => {
+  const text = 'эй @bob глянь';
+  const res = buildMentionPing(text, [
+    { type: 'mention', offset: 3, length: 4 }, // "@bob"
+  ]);
+  assert.equal(res.text, '🔔 Отметили: @bob\n\n');
+  assert.deepEqual(res.entities, []);
+});
+
+test('buildMentionPing keeps a text_mention entity pointing at the same user', () => {
+  const text = 'see Bob here';
+  const res = buildMentionPing(text, [
+    { type: 'text_mention', offset: 4, length: 3, user: { id: 42 } },
+  ]);
+  assert.equal(
+    res.text.slice(res.entities[0].offset, res.entities[0].offset + 3),
+    'Bob'
+  );
+  assert.equal(res.entities[0].type, 'text_mention');
+  assert.deepEqual(res.entities[0].user, { id: 42 });
+});
+
+test('buildMentionPing dedupes and caps the list', () => {
+  const text = '@a @a @b @c @d @e @f';
+  const entities = [];
+  // offsets: @a=0, @a=3, @b=6, @c=9, @d=12, @e=15, @f=18
+  for (const off of [0, 3, 6, 9, 12, 15, 18]) {
+    entities.push({ type: 'mention', offset: off, length: 2 });
+  }
+  const res = buildMentionPing(text, entities);
+  // @a deduped, then capped at 5 unique: @a, @b, @c, @d, @e
+  assert.equal(res.text, '🔔 Отметили: @a, @b, @c, @d, @e\n\n');
+});
+
+test('buildMentionPing entity offsets survive being prepended as a prefix', () => {
+  // Simulate the real integration: ping header becomes part of the prefix.
+  const text = 'ping Bob about https://instagram.com/p/AAA';
+  const mentionEntity = {
+    type: 'text_mention',
+    offset: 5,
+    length: 3,
+    user: { id: 7 },
+  };
+  const ping = buildMentionPing(text, [mentionEntity]);
+  const { text: out, entities: bodyEntities } = applyLinkReplacements(
+    text,
+    [mentionEntity],
+    [
+      {
+        original: 'https://instagram.com/p/AAA',
+        replacement: 'https://previewlinkbot.xyz/p/AAA',
+      },
+    ],
+    ping.text
+  );
+  const finalEntities = [...ping.entities, ...bodyEntities];
+  // Header Bob (from ping) + body Bob (carried) both resolve to "Bob".
+  assert.equal(finalEntities.length, 2);
+  for (const e of finalEntities) {
+    assert.equal(out.slice(e.offset, e.offset + e.length), 'Bob');
+    assert.deepEqual(e.user, { id: 7 });
+  }
+  assert.ok(out.startsWith('🔔 Отметили: Bob\n\n'));
 });
 
 test('applyEdits remaps entities after an insertion-style edit', () => {

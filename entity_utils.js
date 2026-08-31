@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.applyEdits = applyEdits;
+exports.buildMentionPing = buildMentionPing;
 exports.applyLinkReplacements = applyLinkReplacements;
 function applyEdits(text, entities, edits, prefix = '') {
     const sorted = [...edits].sort((a, b) => a.start - b.start);
@@ -34,6 +35,46 @@ function applyEdits(text, entities, edits, prefix = '') {
         remapped.push({ ...ent, offset: ent.offset + delta + prefixLen });
     }
     return { text: prefix + out, entities: remapped };
+}
+function buildMentionPing(text, entities, opts = {}) {
+    if (!entities?.length)
+        return null;
+    const max = opts.max ?? 5;
+    const mentions = entities.filter(e => e.type === 'mention' || e.type === 'text_mention');
+    if (mentions.length === 0)
+        return null;
+    let out = '🔔 Отметили: ';
+    const outEntities = [];
+    const seen = new Set();
+    let count = 0;
+    for (const m of mentions) {
+        if (count >= max)
+            break;
+        const display = text.slice(m.offset, m.offset + m.length);
+        if (!display)
+            continue;
+        const key = m.type === 'text_mention' && m.user ? `id:${m.user.id}` : `t:${display}`;
+        if (seen.has(key))
+            continue;
+        seen.add(key);
+        if (count > 0)
+            out += ', ';
+        const start = out.length;
+        out += display;
+        if (m.type === 'text_mention' && m.user) {
+            outEntities.push({
+                type: 'text_mention',
+                offset: start,
+                length: display.length,
+                user: m.user,
+            });
+        }
+        count += 1;
+    }
+    if (count === 0)
+        return null;
+    out += '\n\n';
+    return { text: out, entities: outEntities };
 }
 function applyLinkReplacements(text, entities, replacements, prefix = '') {
     const edits = [];

@@ -32,6 +32,7 @@ import {
 import {
   applyEdits,
   applyLinkReplacements,
+  buildMentionPing,
   SpanEdit,
   TextEntity,
 } from './entity_utils';
@@ -318,6 +319,17 @@ export function registerMessageHandlers(
       const prefix = quietMode
         ? ''
         : `Saved ${username} a click ${platformStr}:\n\n`;
+      // A ping tucked inside the sender's text ("эй @bob глянь <link>") is easy
+      // to miss once the bot rewrites and reposts the message, so surface the
+      // mentioned people on their own header line at the very top. Kept even in
+      // quiet mode: dropping a human ping matters more than terseness. The header
+      // still repeats the mentions that stay in the body below (Telegram dedupes
+      // the actual notification per user), it just makes the tag unmissable.
+      const ping = buildMentionPing(
+        messageText,
+        msg.entities as TextEntity[] | undefined
+      );
+      const fullPrefix = (ping?.text ?? '') + prefix;
       // Rewrite links AND carry over the sender's message entities (notably
       // `text_mention` pings of users without a @username, which live in the
       // entity rather than the text), remapping their offsets for the prefix and
@@ -326,13 +338,19 @@ export function registerMessageHandlers(
         original,
         replacement: fixedLinks[index],
       }));
-      const { text: finalMessage, entities: finalEntities } =
+      const { text: finalMessage, entities: bodyEntities } =
         applyLinkReplacements(
           messageText,
           msg.entities as TextEntity[] | undefined,
           replacements,
-          prefix
+          fullPrefix
         );
+      // The ping header sits at absolute offset 0, so its text_mention entities
+      // already carry final offsets — prepend them to the body entities (which
+      // applyLinkReplacements shifted past the full prefix).
+      const finalEntities = ping
+        ? [...ping.entities, ...bodyEntities]
+        : bodyEntities;
 
       const isDownloadable = (url: string) =>
         TIKTOK_FIXERS.some(f => url.includes(f));
