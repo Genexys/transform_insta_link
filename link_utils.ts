@@ -3,7 +3,7 @@
 export const INSTA_FIX_DOMAIN = 'previewlinkbot.xyz';
 export const INSTA_FIX_DOMAIN_LEGACY =
   'instapreviewservice-production.up.railway.app';
-export const INSTA_FIX_FALLBACK = 'vxinstagram.com';
+export const INSTA_FIX_FALLBACK = 'kkinstagram.com';
 // tfxktok.com stopped emitting an og:video URL (only og:video:type), so Telegram
 // rendered no preview. tnktok.com returns a real og:video + HEAD 200.
 export const TIKTOK_FIXERS = ['tnktok.com'];
@@ -45,7 +45,10 @@ export function revertUrlForDownload(url: string): string {
     const isShortCode = new RegExp(
       `${fixerEsc}/[A-Za-z0-9._-]+/?(?:[?#]|$)`
     ).test(result);
-    result = result.replace(fixer, isShortCode ? 'vt.tiktok.com' : 'tiktok.com');
+    result = result.replace(
+      fixer,
+      isShortCode ? 'vt.tiktok.com' : 'tiktok.com'
+    );
   }
   for (const fixer of TWITTER_FIXERS) {
     result = result.replace(fixer, 'x.com');
@@ -117,7 +120,7 @@ export function findsocialLinks(text: string): string[] {
         !cleanWord.includes('kkinstagram.com') &&
         !cleanWord.includes(INSTA_FIX_DOMAIN) &&
         !cleanWord.includes(INSTA_FIX_DOMAIN_LEGACY) &&
-        !cleanWord.includes('vxinstagram.com')
+        !cleanWord.includes('kkinstagram.com')
       ) {
         socialLinks.push(cleanWord);
       }
