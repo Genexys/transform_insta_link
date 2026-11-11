@@ -10,6 +10,7 @@ const message_handlers_1 = require("./message_handlers");
 const platform_resolvers_1 = require("./platform_resolvers");
 const http_server_1 = require("./http_server");
 const media_runtime_1 = require("./media_runtime");
+const admin_alerts_1 = require("./admin_alerts");
 const app_env_1 = require("./app_env");
 const db_1 = require("./db");
 const health_1 = require("./health");
@@ -29,11 +30,15 @@ bot
     runtime_1.log.error('Failed to fetch bot identity', { err: String(error) });
 });
 (0, command_handlers_1.registerCommandHandlers)(bot);
+const nextAlert = (0, admin_alerts_1.createAlertDeduper)();
 async function sendAdminAlert(message) {
     if (!app_env_1.ADMIN_CHAT_ID)
         return;
+    const text = nextAlert(message);
+    if (text === null)
+        return;
     try {
-        await bot.sendMessage(app_env_1.ADMIN_CHAT_ID, `🚨 ${message}`);
+        await bot.sendMessage(app_env_1.ADMIN_CHAT_ID, `🚨 ${text}`);
     }
     catch (err) {
         runtime_1.log.error('Failed to send admin alert', { err: String(err) });
@@ -116,7 +121,19 @@ async function runInstaAuthMonitor() {
         await sendAdminAlert(`[INSTAGRAM] IG-превью восстановлены ✅ (${link_utils_1.INSTA_FIX_DOMAIN})`);
     }
 }
+async function runRetentionCleanup() {
+    if (app_env_1.LINK_EVENTS_RETENTION_DAYS <= 0 && app_env_1.ERROR_LOGS_RETENTION_DAYS <= 0)
+        return;
+    const removed = await (0, db_1.pruneOldRows)({
+        linkEventsDays: app_env_1.LINK_EVENTS_RETENTION_DAYS,
+        errorLogsDays: app_env_1.ERROR_LOGS_RETENTION_DAYS,
+    });
+    if (removed)
+        runtime_1.log.info('Retention cleanup done', removed);
+}
 setInterval(runHourlyHealthCheck, 3 * 60 * 60 * 1000);
+setInterval(runRetentionCleanup, 24 * 60 * 60 * 1000);
+setTimeout(runRetentionCleanup, 5 * 60 * 1000);
 setInterval(runInstaAuthMonitor, 10 * 60 * 1000);
 setTimeout(runInstaAuthMonitor, 30 * 1000);
 (0, http_server_1.startHttpServer)();

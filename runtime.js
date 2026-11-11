@@ -78,7 +78,8 @@ exports.log = {
             ...meta,
             ts: new Date().toISOString(),
         }));
-        Sentry.captureException(meta?.hasOwnProperty('err') ? meta.err : new Error(msg), {
+        const err = meta?.err;
+        Sentry.captureException(err instanceof Error ? err : new Error(msg), {
             extra: meta,
         });
     },

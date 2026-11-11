@@ -24,20 +24,32 @@ The repo is very small:
 - `bot.js` — compiled artifact committed to git for deployment
 - `runtime.ts` — dotenv bootstrap, Sentry init, structured logger, fail-fast env helper
 - `app_env.ts` — central env/config surface
-- `db.ts` — DB client, schema bootstrap, DB helpers
+- `db.ts` — `pg` connection pool and DB helpers
+- `db_config.ts` — pure TLS decision for the DB connection (shared with the migration script)
+- `billing.ts` — Stars prices and invoice-payload build/parse helpers
+- `entity_utils.ts` — remaps Telegram message entities (mentions, formatting) when a message is rewritten
+- `insta_preview_client.ts` — client for the self-hosted Instagram preview service (`/extract`), with a short result cache
+- `video_delivery.ts` — downloads Instagram media from the preview service and sends it (photo/video)
+- `media_runtime.ts` — detects `yt-dlp`/`ffmpeg`; downloads are disabled when they are missing
+- `bot_identity.ts` — cached bot id/username (deep links, own-rights lookup)
+- `i18n.ts` — all user-facing copy in Russian and English (`strings(lang)`); `en` is type-checked against `ru`
+- `chat_lang.ts` — picks the reply language for a chat
+- `chat_settings_ui.ts` — `/settings` keyboards and setting defaults
+- `admin_alerts.ts` — dedupes repeated admin alerts
 - `health.ts` — external dependency health helpers
 - `platform_resolvers.ts` — Instagram/TikTok/Twitter fixer resolution and fallback selection
 - `message_handlers.ts` — inline query and main message rewrite registration
-- `callback_handlers.ts` — callback-query routing and chat settings toggle
+- `callback_handlers.ts` — callback-query routing: settings menu, delete button, downloads, invoices
 - `download_handlers.ts` — TikTok download callback flow and error persistence
-- `payment_handlers.ts` — donation invoices, pre-checkout, and payment-success handling
-- `command_handlers.ts` — text commands and onboarding handler registration
-- `http_server.ts` — `/health`, Reddit embed proxy, and HTTP server startup
+- `payment_handlers.ts` — Stars invoices (donation, paid download, lifetime pass), pre-checkout, payment fulfilment and refunds
+- `command_handlers.ts` — text commands (`/start`, `/help`, `/premium`, `/purchases`, `/paysupport`, `/terms`, `/settings`, `/chatstats`, `/invite`, `/donate`, `/feedback`, owner-only `/admin`) and onboarding
+- `http_server.ts` — `/healthz` liveness, `/health` dependency report, Reddit embed proxy, and HTTP server startup
 - `compose.yaml` — recommended local PostgreSQL service for DB-backed development
 - `migrations/*` — explicit PostgreSQL schema history managed by `node-pg-migrate`
 - `scripts/run-migrations.js` — deploy/start migration wrapper
 - `link_utils.ts` — shared pure link parsing and URL rewriting helpers
-- `test/*` — lightweight automated coverage for link helper behavior
+- `test/*` — unit tests for the pure modules: link helpers, billing payloads, entity remapping, preview-client helpers, DB TLS config
+- `PLAN.md` / `STATUS.md` / `RUNBOOK.md` — notes about the separate `insta_preview_service` repo, not this bot
 - `README.md` — setup, runtime, and support overview
 - `.env.example` — current env surface
 - `.github/workflows/ci.yml` — minimal CI for install, build, and test
@@ -45,7 +57,7 @@ The repo is very small:
 - `railway.toml` / `nixpacks.toml` — deployment config
 - `package.json` / `tsconfig.json` — build config
 
-There is still no `src/` split. CI now exists for install/build/test, but coverage remains narrow because tests are still focused on the extracted pure link helper module.
+There is still no `src/` split. CI runs install/build/test and fails when a committed `.js` artifact is out of date with its `.ts` source. Tests cover only the pure modules; handlers, resolvers and DB code have no automated coverage.
 
 ## Runtime Architecture
 
@@ -79,7 +91,14 @@ Current tables:
 - `link_events`
   - platform, service, fallback flag, optional chat/user ids
 - `chat_settings`
-  - premium activation for chats and `quiet_mode`
+  - legacy `is_premium` / `chat_pro*` columns — chat-level Pro was removed from the code; the columns are unused
+  - per-chat settings: `quiet_mode`, `keep_original`, `albums_enabled`, `delete_button`, `disabled_platforms`, `language`
+  - `rights_hint_sent_at` — the one-time "I can't delete messages" notice
+- `billing_events`
+  - one row per Stars payment; `telegram_payment_charge_id` is unique, which is what makes payment handling idempotent
+  - `status`: `paid`, `refunded`, `refund_failed`
+
+`users` also carries `personal_pro*` columns. Entitlement checks read `is_premium`; `activatePersonalPro()` sets both flags together.
 
 These tables are now managed through explicit migrations in `migrations/`. Runtime `initDB()` only establishes the DB connection.
 
@@ -87,16 +106,20 @@ These tables are now managed through explicit migrations in `migrations/`. Runti
 
 Main happy path:
 
-1. A message or inline query arrives.
-2. `findsocialLinks()` extracts supported URLs from raw text.
+1. A message, an edited message, or an inline query arrives. Links are read from the text or from a media caption.
+2. `findsocialLinks()` extracts supported URLs from raw text. `classifySocialLink()` decides the platform from the real hostname and path (never a substring match), and is also what handlers use to route a link.
 3. Platform-specific resolver chooses the working fixer URL:
    - Instagram: self-hosted InstaFix -> fallback
    - TikTok: parallel fixer check
    - Twitter/X: parallel fixer check
    - Reddit/Bluesky/DeviantArt/Pixiv: direct rewrite
 4. The bot logs the event to `link_events`.
-5. In groups, it replies with the corrected link and tries to delete the original message.
-6. For TikTok-only single links, it adds a download button.
+5. In groups the bot answers in one of two modes:
+   - **replace** — reposts the whole message with fixed links and deletes the original;
+   - **reply** — leaves the original and replies with just the fixed links. Used for media captions, for edits of an already answered message, when the chat has `keep_original` on, and when the bot lacks the delete right (it then explains that once per chat).
+   Either way the bot's message carries a delete button for the author and chat admins (`del:<author id>`), unless the chat turned it off.
+6. For TikTok-only single links, it adds a free download button (rate-limited per user in memory; pass holders are exempt).
+7. For Instagram, a background probe may attach a paid save button (single full-quality photo, or an oversized video) and send carousels as a native album.
 
 ### 4. Product Surfaces
 
@@ -106,10 +129,14 @@ The bot currently contains several distinct feature areas:
 - inline mode
 - TikTok download flow
 - Telegram Stars donations
-- premium unlocks
-- premium group settings via `/settings`
-- premium group stats via `/chatstats`
-- referral link via `/invite`
+- paid savable copy of an Instagram photo/video (deep link `?start=dl_<shortcode>`)
+- lifetime download pass via `/premium`
+- group settings via `/settings` (chat admins, not premium-gated): quiet mode, keep original, Instagram albums, delete button, per-platform switches, language
+- `/purchases`, `/paysupport`, `/terms` (the last two are required by Telegram for bots that take Stars)
+- owner-only `/admin` summary (users, chats, links, Stars revenue, refunds)
+- group stats via `/chatstats` (chat admins, not premium-gated)
+- `/feedback` relay to the admin
+- referral link via `/invite`; inviting 5 new users (`REFERRAL_PASS_THRESHOLD`) grants the lifetime pass. Only users the bot has never seen count (`registerReferral`)
 - onboarding message on `my_chat_member`
 - admin alerts and health monitoring
 - Reddit HTML proxy endpoint
@@ -132,6 +159,8 @@ The bot currently contains several distinct feature areas:
 - Threads support is intentionally disabled in code.
 - VK support is intentionally disabled in code.
 - Pinterest is recognized but not converted to a fixer service.
+- Instagram `/share/…` links are deliberately left alone: they carry a share token, not a shortcode, and the preview service has no route for them.
+- `redd.it/<id>` short links are rewritten to the proxy's `/comments/<id>` route.
 - `/help` is aligned with active support, but pass-through and disabled platforms still need careful wording when changed.
 
 When editing the project, trust the actual parsing/conversion logic in `link_utils.ts` and runtime platform logic in `platform_resolvers.ts`, `message_handlers.ts`, `callback_handlers.ts`, `download_handlers.ts`, `payment_handlers.ts`, and `http_server.ts` more than older notes or stale marketing text.
@@ -166,7 +195,9 @@ Most runtime logging now goes through the structured logger in `runtime.ts`. Rem
 
 ### Health
 
-`/health` currently reports:
+`/healthz` is a pure liveness probe and is what Railway's healthcheck uses, so an outage of a third-party fixer cannot fail a deploy.
+
+`/health` (cached for 30s) reports:
 
 - Instagram service state
 - TikTok service state
@@ -217,15 +248,15 @@ The recommended local DB path is `docker compose` with the Postgres service defi
 
 ### Reliability
 
-- Database access uses a single `pg.Client`, not a pool or reconnection strategy.
-- DB hardening has improved, but not all DB paths are consistently wrapped in defensive error handling.
+- Database access goes through a `pg.Pool`, so dropped connections are replaced automatically.
+- Most DB helpers swallow errors and degrade softly. The billing ones do not: `activatePersonalPro()` and `recordBillingEvent()` report failure so the payment handler can refund.
 - Runtime behavior depends heavily on external fixer domains.
 
 ### Observability
 
 - Logging is only partially structured.
 - `/health` now covers the main fixer dependencies, but observability is still basic.
-- No dashboard, no alert deduplication, no latency metrics.
+- No dashboard, no latency metrics. Repeated admin alerts are collapsed for 15 minutes.
 
 ### Data / analytics
 
@@ -240,7 +271,7 @@ The recommended local DB path is `docker compose` with the Postgres service defi
 
 ### DX / maintainability
 
-- There is now a lightweight automated test suite for pure link helpers, but no broader runtime/integration coverage.
+- There is a unit test suite for the pure modules, but no runtime/integration coverage.
 - README and `.env.example` now exist, but they need to be kept in sync with runtime behavior.
 - Schema evolution is now safer because it is decoupled from runtime startup.
 - dependency hygiene improved:
@@ -284,7 +315,9 @@ npm start
 
 - `TELEGRAM_BOT_TOKEN`
 - `DATABASE_URL`
+- `DATABASE_SSL` (optional: `disable` | `require` | `verify`; unset = no TLS for localhost, unverified TLS elsewhere)
 - `ADMIN_CHAT_ID`
+- `LINK_EVENTS_RETENTION_DAYS` / `ERROR_LOGS_RETENTION_DAYS` (default 90 / 30; older rows are deleted daily; `0` keeps them forever)
 - `SENTRY_DSN`
 - `NODE_ENV`
 - `PORT`
@@ -295,4 +328,9 @@ npm start
 - Treat support claims in command text as potentially stale; verify against the actual parser and converter code.
 - Prefer preserving the current shipping model unless the task explicitly justifies a refactor.
 - If you change DB schema, add or update explicit migrations instead of putting DDL back into runtime startup.
-- If you change premium/download logic, review both user-level premium state and chat-level premium activation together.
+- All user-facing text lives in `i18n.ts`; add a key to both `ru` and `en` instead of hardcoding a string. Private chats follow the user's client language, groups use the chat's `language` setting (Russian when unset). The rewrite header (`Saved @user a click`) is deliberately identical in both.
+- `scheduleInstaPreviewRefresh` edits the reply markup after the fact — any new button row must be passed through `extraRows` or it will be wiped by that edit.
+- Inline usage is logged from `chosen_inline_result`, which Telegram only sends when inline feedback is enabled in @BotFather.
+- Premium is user-level only (`users.is_premium`); there is no chat-level premium any more.
+- Payment rules: anything that needs a DB write is declined in `pre_checkout_query` when the DB is down; a paid item that cannot be delivered is refunded with `refundStarPayment`; a repeated `successful_payment` for the same charge is ignored. Keep all three when touching `payment_handlers.ts`.
+- After editing any `.ts`, run `npm run build` and commit the regenerated `.js` — CI rejects stale artifacts.

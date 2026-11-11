@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  classifySocialLink,
   convertToInlineFix,
   convertToInstaFix,
   findsocialLinks,
@@ -163,5 +164,81 @@ test('revertUrlForDownload restores vt. subdomain for TikTok short links', () =>
   assert.equal(
     revertUrlForDownload(`https://${TIKTOK_FIXERS[0]}/@user/video/123`),
     'https://tiktok.com/@user/video/123'
+  );
+});
+
+test('findsocialLinks matches real hostnames, not substrings of other domains', () => {
+  const text = [
+    'https://fox.com/news/status/123',
+    'https://netflix.com/a/status/1',
+    'https://vxinstagram.com/p/abc123',
+    'https://kkinstagram.com/reel/abc123',
+    'https://ddinstagram.com/p/abc123',
+    'https://tnktok.com/@user/video/123',
+    'https://fixdeviantart.com/name/art/work-123',
+    'https://example.com/?next=instagram.com/p/abc123',
+  ].join(' ');
+
+  assert.deepEqual(findsocialLinks(text), []);
+});
+
+test('findsocialLinks strips punctuation glued around a link', () => {
+  assert.deepEqual(
+    findsocialLinks('(https://www.instagram.com/reel/abc/) и «https://x.com/u/status/2», смотри:https://vt.tiktok.com/abc/'),
+    [
+      'https://www.instagram.com/reel/abc/',
+      'https://x.com/u/status/2',
+      'https://vt.tiktok.com/abc/',
+    ]
+  );
+});
+
+test('findsocialLinks keeps scheme-less links and query strings', () => {
+  assert.deepEqual(
+    findsocialLinks('instagram.com/p/abc123 https://x.com/u/status/1?s=20'),
+    ['instagram.com/p/abc123', 'https://x.com/u/status/1?s=20']
+  );
+});
+
+test('findsocialLinks skips instagram share links and non-post pages', () => {
+  assert.deepEqual(
+    findsocialLinks(
+      'https://www.instagram.com/share/reel/abc https://www.instagram.com/stories/u/1 https://x.com/openai'
+    ),
+    []
+  );
+});
+
+test('classifySocialLink covers tiktok /t/ and reddit short/old links', () => {
+  assert.equal(classifySocialLink('https://www.tiktok.com/t/ZTabc/'), 'tiktok');
+  assert.equal(classifySocialLink('https://redd.it/abc123'), 'reddit');
+  assert.equal(classifySocialLink('https://i.redd.it/abc123.jpg'), null);
+  assert.equal(
+    classifySocialLink('https://old.reddit.com/r/a/comments/b/c'),
+    'reddit'
+  );
+  assert.equal(classifySocialLink('https://www.tiktok.com/@user'), null);
+});
+
+test('converters handle subdomains without leaving a broken host', () => {
+  assert.equal(
+    convertToInstaFix('https://old.reddit.com/r/a/comments/b/c'),
+    `https://${REDDIT_EMBED_DOMAIN}/r/a/comments/b/c`
+  );
+  assert.equal(
+    convertToInstaFix('https://redd.it/abc123'),
+    `https://${REDDIT_EMBED_DOMAIN}/comments/abc123`
+  );
+  assert.equal(
+    convertToInlineFix('https://www.tiktok.com/t/ZTabc/'),
+    `https://${TIKTOK_FIXERS[0]}/t/ZTabc/`
+  );
+  assert.equal(
+    revertUrlForDownload(`https://${TIKTOK_FIXERS[0]}/t/ZTabc/`),
+    'https://tiktok.com/t/ZTabc/'
+  );
+  assert.equal(
+    convertToInlineFix('https://m.instagram.com/p/abc123/'),
+    `https://${INSTA_FIX_DOMAIN}/p/abc123/`
   );
 });

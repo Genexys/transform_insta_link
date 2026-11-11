@@ -97,7 +97,7 @@ export function applyEdits(
 export function buildMentionPing(
   text: string,
   entities: TextEntity[] | undefined,
-  opts: { max?: number } = {}
+  opts: { max?: number; label?: string } = {}
 ): RemapResult | null {
   if (!entities?.length) return null;
   const max = opts.max ?? 5;
@@ -106,7 +106,7 @@ export function buildMentionPing(
   );
   if (mentions.length === 0) return null;
 
-  let out = '🔔 Отметили: ';
+  let out = `${opts.label ?? '🔔 Отметили:'} `;
   const outEntities: TextEntity[] = [];
   const seen = new Set<string>();
   let count = 0;

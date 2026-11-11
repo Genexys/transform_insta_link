@@ -1,10 +1,11 @@
-export type BillingKind = 'donate' | 'personal_pro' | 'chat_pro' | 'download';
+export type BillingKind = 'donate' | 'personal_pro' | 'download';
 
 export const PERSONAL_PRO_PRICE_STARS = 100;
-export const CHAT_PRO_PRICE_STARS = 250;
 export const DONATE_AMOUNTS_STARS = [50, 100, 250, 500] as const;
 export const DOWNLOAD_PRICE_STARS = 10;
 export const PHOTO_DOWNLOAD_PRICE_STARS = 5;
+// Invite this many NEW users through /invite to earn the lifetime pass.
+export const REFERRAL_PASS_THRESHOLD = 5;
 
 export type DownloadMediaKind = 'photo' | 'video';
 
@@ -23,7 +24,6 @@ export function downloadPricing(kind: DownloadMediaKind): {
 export type ParsedBillingPayload = {
   kind: BillingKind;
   amount: number;
-  chatId?: number;
   // Instagram shortcode for `download` payloads — identifies which video to
   // deliver once the Stars payment succeeds.
   shortcode?: string;
@@ -34,16 +34,8 @@ export type ParsedBillingPayload = {
 export function buildBillingPayload(
   kind: BillingKind,
   amount: number,
-  options?: { chatId?: number; shortcode?: string }
+  options?: { shortcode?: string }
 ): string {
-  if (kind === 'chat_pro') {
-    if (!options?.chatId) {
-      throw new Error('chatId is required for chat_pro billing payloads');
-    }
-
-    return `billing:${kind}:${amount}:${options.chatId}`;
-  }
-
   if (kind === 'download') {
     if (!options?.shortcode) {
       throw new Error('shortcode is required for download billing payloads');
@@ -102,25 +94,19 @@ export function parseBillingPayload(
   }
 
   const modernMatch = normalized.match(
-    /^billing:(donate|personal_pro|chat_pro):(\d+)(?::(-?\d+))?$/
+    /^billing:(donate|personal_pro):(\d+)$/
   );
   if (modernMatch) {
-    const [, kind, amountRaw, chatIdRaw] = modernMatch;
+    const [, kind, amountRaw] = modernMatch;
     const amount = parseInt(amountRaw, 10);
-    const chatId = chatIdRaw ? parseInt(chatIdRaw, 10) : undefined;
 
     if (!Number.isFinite(amount) || amount <= 0) {
-      return null;
-    }
-
-    if (kind === 'chat_pro' && !Number.isFinite(chatId)) {
       return null;
     }
 
     return {
       kind: kind as BillingKind,
       amount,
-      chatId,
       raw: normalized,
       isLegacy: false,
     };

@@ -9,7 +9,7 @@ Telegram bot that rewrites social links into preview-friendly fixer URLs so Tele
 - supports inline mode
 - supports TikTok media download through `yt-dlp`
 - supports Telegram Stars donations and premium chat features
-- exposes `/health` and a Reddit embed proxy over HTTP
+- exposes `/healthz` (liveness), `/health` (dependency report) and a Reddit embed proxy over HTTP
 
 ## Active Platform Support
 
@@ -44,7 +44,7 @@ Not currently active:
 - `callback_handlers.ts` — callback router and chat settings toggle
 - `download_handlers.ts` — TikTok download flow
 - `payment_handlers.ts` — donation and payment-success flow
-- `http_server.ts` — `/health` and Reddit embed proxy
+- `http_server.ts` — `/healthz`, `/health` and Reddit embed proxy
 - `db.ts` — DB connection and helpers
 - `link_utils.ts` — pure link parsing and URL rewrite helpers
 - `compose.yaml` — recommended local PostgreSQL dev database
@@ -80,6 +80,8 @@ Required:
 Optional:
 
 - `DATABASE_URL`
+- `LINK_EVENTS_RETENTION_DAYS`, `ERROR_LOGS_RETENTION_DAYS` — delete rows older than N days once a day (default 90 / 30; `0` = keep forever)
+- `DATABASE_SSL` — optional `disable` | `require` | `verify`; when unset, localhost connects without TLS and any other host uses unverified TLS
 - `ADMIN_CHAT_ID`
 - `SENTRY_DSN`
 - `NODE_ENV`
@@ -135,7 +137,7 @@ npm start
 
 - The bot runs in Telegram polling mode, not webhooks.
 - If `DATABASE_URL` is missing, the bot still starts, but premium, analytics, limits, and some admin features degrade.
-- `/health` reflects the main external fixer dependencies plus recent link stats when DB is enabled.
+- `/health` reflects the main external fixer dependencies plus recent link stats when DB is enabled. Railway's healthcheck uses `/healthz`, which only reports that the process is serving HTTP.
 - Database schema is now managed through `node-pg-migrate` migrations.
 - Railway startup runs migrations before booting the bot.
 - The recommended local PostgreSQL instance is exposed at `localhost:54329` to avoid clashing with a system Postgres on `5432`.

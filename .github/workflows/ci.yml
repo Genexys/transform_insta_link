@@ -28,5 +28,10 @@ jobs:
       - name: Build
         run: npm run build
 
+      # The compiled .js files are committed and are what production runs.
+      # Fail if a .ts change was committed without its rebuilt .js.
+      - name: Check committed build artifacts are up to date
+        run: git diff --exit-code -- '*.js'
+
       - name: Test
         run: npm test

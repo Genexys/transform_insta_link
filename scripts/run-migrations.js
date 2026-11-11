@@ -1,5 +1,6 @@
 const path = require('path');
 require('dotenv').config();
+const { resolveDbSsl } = require('../db_config.js');
 
 function getDirection() {
   const direction = process.argv[2] || 'up';
@@ -28,9 +29,7 @@ async function main() {
   const migrations = await runner({
     databaseUrl: {
       connectionString: databaseUrl,
-      ssl: {
-        rejectUnauthorized: false,
-      },
+      ssl: resolveDbSsl(databaseUrl),
     },
     dir: path.join(process.cwd(), 'migrations'),
     direction,

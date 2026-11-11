@@ -9,23 +9,36 @@ function escapeHtml(str: string): string {
   return str
     .replace(/&/g, '&amp;')
     .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 }
 
+// Reddit ids and subreddit names are plain word characters. Anything else in
+// those path segments is not a post we can look up, so it never reaches the
+// API URL or the generated HTML.
+const REDDIT_POST_PATH_REGEX = /^\/r\/([A-Za-z0-9_]+)\/comments\/([A-Za-z0-9]+)/;
+const REDDIT_SHORT_PATH_REGEX = /^\/comments\/([A-Za-z0-9]+)/;
+
 async function handleRedditEmbed(path: string, res: http.ServerResponse) {
   const redditUrl = `https://www.reddit.com${path}`;
-  const match = path.match(/^\/r\/([^/]+)\/comments\/([^/]+)/);
+  const match = path.match(REDDIT_POST_PATH_REGEX);
+  const shortMatch = match ? null : path.match(REDDIT_SHORT_PATH_REGEX);
 
-  if (!match) {
+  if (!match && !shortMatch) {
     res.writeHead(302, { Location: redditUrl });
     res.end();
     return;
   }
 
-  const [, subreddit, postId] = match;
+  // The request path is attacker-controlled; it is only ever emitted escaped.
+  const safeRedditUrl = escapeHtml(redditUrl);
+  const subreddit = match ? match[1] : '';
+  const postId = match ? match[2] : shortMatch![1];
   try {
-    const apiUrl = `https://www.reddit.com/r/${subreddit}/comments/${postId}/.json`;
+    const apiUrl = match
+      ? `https://www.reddit.com/r/${subreddit}/comments/${postId}/.json`
+      : `https://www.reddit.com/comments/${postId}/.json`;
     const apiRes = await fetch(apiUrl, {
       headers: { 'User-Agent': 'TelegramBot:transform_insta_link:v1.0' },
       signal: AbortSignal.timeout(5000),
@@ -62,11 +75,11 @@ async function handleRedditEmbed(path: string, res: http.ServerResponse) {
 <meta property="og:site_name" content="Reddit">
 <meta property="og:title" content="${escapeHtml(title)}">
 <meta property="og:description" content="${escapeHtml(description)}">
-<meta property="og:url" content="${redditUrl}">
+<meta property="og:url" content="${safeRedditUrl}">
 ${ogImage ? `<meta property="og:image" content="${escapeHtml(ogImage)}">` : ''}
 ${ogVideo ? `<meta property="og:video" content="${escapeHtml(ogVideo)}"><meta property="og:video:type" content="video/mp4">` : ''}
-<meta http-equiv="refresh" content="0; url=${redditUrl}">
-</head><body>Redirecting to <a href="${redditUrl}">Reddit post</a></body></html>`;
+<meta http-equiv="refresh" content="0; url=${safeRedditUrl}">
+</head><body>Redirecting to <a href="${safeRedditUrl}">Reddit post</a></body></html>`;
 
     logLinkEvent('reddit', REDDIT_EMBED_DOMAIN, false);
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -108,17 +121,46 @@ async function getHealthStats() {
   }
 }
 
+// /health fans out to every fixer domain. Cache the result briefly so repeated
+// hits (uptime monitors, curious visitors) don't each trigger a burst of
+// outbound requests.
+const HEALTH_CACHE_TTL_MS = 30_000;
+let healthCache: {
+  expires: number;
+  value: Promise<Awaited<ReturnType<typeof getDependencyHealth>>>;
+} | null = null;
+
+function getCachedDependencyHealth() {
+  const now = Date.now();
+  if (!healthCache || healthCache.expires <= now) {
+    healthCache = {
+      expires: now + HEALTH_CACHE_TTL_MS,
+      value: getDependencyHealth(),
+    };
+  }
+  return healthCache.value;
+}
+
 export function startHttpServer() {
   const server = http.createServer(async (req, res) => {
     const urlPath = req.url || '';
 
-    if (urlPath.startsWith('/r/')) {
+    if (urlPath.startsWith('/r/') || urlPath.startsWith('/comments/')) {
       await handleRedditEmbed(urlPath, res);
       return;
     }
 
-    if (urlPath === '/health') {
-      const dependencyHealth = await getDependencyHealth();
+    // Liveness only: "is this process serving HTTP". The platform healthcheck
+    // points here so a third-party fixer outage can't fail a deploy of a
+    // perfectly healthy bot. Dependency state lives on /health.
+    if (urlPath === '/healthz') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok' }));
+      return;
+    }
+
+    if (urlPath === '/health' || urlPath.startsWith('/health?')) {
+      const dependencyHealth = await getCachedDependencyHealth();
       const stats = await getHealthStats();
 
       res.writeHead(

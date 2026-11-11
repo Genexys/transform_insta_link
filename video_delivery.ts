@@ -1,4 +1,5 @@
 import TelegramBot from 'node-telegram-bot-api';
+import { randomUUID } from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -12,6 +13,7 @@ import {
   isSavablePhoto,
   pickDownloadablePhoto,
 } from './insta_preview_client';
+import { type Lang, strings } from './i18n';
 import { log } from './runtime';
 
 const execFileAsync = promisify(execFile);
@@ -134,7 +136,7 @@ export async function deliverInstaVideo(
   shortcode: string,
   opts: { protect: boolean; caption?: string; replyToMessageId?: number }
 ): Promise<void> {
-  const tempFilePath = path.join(os.tmpdir(), `video_${Date.now()}.mp4`);
+  const tempFilePath = path.join(os.tmpdir(), `video_${randomUUID()}.mp4`);
   try {
     await downloadInstaVideoFile(shortcode, tempFilePath);
     if (!fs.existsSync(tempFilePath)) {
@@ -178,8 +180,14 @@ export async function deliverInstaMedia(
   bot: TelegramBot,
   chatId: number,
   shortcode: string,
-  opts: { protect: boolean; premium?: boolean; replyToMessageId?: number }
+  opts: {
+    protect: boolean;
+    premium?: boolean;
+    replyToMessageId?: number;
+    lang?: Lang;
+  }
 ): Promise<void> {
+  const L = strings(opts.lang ?? 'ru');
   const preview = await fetchInstaPreview(shortcode);
   const photo = preview.ok ? pickDownloadablePhoto(preview.data) : null;
 
@@ -194,15 +202,13 @@ export async function deliverInstaMedia(
   if (!photo) {
     await deliverInstaVideo(bot, chatId, shortcode, {
       protect: opts.protect,
-      caption: opts.premium
-        ? '🎥 Ваше видео (безлимит активен) — можно сохранять.'
-        : '🎥 Ваше видео — можно сохранять и пересылать.',
+      caption: L.videoCaption(Boolean(opts.premium)),
       replyToMessageId: opts.replyToMessageId,
     });
     return;
   }
 
-  const tempFilePath = path.join(os.tmpdir(), `photo_${Date.now()}.jpg`);
+  const tempFilePath = path.join(os.tmpdir(), `photo_${randomUUID()}.jpg`);
   try {
     await downloadInstaImageFile(photo.url, tempFilePath);
     if (!fs.existsSync(tempFilePath)) {
@@ -210,9 +216,7 @@ export async function deliverInstaMedia(
     }
     await bot.sendChatAction(chatId, 'upload_photo');
     await bot.sendPhoto(chatId, tempFilePath, {
-      caption: opts.premium
-        ? '🖼 Ваше фото (безлимит активен) — можно сохранять.'
-        : '🖼 Ваше фото — можно сохранять и пересылать.',
+      caption: L.photoCaption(Boolean(opts.premium)),
       protect_content: opts.protect,
       ...(opts.replyToMessageId
         ? { reply_parameters: { message_id: opts.replyToMessageId } }

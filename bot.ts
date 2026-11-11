@@ -5,8 +5,14 @@ import { registerMessageHandlers } from './message_handlers';
 import { createPlatformResolvers } from './platform_resolvers';
 import { startHttpServer } from './http_server';
 import { initMediaRuntime } from './media_runtime';
-import { ADMIN_CHAT_ID, getBotToken } from './app_env';
-import { initDB } from './db';
+import { createAlertDeduper } from './admin_alerts';
+import {
+  ADMIN_CHAT_ID,
+  ERROR_LOGS_RETENTION_DAYS,
+  getBotToken,
+  LINK_EVENTS_RETENTION_DAYS,
+} from './app_env';
+import { initDB, pruneOldRows } from './db';
 import { getDependencyHealth, getInstaAuthHealth } from './health';
 import {
   INSTA_FIX_DOMAIN,
@@ -33,10 +39,16 @@ bot
 
 registerCommandHandlers(bot);
 
+// Repeats of the same alert within 15 minutes are counted, not sent — an
+// outage otherwise produced one alert per affected link.
+const nextAlert = createAlertDeduper();
+
 async function sendAdminAlert(message: string) {
   if (!ADMIN_CHAT_ID) return;
+  const text = nextAlert(message);
+  if (text === null) return;
   try {
-    await bot.sendMessage(ADMIN_CHAT_ID, `🚨 ${message}`);
+    await bot.sendMessage(ADMIN_CHAT_ID, `🚨 ${text}`);
   } catch (err) {
     log.error('Failed to send admin alert', { err: String(err) });
   }
@@ -163,7 +175,20 @@ async function runInstaAuthMonitor() {
   }
 }
 
+// Retention for the append-only analytics/error tables (defaults: 90 days of
+// link_events, 30 days of error_logs; set the env var to 0 to keep forever).
+async function runRetentionCleanup() {
+  if (LINK_EVENTS_RETENTION_DAYS <= 0 && ERROR_LOGS_RETENTION_DAYS <= 0) return;
+  const removed = await pruneOldRows({
+    linkEventsDays: LINK_EVENTS_RETENTION_DAYS,
+    errorLogsDays: ERROR_LOGS_RETENTION_DAYS,
+  });
+  if (removed) log.info('Retention cleanup done', removed);
+}
+
 setInterval(runHourlyHealthCheck, 3 * 60 * 60 * 1000);
+setInterval(runRetentionCleanup, 24 * 60 * 60 * 1000);
+setTimeout(runRetentionCleanup, 5 * 60 * 1000);
 setInterval(runInstaAuthMonitor, 10 * 60 * 1000);
 // Establish the baseline shortly after startup (don't wait the full interval).
 setTimeout(runInstaAuthMonitor, 30 * 1000);

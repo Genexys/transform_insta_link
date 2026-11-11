@@ -14,20 +14,28 @@ function escapeHtml(str) {
     return str
         .replace(/&/g, '&amp;')
         .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
 }
+const REDDIT_POST_PATH_REGEX = /^\/r\/([A-Za-z0-9_]+)\/comments\/([A-Za-z0-9]+)/;
+const REDDIT_SHORT_PATH_REGEX = /^\/comments\/([A-Za-z0-9]+)/;
 async function handleRedditEmbed(path, res) {
     const redditUrl = `https://www.reddit.com${path}`;
-    const match = path.match(/^\/r\/([^/]+)\/comments\/([^/]+)/);
-    if (!match) {
+    const match = path.match(REDDIT_POST_PATH_REGEX);
+    const shortMatch = match ? null : path.match(REDDIT_SHORT_PATH_REGEX);
+    if (!match && !shortMatch) {
         res.writeHead(302, { Location: redditUrl });
         res.end();
         return;
     }
-    const [, subreddit, postId] = match;
+    const safeRedditUrl = escapeHtml(redditUrl);
+    const subreddit = match ? match[1] : '';
+    const postId = match ? match[2] : shortMatch[1];
     try {
-        const apiUrl = `https://www.reddit.com/r/${subreddit}/comments/${postId}/.json`;
+        const apiUrl = match
+            ? `https://www.reddit.com/r/${subreddit}/comments/${postId}/.json`
+            : `https://www.reddit.com/comments/${postId}/.json`;
         const apiRes = await fetch(apiUrl, {
             headers: { 'User-Agent': 'TelegramBot:transform_insta_link:v1.0' },
             signal: AbortSignal.timeout(5000),
@@ -61,11 +69,11 @@ async function handleRedditEmbed(path, res) {
 <meta property="og:site_name" content="Reddit">
 <meta property="og:title" content="${escapeHtml(title)}">
 <meta property="og:description" content="${escapeHtml(description)}">
-<meta property="og:url" content="${redditUrl}">
+<meta property="og:url" content="${safeRedditUrl}">
 ${ogImage ? `<meta property="og:image" content="${escapeHtml(ogImage)}">` : ''}
 ${ogVideo ? `<meta property="og:video" content="${escapeHtml(ogVideo)}"><meta property="og:video:type" content="video/mp4">` : ''}
-<meta http-equiv="refresh" content="0; url=${redditUrl}">
-</head><body>Redirecting to <a href="${redditUrl}">Reddit post</a></body></html>`;
+<meta http-equiv="refresh" content="0; url=${safeRedditUrl}">
+</head><body>Redirecting to <a href="${safeRedditUrl}">Reddit post</a></body></html>`;
         (0, db_1.logLinkEvent)('reddit', link_utils_1.REDDIT_EMBED_DOMAIN, false);
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end(html);
@@ -105,15 +113,32 @@ async function getHealthStats() {
         return null;
     }
 }
+const HEALTH_CACHE_TTL_MS = 30_000;
+let healthCache = null;
+function getCachedDependencyHealth() {
+    const now = Date.now();
+    if (!healthCache || healthCache.expires <= now) {
+        healthCache = {
+            expires: now + HEALTH_CACHE_TTL_MS,
+            value: (0, health_1.getDependencyHealth)(),
+        };
+    }
+    return healthCache.value;
+}
 function startHttpServer() {
     const server = http_1.default.createServer(async (req, res) => {
         const urlPath = req.url || '';
-        if (urlPath.startsWith('/r/')) {
+        if (urlPath.startsWith('/r/') || urlPath.startsWith('/comments/')) {
             await handleRedditEmbed(urlPath, res);
             return;
         }
-        if (urlPath === '/health') {
-            const dependencyHealth = await (0, health_1.getDependencyHealth)();
+        if (urlPath === '/healthz') {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ status: 'ok' }));
+            return;
+        }
+        if (urlPath === '/health' || urlPath.startsWith('/health?')) {
+            const dependencyHealth = await getCachedDependencyHealth();
             const stats = await getHealthStats();
             res.writeHead(dependencyHealth.status === 'down' ? 503 : 200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({

@@ -11,10 +11,10 @@ export const TWITTER_FIXERS = ['fxtwitter.com', 'fixupx.com'];
 export const REDDIT_EMBED_DOMAIN =
   'transforminstalink-production.up.railway.app';
 
-export const instaRegex = /(?:www\.)?(?:instagram\.com|instagr\.am)/;
+export const instaRegex = /(?:(?:www|m)\.)?(?:instagram\.com|instagr\.am)/;
 export const instaReelRegex =
   /(?:www\.)?(?:instagram\.com|instagr\.am)\/reels?\/([A-Za-z0-9_-]+)/;
-export const tiktokRegex = /(?:(?:www|vm|vt)\.)?tiktok\.com/;
+export const tiktokRegex = /(?:(?:www|vm|vt|m)\.)?tiktok\.com/;
 export const twitterRegex = /(?:(?:www|mobile)\.)?(?:x|twitter)\.com/;
 
 export function rewriteInstagramReelToPreview(url: string): string | null {
@@ -61,9 +61,11 @@ export function convertToInstaFix(url: string): string {
   if (reelPreview) return reelPreview;
 
   let convertedUrl = url
-    .replace(/(?:www\.)?instagram\.com/g, INSTA_FIX_DOMAIN)
-    .replace(/(?:www\.)?instagr\.am/g, INSTA_FIX_DOMAIN)
-    .replace(/(?:www\.)?reddit\.com/g, REDDIT_EMBED_DOMAIN)
+    .replace(/(?:(?:www|m)\.)?instagram\.com/g, INSTA_FIX_DOMAIN)
+    .replace(/(?:(?:www|m)\.)?instagr\.am/g, INSTA_FIX_DOMAIN)
+    // redd.it/<id> short links map onto the proxy's /comments/<id> route.
+    .replace(/^(https?:\/\/)?redd\.it\//, `$1${REDDIT_EMBED_DOMAIN}/comments/`)
+    .replace(/(?:(?:www|old|new|np|m)\.)?reddit\.com/g, REDDIT_EMBED_DOMAIN)
     // vxthreads.net down (2026), threads.net передаём без изменений
     .replace(/bsky\.app/g, 'bskx.app')
     .replace(/deviantart\.com/g, 'fixdeviantart.com')
@@ -78,124 +80,154 @@ export function convertToInstaFix(url: string): string {
   return convertedUrl;
 }
 
-export function convertToInlineFix(url: string): string {
-  if (url.includes('pinterest.com') || url.includes('pin.it/')) {
+// What inline mode should point links at. Inline answers must be instant, so
+// it cannot probe fixers itself; the resolvers pass in what they last saw
+// working from regular messages.
+export type FixerPreferences = {
+  instagramUseFallback?: boolean;
+  tiktok?: string;
+  twitter?: string;
+};
+
+export function convertToInlineFix(
+  url: string,
+  prefs: FixerPreferences = {}
+): string {
+  const platform = classifySocialLink(url);
+
+  if (platform === 'pinterest') {
     return url;
   }
 
-  if (instaRegex.test(url)) {
+  if (platform === 'instagram') {
+    if (prefs.instagramUseFallback) {
+      return url.replace(instaRegex, INSTA_FIX_FALLBACK);
+    }
     const reelPreviewInline = rewriteInstagramReelToPreview(url);
     if (reelPreviewInline) return reelPreviewInline;
     return url.replace(instaRegex, INSTA_FIX_DOMAIN);
   }
 
-  if (tiktokRegex.test(url)) {
-    return url.replace(tiktokRegex, TIKTOK_FIXERS[0]);
+  if (platform === 'tiktok') {
+    return url.replace(tiktokRegex, prefs.tiktok ?? TIKTOK_FIXERS[0]);
   }
 
-  if (twitterRegex.test(url)) {
-    return url.replace(twitterRegex, TWITTER_FIXERS[0]);
+  if (platform === 'twitter') {
+    return url.replace(twitterRegex, prefs.twitter ?? TWITTER_FIXERS[0]);
   }
 
   return convertToInstaFix(url);
 }
 
+export type SocialPlatform =
+  | 'instagram'
+  | 'twitter'
+  | 'tiktok'
+  | 'reddit'
+  | 'bluesky'
+  | 'deviantart'
+  | 'pixiv'
+  | 'pinterest';
+
+// A URL-ish token inside a whitespace-delimited word: optional scheme, a dotted
+// ASCII hostname, then an optional path/query. Unanchored on purpose so leading
+// junk glued to the link ("(https://…", "смотри:https://…") is left out of the
+// match instead of ending up inside the rewritten link.
+const URL_CANDIDATE_REGEX =
+  /(?:https?:\/\/)?(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?:[/?#]\S*)?/i;
+const TRAILING_PUNCTUATION_REGEX = /[.,!?;:)\]}>»"']*$/;
+
+function splitHostAndPath(url: string): { host: string; path: string } {
+  const withoutScheme = url.replace(/^https?:\/\//i, '');
+  const cut = withoutScheme.search(/[/?#]/);
+  return cut === -1
+    ? { host: withoutScheme.toLowerCase(), path: '' }
+    : {
+        host: withoutScheme.slice(0, cut).toLowerCase(),
+        path: withoutScheme.slice(cut),
+      };
+}
+
+// Exact domain or a real subdomain of it. A plain substring check is not
+// enough: "fox.com" contains "x.com" and "vxinstagram.com" contains
+// "instagram.com", and neither is the site we rewrite.
+function hostIs(host: string, domain: string): boolean {
+  return host === domain || host.endsWith(`.${domain}`);
+}
+
+// Decides which supported platform a link belongs to, judging by its real
+// hostname and path. Returns null for anything the bot should leave alone,
+// including links that already point at a fixer domain.
+export function classifySocialLink(url: string): SocialPlatform | null {
+  const { host, path } = splitHostAndPath(url);
+
+  if (hostIs(host, 'instagram.com') || hostIs(host, 'instagr.am')) {
+    // /share/… links carry an opaque share token, not the post shortcode, and
+    // the preview service has no route for them — leave those untouched.
+    if (path.startsWith('/share/')) return null;
+    return /\/(?:p|reel|reels|tv)\//.test(path) ? 'instagram' : null;
+  }
+
+  if (hostIs(host, 'x.com') || hostIs(host, 'twitter.com')) {
+    return /^\/[A-Za-z0-9_]+\/(?:status\/[0-9]+|replies)/.test(path)
+      ? 'twitter'
+      : null;
+  }
+
+  if (hostIs(host, 'tiktok.com')) {
+    if (host === 'vt.tiktok.com' || host === 'vm.tiktok.com') return 'tiktok';
+    return /^\/@[A-Za-z0-9_.-]+\/video\/[0-9]+/.test(path) ||
+      /^\/t\/[A-Za-z0-9_-]+/.test(path)
+      ? 'tiktok'
+      : null;
+  }
+
+  if (hostIs(host, 'reddit.com')) {
+    return /^\/r\/[A-Za-z0-9_]+\/comments/.test(path) ||
+      /^\/r\/[A-Za-z0-9_]+\/s\/[A-Za-z0-9_]+/.test(path)
+      ? 'reddit'
+      : null;
+  }
+
+  // Bare redd.it only: i.redd.it / v.redd.it / preview.redd.it are media hosts.
+  if (host === 'redd.it') {
+    return /^\/[A-Za-z0-9]+\/?(?:[?#]|$)/.test(path) ? 'reddit' : null;
+  }
+
+  // Threads: vxthreads.net down (2026), all alternatives also down — skip
+
+  if (hostIs(host, 'bsky.app')) {
+    return path.includes('/post/') ? 'bluesky' : null;
+  }
+
+  if (hostIs(host, 'deviantart.com')) {
+    return path.includes('/art/') ? 'deviantart' : null;
+  }
+
+  if (hostIs(host, 'pixiv.net')) {
+    return path.includes('/artworks/') ? 'pixiv' : null;
+  }
+
+  if (
+    (hostIs(host, 'pinterest.com') && path.startsWith('/pin/')) ||
+    (host === 'pin.it' && path.startsWith('/'))
+  ) {
+    return 'pinterest';
+  }
+
+  return null;
+}
+
 export function findsocialLinks(text: string): string[] {
-  const words = text.split(/\s+/);
   const socialLinks: string[] = [];
 
-  for (let word of words) {
-    const cleanWord = word.replace(/[.,!?;)]*$/, '');
+  for (const word of text.split(/\s+/)) {
+    const candidate = word.match(URL_CANDIDATE_REGEX);
+    if (!candidate) continue;
 
-    if (
-      (cleanWord.includes('instagram.com') ||
-        cleanWord.includes('instagr.am')) &&
-      (cleanWord.includes('/p/') ||
-        cleanWord.includes('/reel/') ||
-        cleanWord.includes('/reels/') ||
-        cleanWord.includes('/tv/'))
-    ) {
-      if (
-        !cleanWord.includes('ddinstagram.com') &&
-        !cleanWord.includes('kkinstagram.com') &&
-        !cleanWord.includes(INSTA_FIX_DOMAIN) &&
-        !cleanWord.includes(INSTA_FIX_DOMAIN_LEGACY) &&
-        !cleanWord.includes('kkinstagram.com')
-      ) {
-        socialLinks.push(cleanWord);
-      }
-    }
-
-    if (
-      (cleanWord.includes('x.com') ||
-        cleanWord.includes('twitter.com') ||
-        cleanWord.includes('mobile.twitter.com')) &&
-      (cleanWord.match(
-        /(?:x\.com|(?:mobile\.)?twitter\.com)\/(?:[A-Za-z0-9_]+)\/status\/[0-9]+/
-      ) ||
-        cleanWord.match(
-          /(?:x\.com|(?:mobile\.)?twitter\.com)\/(?:[A-Za-z0-9_]+)\/replies/
-        )) &&
-      !TWITTER_FIXERS.some(f => cleanWord.includes(f))
-    ) {
-      socialLinks.push(cleanWord);
-    }
-
-    if (
-      ((cleanWord.includes('tiktok.com') &&
-        cleanWord.match(/tiktok\.com\/@[A-Za-z0-9_.-]+\/video\/[0-9]+/)) ||
-        cleanWord.includes('vt.tiktok.com') ||
-        cleanWord.includes('vm.tiktok.com')) &&
-      !cleanWord.includes('vxtiktok.com')
-    ) {
-      socialLinks.push(cleanWord);
-    }
-
-    if (
-      cleanWord.includes('reddit.com') &&
-      !cleanWord.includes(REDDIT_EMBED_DOMAIN)
-    ) {
-      if (
-        cleanWord.match(/reddit\.com\/r\/[A-Za-z0-9_]+\/comments/) ||
-        cleanWord.match(/www\.reddit\.com\/r\/[A-Za-z0-9_]+\/comments/) ||
-        cleanWord.match(/reddit\.com\/r\/[A-Za-z0-9_]+\/s\/[A-Za-z0-9_]+/)
-      ) {
-        socialLinks.push(cleanWord);
-      }
-    }
-
-    // Threads: vxthreads.net down (2026), all alternatives also down — skip
-
-    if (
-      cleanWord.includes('bsky.app') &&
-      cleanWord.includes('/post/') &&
-      !cleanWord.includes('bskx.app')
-    ) {
-      socialLinks.push(cleanWord);
-    }
-
-    if (
-      cleanWord.includes('deviantart.com') &&
-      (cleanWord.includes('/art/') ||
-        cleanWord.match(/deviantart\.com\/[A-Za-z0-9_-]+\/art\//)) &&
-      !cleanWord.includes('fixdeviantart.com')
-    ) {
-      socialLinks.push(cleanWord);
-    }
-
-    if (
-      cleanWord.includes('pixiv.net') &&
-      cleanWord.includes('/artworks/') &&
-      !cleanWord.includes('phixiv.net')
-    ) {
-      socialLinks.push(cleanWord);
-    }
-
-    if (
-      cleanWord.includes('pinterest.com/pin/') ||
-      cleanWord.includes('pin.it/')
-    ) {
-      socialLinks.push(cleanWord);
+    const link = candidate[0].replace(TRAILING_PUNCTUATION_REGEX, '');
+    if (classifySocialLink(link)) {
+      socialLinks.push(link);
     }
   }
 

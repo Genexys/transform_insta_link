@@ -23,7 +23,39 @@ function pickDownloadablePhoto(data) {
 function isSavablePhoto(entry) {
     return Boolean(entry && entry.type === 'image' && entry.url && !entry.preview_only);
 }
-async function fetchInstaPreview(shortcode, timeoutMs = 35000) {
+const PREVIEW_CACHE_TTL_MS = 60_000;
+const PREVIEW_CACHE_MAX_ENTRIES = 500;
+const previewCache = new Map();
+function fetchInstaPreview(shortcode, timeoutMs = 35000) {
+    const now = Date.now();
+    const cached = previewCache.get(shortcode);
+    if (cached && cached.expires > now)
+        return cached.result;
+    if (previewCache.size >= PREVIEW_CACHE_MAX_ENTRIES) {
+        for (const [key, entry] of previewCache) {
+            if (entry.expires <= now)
+                previewCache.delete(key);
+        }
+        if (previewCache.size >= PREVIEW_CACHE_MAX_ENTRIES)
+            previewCache.clear();
+    }
+    const result = fetchInstaPreviewUncached(shortcode, timeoutMs);
+    const entry = { expires: now + 2 * timeoutMs + PREVIEW_CACHE_TTL_MS, result };
+    previewCache.set(shortcode, entry);
+    result.then(value => {
+        if (previewCache.get(shortcode) !== entry)
+            return;
+        if (value.ok)
+            entry.expires = Date.now() + PREVIEW_CACHE_TTL_MS;
+        else
+            previewCache.delete(shortcode);
+    }, () => {
+        if (previewCache.get(shortcode) === entry)
+            previewCache.delete(shortcode);
+    });
+    return result;
+}
+async function fetchInstaPreviewUncached(shortcode, timeoutMs = 35000) {
     const headers = {
         accept: 'application/json',
     };

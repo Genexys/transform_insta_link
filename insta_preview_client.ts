@@ -82,7 +82,50 @@ export function isSavablePhoto(entry: InstaMediaEntry | null): boolean {
   return Boolean(entry && entry.type === 'image' && entry.url && !entry.preview_only);
 }
 
-export async function fetchInstaPreview(
+// One message used to trigger two full extractions of the same post (the save
+// button probe and the carousel album). Callers now share a single in-flight
+// request, and a successful result is reused for a short while. Failures are
+// never kept, so the next caller retries.
+const PREVIEW_CACHE_TTL_MS = 60_000;
+const PREVIEW_CACHE_MAX_ENTRIES = 500;
+const previewCache = new Map<
+  string,
+  { expires: number; result: Promise<InstaExtractResult> }
+>();
+
+export function fetchInstaPreview(
+  shortcode: string,
+  timeoutMs = 35000
+): Promise<InstaExtractResult> {
+  const now = Date.now();
+  const cached = previewCache.get(shortcode);
+  if (cached && cached.expires > now) return cached.result;
+
+  if (previewCache.size >= PREVIEW_CACHE_MAX_ENTRIES) {
+    for (const [key, entry] of previewCache) {
+      if (entry.expires <= now) previewCache.delete(key);
+    }
+    if (previewCache.size >= PREVIEW_CACHE_MAX_ENTRIES) previewCache.clear();
+  }
+
+  const result = fetchInstaPreviewUncached(shortcode, timeoutMs);
+  // Long expiry while in flight (covers both attempts); trimmed on success.
+  const entry = { expires: now + 2 * timeoutMs + PREVIEW_CACHE_TTL_MS, result };
+  previewCache.set(shortcode, entry);
+  result.then(
+    value => {
+      if (previewCache.get(shortcode) !== entry) return;
+      if (value.ok) entry.expires = Date.now() + PREVIEW_CACHE_TTL_MS;
+      else previewCache.delete(shortcode);
+    },
+    () => {
+      if (previewCache.get(shortcode) === entry) previewCache.delete(shortcode);
+    }
+  );
+  return result;
+}
+
+async function fetchInstaPreviewUncached(
   shortcode: string,
   timeoutMs = 35000
 ): Promise<InstaExtractResult> {
