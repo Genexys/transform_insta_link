@@ -1,6 +1,7 @@
 import { log } from './runtime';
 import { logLinkEvent } from './db';
 import {
+  type FixerPreferences,
   INSTA_FIX_DOMAIN,
   INSTA_FIX_FALLBACK,
   instaRegex,
@@ -34,7 +35,18 @@ async function fetchWithRetry(
   }
 }
 
+// A reachable preview service is remembered briefly, so a burst of Instagram
+// links costs one probe instead of one per link. Only success is cached: a
+// failure is re-probed on the very next link so recovery is picked up at once.
+const INSTA_HEALTH_OK_TTL_MS = 30_000;
+
 export function createPlatformResolvers(sendAdminAlert: SendAdminAlert) {
+  let instaHealthyUntil = 0;
+  // Last observed state, exposed to inline mode via getPreferredFixers().
+  let instaSelfHostedDown = false;
+  let lastWorkingTikTok: string | undefined;
+  let lastWorkingTwitter: string | undefined;
+
   async function getWorkingInstaFixUrl(
     originalUrl: string,
     chatId?: number,
@@ -45,12 +57,17 @@ export function createPlatformResolvers(sendAdminAlert: SendAdminAlert) {
     const selfHostedUrl = reelPreview ?? pagePath;
 
     try {
-      await fetchWithRetry(`https://${INSTA_FIX_DOMAIN}/health`, {
-        method: 'GET',
-        redirect: 'manual',
-        signal: AbortSignal.timeout(INSTA_HEALTH_TIMEOUT_MS),
-      });
+      if (Date.now() >= instaHealthyUntil) {
+        await fetchWithRetry(`https://${INSTA_FIX_DOMAIN}/health`, {
+          method: 'GET',
+          redirect: 'manual',
+          signal: AbortSignal.timeout(INSTA_HEALTH_TIMEOUT_MS),
+        });
+        instaHealthyUntil = Date.now() + INSTA_HEALTH_OK_TTL_MS;
+        instaSelfHostedDown = false;
+      }
     } catch {
+      instaSelfHostedDown = true;
       log.warn('Instagram self-hosted unreachable, using fallback', {
         url: originalUrl,
       });
@@ -106,6 +123,7 @@ export function createPlatformResolvers(sendAdminAlert: SendAdminAlert) {
       const result = await Promise.any(checks);
       const service =
         TIKTOK_FIXERS.find(f => result.includes(f)) ?? TIKTOK_FIXERS[0];
+      lastWorkingTikTok = service;
       logLinkEvent(
         'tiktok',
         service,
@@ -140,6 +158,7 @@ export function createPlatformResolvers(sendAdminAlert: SendAdminAlert) {
       const result = await Promise.any(checks);
       const service =
         TWITTER_FIXERS.find(f => result.includes(f)) ?? TWITTER_FIXERS[0];
+      lastWorkingTwitter = service;
       logLinkEvent(
         'twitter',
         service,
@@ -155,7 +174,16 @@ export function createPlatformResolvers(sendAdminAlert: SendAdminAlert) {
     }
   }
 
+  function getPreferredFixers(): FixerPreferences {
+    return {
+      instagramUseFallback: instaSelfHostedDown,
+      tiktok: lastWorkingTikTok,
+      twitter: lastWorkingTwitter,
+    };
+  }
+
   return {
+    getPreferredFixers,
     getWorkingInstaFixUrl,
     getWorkingTikTokUrl,
     getWorkingTwitterUrl,

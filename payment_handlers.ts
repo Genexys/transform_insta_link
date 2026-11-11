@@ -1,5 +1,5 @@
 import TelegramBot, { type CallbackQuery } from 'node-telegram-bot-api';
-import { DATABASE_URL } from './app_env';
+import { ADMIN_CHAT_ID } from './app_env';
 import {
   buildBillingPayload,
   downloadPricing,
@@ -7,10 +7,11 @@ import {
   PERSONAL_PRO_PRICE_STARS,
 } from './billing';
 import {
+  activatePersonalPro,
   createUser,
-  grantPersonalPro,
+  isDbHealthy,
   recordBillingEvent,
-  setPremium,
+  setBillingEventStatus,
 } from './db';
 import {
   fetchInstaPreview,
@@ -18,6 +19,7 @@ import {
   pickDownloadablePhoto,
 } from './insta_preview_client';
 import { deliverInstaMedia } from './video_delivery';
+import { type Lang, langFromCode, strings } from './i18n';
 import { log } from './runtime';
 
 async function sendStarsInvoice(params: {
@@ -81,8 +83,10 @@ async function sendStarsInvoice(params: {
 export async function sendDownloadInvoice(
   bot: TelegramBot,
   chatId: number,
-  shortcode: string
+  shortcode: string,
+  lang: Lang = 'ru'
 ) {
+  const L = strings(lang);
   const preview = await fetchInstaPreview(shortcode);
   const photo = preview.ok ? pickDownloadablePhoto(preview.data) : null;
 
@@ -92,28 +96,25 @@ export async function sendDownloadInvoice(
   // preview card. Video posts and full-quality photos fall through as before.
   if (photo && !isSavablePhoto(photo)) {
     await bot
-      .sendMessage(
-        chatId,
-        'ℹ️ Этот пост сейчас доступен только как превью — сохранить фото в полном качестве не получится. Попробуйте позже.'
-      )
+      .sendMessage(chatId, L.previewOnly)
       .catch(() => {});
     return;
   }
 
-  const isPhoto = Boolean(photo);
-  const { stars, noun } = downloadPricing(isPhoto ? 'photo' : 'video');
+  const kind = photo ? 'photo' : 'video';
+  const { stars } = downloadPricing(kind);
 
   await sendStarsInvoice({
     bot,
     chatId,
-    title: `Скачать ${noun}`,
-    description: `Сохраняемая копия (${noun}) за ${stars} Stars. После оплаты бот пришлёт файл сюда.`,
+    title: L.invoiceDownloadTitle(kind),
+    description: L.invoiceDownloadDesc(kind, stars),
     payload: buildBillingPayload('download', stars, {
       shortcode,
     }),
     amount: stars,
-    label: `Скачивание (${noun})`,
-    errorText: 'Не удалось сформировать счёт на скачивание.',
+    label: L.invoiceDownloadLabel(kind),
+    errorText: L.invoiceDownloadError,
   });
 }
 
@@ -123,19 +124,21 @@ export async function sendDownloadInvoice(
 export async function sendPassInvoice(
   bot: TelegramBot,
   chatId: number,
-  shortcode?: string
+  shortcode?: string,
+  lang: Lang = 'ru'
 ) {
+  const L = strings(lang);
   await sendStarsInvoice({
     bot,
     chatId,
-    title: 'Безлимит на скачивание',
-    description: `Разовая покупка — навсегда сохраняй любые видео без оплаты за каждое, в любом чате с ботом и в личке. ${PERSONAL_PRO_PRICE_STARS} Stars.`,
+    title: L.invoicePassTitle,
+    description: L.invoicePassDesc(PERSONAL_PRO_PRICE_STARS),
     payload: buildBillingPayload('personal_pro', PERSONAL_PRO_PRICE_STARS, {
       shortcode,
     }),
     amount: PERSONAL_PRO_PRICE_STARS,
-    label: 'Безлимит навсегда',
-    errorText: 'Не удалось сформировать счёт на безлимит.',
+    label: L.invoicePassLabel,
+    errorText: L.invoicePassError,
   });
 }
 
@@ -148,8 +151,9 @@ export async function handleDonateCallback(
 
   if (!query.message || !chatId) return;
 
-  const title = 'Поддержка InstaFix Bot';
-  const description = `Добровольный донат в размере ${amount} Stars на развитие проекта.`;
+  const L = strings(langFromCode(query.from.language_code));
+  const title = L.invoiceDonateTitle;
+  const description = L.invoiceDonateDesc(amount);
   const payload = buildBillingPayload('donate', amount);
 
   await sendStarsInvoice({
@@ -160,16 +164,82 @@ export async function handleDonateCallback(
     description,
     payload,
     amount,
-    label: 'Донат',
-    errorText: 'Произошла ошибка при формировании счета.',
+    label: L.invoiceDonateLabel,
+    errorText: L.invoiceDonateError,
   });
 }
 
+// Gives the Stars back when the bot could not deliver what was paid for.
+// Falls back to pointing the user at /feedback and paging the admin if the
+// refund call itself fails, so a failed purchase is never silently kept.
+async function refundPayment(
+  bot: TelegramBot,
+  params: {
+    chatId: number;
+    telegramId: number | undefined;
+    chargeId: string;
+    reason: string;
+    userText: string;
+    lang: Lang;
+  }
+) {
+  const { chatId, telegramId, chargeId, reason, userText } = params;
+  const L = strings(params.lang);
+
+  if (telegramId) {
+    try {
+      await bot.refundStarPayment(telegramId, chargeId);
+      await setBillingEventStatus(chargeId, 'refunded');
+      log.warn('Stars payment refunded', { telegramId, chargeId, reason });
+      await bot
+        .sendMessage(chatId, `${userText}\n\n${L.refundDone}`)
+        .catch(() => {});
+      return;
+    } catch (err) {
+      log.error('Stars refund failed', {
+        telegramId,
+        chargeId,
+        reason,
+        err: String(err),
+      });
+    }
+  }
+
+  await setBillingEventStatus(chargeId, 'refund_failed');
+  await bot
+    .sendMessage(
+      chatId,
+      `${userText}\n\n${L.refundManual}`
+    )
+    .catch(() => {});
+  if (ADMIN_CHAT_ID) {
+    await bot
+      .sendMessage(
+        ADMIN_CHAT_ID,
+        `🚨 [BILLING] Нужен ручной возврат\nuser: ${telegramId ?? 'unknown'}\ncharge: ${chargeId}\nпричина: ${reason}`
+      )
+      .catch(() => {});
+  }
+}
+
 export function registerPaymentHandlers(bot: TelegramBot) {
-  bot.on('pre_checkout_query', query => {
-    bot.answerPreCheckoutQuery(query.id, true).catch(err => {
+  bot.on('pre_checkout_query', async query => {
+    try {
+      // Entitlements live in the database. If it can't take the write, decline
+      // here — before Telegram charges anything — rather than refund after.
+      const kind = parseBillingPayload(query.invoice_payload)?.kind;
+      if (kind === 'personal_pro' && !(await isDbHealthy())) {
+        log.warn('Declining checkout: database unavailable', { kind });
+        await bot.answerPreCheckoutQuery(query.id, false, {
+          error_message: strings(langFromCode(query.from.language_code))
+            .checkoutUnavailable,
+        });
+        return;
+      }
+      await bot.answerPreCheckoutQuery(query.id, true);
+    } catch (err) {
       log.error('pre_checkout_query failed', { err: String(err) });
-    });
+    }
   });
 
   bot.on('message', async msg => {
@@ -179,13 +249,15 @@ export function registerPaymentHandlers(bot: TelegramBot) {
     const telegramId = msg.from?.id;
     const payment = msg.successful_payment;
     const amount = payment.total_amount;
-    const username = msg.from?.username ? `@${msg.from.username}` : 'Друг';
+    const chargeId = payment.telegram_payment_charge_id;
+    const lang = langFromCode(msg.from?.language_code);
+    const L = strings(lang);
+    const username = msg.from?.username ? `@${msg.from.username}` : L.friend;
     const parsedPayload =
       parseBillingPayload(payment.invoice_payload) ?? undefined;
     const billingKind = parsedPayload?.kind ?? 'donate';
-    const billingChatId = parsedPayload?.chatId;
 
-    log.info('Donation received', {
+    log.info('Payment received', {
       telegramId,
       amount,
       username,
@@ -193,39 +265,60 @@ export function registerPaymentHandlers(bot: TelegramBot) {
       payload: payment.invoice_payload,
     });
 
-    if (DATABASE_URL && telegramId) {
+    if (telegramId) {
       await createUser(telegramId, msg.from?.username);
-      await recordBillingEvent({
+    }
+    const recorded = await recordBillingEvent({
+      telegramId,
+      chatId,
+      kind: billingKind,
+      provider: 'telegram_stars',
+      payload: payment.invoice_payload,
+      amount,
+      currency: payment.currency,
+      status: 'paid',
+      telegramPaymentChargeId: chargeId,
+      providerPaymentChargeId: payment.provider_payment_charge_id,
+    });
+    if (recorded === 'duplicate') {
+      log.warn('Duplicate successful_payment ignored', {
         telegramId,
-        chatId: billingChatId ?? chatId,
-        kind: billingKind,
-        provider: 'telegram_stars',
-        payload: payment.invoice_payload,
-        amount,
-        currency: payment.currency,
-        status: 'paid',
-        telegramPaymentChargeId: payment.telegram_payment_charge_id,
-        providerPaymentChargeId: payment.provider_payment_charge_id,
+        chargeId,
+        billingKind,
       });
+      return;
     }
 
-    if (billingKind === 'personal_pro' && telegramId) {
-      await setPremium(telegramId);
-      await grantPersonalPro(telegramId, 'telegram_stars');
-      await bot
-        .sendMessage(
+    if (billingKind === 'personal_pro') {
+      const activated = telegramId
+        ? await activatePersonalPro(
+            telegramId,
+            msg.from?.username,
+            'telegram_stars'
+          )
+        : false;
+      if (!activated) {
+        await refundPayment(bot, {
           chatId,
-          '♾️ *Безлимит активирован!*\n\n' +
-            'Теперь сохраняй любые видео без оплаты — просто жми 💾 на любом ролике.\n' +
-            'Работает в *любом чате, где есть бот*, и здесь, в личке с ботом.',
-          { parse_mode: 'Markdown' }
-        )
+          telegramId,
+          chargeId,
+          reason: 'personal_pro activation failed',
+          userText: L.passActivationFailed,
+          lang,
+        });
+        return;
+      }
+      await bot
+        .sendMessage(chatId, L.passActivated, { parse_mode: 'Markdown' })
         .catch(() => {});
       // If the pass was bought from a single-media flow, deliver that item too.
+      // The pass itself is active, so a failed delivery is not a refund case —
+      // the user can simply press the save button again.
       if (parsedPayload?.shortcode) {
         try {
           await deliverInstaMedia(bot, chatId, parsedPayload.shortcode, {
             protect: false,
+            lang,
           });
         } catch (err) {
           log.error('Pass-flow media delivery failed', {
@@ -233,6 +326,9 @@ export function registerPaymentHandlers(bot: TelegramBot) {
             shortcode: parsedPayload.shortcode,
             err: String(err),
           });
+          await bot
+            .sendMessage(chatId, L.passFileFailed)
+            .catch(() => {});
         }
       }
       return;
@@ -240,11 +336,12 @@ export function registerPaymentHandlers(bot: TelegramBot) {
 
     if (billingKind === 'download' && parsedPayload?.shortcode) {
       await bot
-        .sendMessage(chatId, '✅ Оплата получена, отправляю файл…')
+        .sendMessage(chatId, L.paidSending)
         .catch(() => {});
       try {
         await deliverInstaMedia(bot, chatId, parsedPayload.shortcode, {
           protect: false,
+          lang,
         });
       } catch (err) {
         log.error('Paid download delivery failed', {
@@ -252,20 +349,24 @@ export function registerPaymentHandlers(bot: TelegramBot) {
           shortcode: parsedPayload.shortcode,
           err: String(err),
         });
-        await bot
-          .sendMessage(
-            chatId,
-            '❌ Не удалось отправить файл. Напишите /feedback — вернём звёзды.'
-          )
-          .catch(() => {});
+        await refundPayment(bot, {
+          chatId,
+          telegramId,
+          chargeId,
+          reason: `download delivery failed: ${String(err)}`,
+          userText: L.fileFailed,
+          lang,
+        });
       }
       return;
     }
 
-    const replyText =
-      `🎉 *Спасибо большое, ${username}!*\n\n` +
-      `Ваш донат в размере *${amount} Stars* успешно получен. ❤️`;
+    const replyText = L.donateThanks(username, amount);
 
-    await bot.sendMessage(chatId, replyText, { parse_mode: 'Markdown' });
+    await bot
+      .sendMessage(chatId, replyText, { parse_mode: 'Markdown' })
+      .catch(err => {
+        log.error('Donation thanks failed', { err: String(err) });
+      });
   });
 }

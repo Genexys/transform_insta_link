@@ -33,6 +33,11 @@
     "ts-node": "^10.9.0",
     "typescript": "^5.9.3"
   },
+  "overrides": {
+    "node-pg-migrate": {
+      "glob": "^14.0.4"
+    }
+  },
   "keywords": [
     "telegram",
     "bot",

@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.DELETE_CALLBACK_PREFIX = void 0;
 exports.registerMessageHandlers = registerMessageHandlers;
 const app_env_1 = require("./app_env");
 const db_1 = require("./db");
@@ -8,11 +9,92 @@ const insta_preview_client_1 = require("./insta_preview_client");
 const entity_utils_1 = require("./entity_utils");
 const bot_identity_1 = require("./bot_identity");
 const billing_1 = require("./billing");
+const i18n_1 = require("./i18n");
 const runtime_1 = require("./runtime");
+exports.DELETE_CALLBACK_PREFIX = 'del:';
+function platformLabels(fixedLinks) {
+    const platforms = new Set();
+    fixedLinks.forEach(url => {
+        if (url.includes(link_utils_1.INSTA_FIX_DOMAIN) || url.includes(link_utils_1.INSTA_FIX_FALLBACK))
+            platforms.add('📸 Instagram');
+        else if (link_utils_1.TWITTER_FIXERS.some(f => url.includes(f)))
+            platforms.add('🐦 X/Twitter');
+        else if (link_utils_1.TIKTOK_FIXERS.some(f => url.includes(f)))
+            platforms.add('🎵 TikTok');
+        else if (url.includes(link_utils_1.REDDIT_EMBED_DOMAIN))
+            platforms.add('🟠 Reddit');
+        else if (url.includes('bskx'))
+            platforms.add('🦋 Bluesky');
+        else if (url.includes('fixdeviantart'))
+            platforms.add('🎨 DeviantArt');
+        else if (url.includes('phixiv'))
+            platforms.add('🅿️ Pixiv');
+        else if (url.includes('pinterest') || url.includes('pin.it'))
+            platforms.add('📌 Pinterest');
+    });
+    return Array.from(platforms);
+}
+const HANDLED_MESSAGES_MAX = 2000;
+const handledLinksByMessage = new Map();
+function rememberHandledLinks(key, links) {
+    const known = handledLinksByMessage.get(key) ?? new Set();
+    links.forEach(link => known.add(link));
+    handledLinksByMessage.delete(key);
+    handledLinksByMessage.set(key, known);
+    if (handledLinksByMessage.size > HANDLED_MESSAGES_MAX) {
+        const oldest = handledLinksByMessage.keys().next().value;
+        if (oldest !== undefined)
+            handledLinksByMessage.delete(oldest);
+    }
+}
+const DELETE_RIGHTS_TTL_MS = 5 * 60 * 1000;
+const deleteRightsCache = new Map();
+async function canDeleteMessages(bot, chatId) {
+    const cached = deleteRightsCache.get(chatId);
+    if (cached && cached.expires > Date.now())
+        return cached.value;
+    let value = true;
+    try {
+        const botId = await (0, bot_identity_1.getBotId)(bot);
+        if (botId) {
+            const member = await bot.getChatMember(chatId, botId);
+            value =
+                member.status === 'creator' ||
+                    (member.status === 'administrator' &&
+                        member.can_delete_messages ===
+                            true);
+        }
+    }
+    catch (err) {
+        runtime_1.log.warn('Could not read bot rights in chat', { chatId, err: String(err) });
+    }
+    deleteRightsCache.set(chatId, {
+        value,
+        expires: Date.now() + DELETE_RIGHTS_TTL_MS,
+    });
+    return value;
+}
+const rightsHintSent = new Set();
+async function maybeSendRightsHint(bot, chatId, settings, L, threadId) {
+    if (rightsHintSent.has(chatId) || settings?.rights_hint_sent_at)
+        return;
+    rightsHintSent.add(chatId);
+    try {
+        await bot.sendMessage(chatId, L.rightsHint, {
+            disable_notification: true,
+            ...(threadId ? { message_thread_id: threadId } : {}),
+        });
+        await (0, db_1.setChatSetting)(chatId, 'rights_hint_sent_at', new Date());
+    }
+    catch (err) {
+        runtime_1.log.warn('Rights hint failed', { chatId, err: String(err) });
+    }
+}
 function registerMessageHandlers(bot, resolvers, options) {
     bot.on('inline_query', async (query) => {
         const queryText = query.query.trim();
         const queryId = query.id;
+        const L = (0, i18n_1.strings)((0, i18n_1.langFromCode)(query.from.language_code));
         runtime_1.log.info('Inline query received', {
             queryId,
             textLength: queryText.length,
@@ -24,9 +106,9 @@ function registerMessageHandlers(bot, resolvers, options) {
                         type: 'article',
                         id: 'instruction',
                         title: '📱 Link Fixer',
-                        description: 'Введите ссылку для исправления',
+                        description: L.inlineHintDesc,
                         input_message_content: {
-                            message_text: '📱 Отправьте ссылку для получения рабочей версии',
+                            message_text: L.inlineHintText,
                         },
                     },
                 ]);
@@ -38,8 +120,8 @@ function registerMessageHandlers(bot, resolvers, options) {
                     {
                         type: 'article',
                         id: 'no_links',
-                        title: '❌ ссылки не найдены',
-                        description: 'Убедитесь что отправили правильную ссылку',
+                        title: L.inlineNoLinksTitle,
+                        description: L.inlineNoLinksDesc,
                         input_message_content: {
                             message_text: queryText,
                         },
@@ -47,32 +129,17 @@ function registerMessageHandlers(bot, resolvers, options) {
                 ]);
                 return;
             }
+            const prefs = resolvers.getPreferredFixers?.() ?? {};
             const fixedLinks = socialLinks.map(link => {
                 const fullLink = link.startsWith('http') ? link : `https://${link}`;
-                return (0, link_utils_1.convertToInlineFix)(fullLink);
+                return (0, link_utils_1.convertToInlineFix)(fullLink, prefs);
             });
-            let fixedText = queryText;
-            socialLinks.forEach((originalLink, index) => {
-                fixedText = fixedText.replace(originalLink, fixedLinks[index]);
-            });
-            const platforms = new Set();
-            fixedLinks.forEach(url => {
-                if (url.includes(link_utils_1.INSTA_FIX_DOMAIN) || url.includes(link_utils_1.INSTA_FIX_FALLBACK))
-                    platforms.add('📸 Instagram');
-                else if (link_utils_1.TIKTOK_FIXERS.some(f => url.includes(f)))
-                    platforms.add('🎵 TikTok');
-                else if (link_utils_1.TWITTER_FIXERS.some(f => url.includes(f)))
-                    platforms.add('🐦 Twitter');
-                else if (url.includes(link_utils_1.REDDIT_EMBED_DOMAIN))
-                    platforms.add('🟠 Reddit');
-                else if (url.includes('bskx'))
-                    platforms.add('🦋 Bluesky');
-                else if (url.includes('fixdeviantart'))
-                    platforms.add('🎨 DeviantArt');
-                else if (url.includes('phixiv'))
-                    platforms.add('🅿️ Pixiv');
-            });
-            const platformStr = platforms.size > 0 ? Array.from(platforms).join(' · ') : 'ссылка';
+            const { text: fixedText } = (0, entity_utils_1.applyLinkReplacements)(queryText, undefined, socialLinks.map((original, index) => ({
+                original,
+                replacement: fixedLinks[index],
+            })));
+            const labels = platformLabels(fixedLinks);
+            const platformStr = labels.length > 0 ? labels.join(' · ') : L.genericLink;
             fixedLinks.forEach(url => {
                 if (!url.includes(link_utils_1.INSTA_FIX_DOMAIN))
                     return;
@@ -88,7 +155,7 @@ function registerMessageHandlers(bot, resolvers, options) {
                     title: `✅ ${platformStr}`,
                     description: fixedLinks.length === 1
                         ? fixedLinks[0]
-                        : `${fixedLinks.length} ссылок исправлено`,
+                        : L.inlineFixedCount(fixedLinks.length),
                     input_message_content: {
                         message_text: fixedText,
                         link_preview_options: {
@@ -105,8 +172,8 @@ function registerMessageHandlers(bot, resolvers, options) {
                     results.push({
                         type: 'video',
                         id: `video_${instaShortcode}`,
-                        title: '🎥 Видео в чат',
-                        description: 'Отправить видео файлом',
+                        title: L.inlineVideoTitle,
+                        description: L.inlineVideoDesc,
                         video_url: `https://${app_env_1.INSTA_PREVIEW_HOST}/v/${encodeURIComponent(instaShortcode)}.mp4`,
                         mime_type: 'video/mp4',
                         thumbnail_url: `https://${app_env_1.INSTA_PREVIEW_HOST}/thumb/${encodeURIComponent(instaShortcode)}.jpg`,
@@ -127,10 +194,10 @@ function registerMessageHandlers(bot, resolvers, options) {
                     {
                         type: 'article',
                         id: 'inline_error',
-                        title: '⚠️ Не удалось обработать ссылку',
-                        description: 'Попробуйте ещё раз или отправьте ссылку боту в чат',
+                        title: L.inlineErrorTitle,
+                        description: L.inlineErrorDesc,
                         input_message_content: {
-                            message_text: queryText || 'Не удалось обработать inline query',
+                            message_text: queryText || L.inlineErrorText,
                         },
                     },
                 ]);
@@ -143,9 +210,16 @@ function registerMessageHandlers(bot, resolvers, options) {
             }
         }
     });
-    bot.on('message', async (msg) => {
+    bot.on('chosen_inline_result', result => {
+        for (const link of (0, link_utils_1.findsocialLinks)(result.query ?? '')) {
+            (0, db_1.logLinkEvent)((0, link_utils_1.classifySocialLink)(link) ?? 'other', 'inline', false, undefined, result.from.id);
+        }
+    });
+    async function handleLinkMessage(msg, edited) {
         const chatId = msg.chat.id;
-        const messageText = msg.text;
+        const isCaption = !msg.text && Boolean(msg.caption);
+        const messageText = msg.text ?? msg.caption;
+        const messageEntities = (msg.text ? msg.entities : msg.caption_entities);
         const isGroup = msg.chat.type === 'group' || msg.chat.type === 'supergroup';
         if (!messageText || messageText.startsWith('/')) {
             return;
@@ -153,149 +227,178 @@ function registerMessageHandlers(bot, resolvers, options) {
         runtime_1.log.info('Message received', {
             chatId,
             isGroup,
+            edited,
+            isCaption,
             userId: msg.from?.id,
             textLength: messageText.length,
         });
-        const socialLinks = (0, link_utils_1.findsocialLinks)(messageText);
+        let socialLinks = (0, link_utils_1.findsocialLinks)(messageText);
+        if (socialLinks.length === 0)
+            return;
+        const chatSettings = isGroup ? await (0, db_1.getChatSettings)(chatId) : null;
+        const disabledPlatforms = chatSettings?.disabled_platforms ?? [];
+        if (disabledPlatforms.length > 0) {
+            socialLinks = socialLinks.filter(link => {
+                const platform = (0, link_utils_1.classifySocialLink)(link);
+                return !platform || !disabledPlatforms.includes(platform);
+            });
+        }
+        const handledKey = `${chatId}:${msg.message_id}`;
+        const alreadyHandled = handledLinksByMessage.get(handledKey);
+        if (alreadyHandled) {
+            socialLinks = socialLinks.filter(link => !alreadyHandled.has(link));
+        }
         runtime_1.log.info('Social links extracted', {
             chatId,
             count: socialLinks.length,
         });
-        if (socialLinks.length > 0) {
-            const msgUserId = msg.from?.id;
-            const fixedLinks = await Promise.all(socialLinks.map(async (link) => {
-                const fullLink = link.startsWith('http') ? link : `https://${link}`;
-                if (fullLink.includes('pinterest') || fullLink.includes('pin.it')) {
-                    return fullLink;
-                }
-                if (fullLink.includes('instagram.com') ||
-                    fullLink.includes('instagr.am')) {
-                    return resolvers.getWorkingInstaFixUrl(fullLink, isGroup ? chatId : undefined, msgUserId);
-                }
-                if (fullLink.includes('tiktok.com')) {
-                    return resolvers.getWorkingTikTokUrl(fullLink, isGroup ? chatId : undefined, msgUserId);
-                }
-                if (fullLink.includes('x.com') || fullLink.includes('twitter.com')) {
-                    return resolvers.getWorkingTwitterUrl(fullLink, isGroup ? chatId : undefined, msgUserId);
-                }
-                let platform = 'other';
-                if (fullLink.includes('reddit.com'))
-                    platform = 'reddit';
-                else if (fullLink.includes('bsky.app'))
-                    platform = 'bluesky';
-                else if (fullLink.includes('deviantart.com'))
-                    platform = 'deviantart';
-                else if (fullLink.includes('pixiv.net'))
-                    platform = 'pixiv';
-                (0, db_1.logLinkEvent)(platform, 'converted', false, isGroup ? chatId : undefined, msgUserId);
-                return (0, link_utils_1.convertToInstaFix)(fullLink);
-            }));
-            const username = msg.from?.username ? `@${msg.from.username}` : 'кто-то';
-            const platforms = new Set();
-            fixedLinks.forEach(url => {
-                if (url.includes(link_utils_1.INSTA_FIX_DOMAIN) || url.includes(link_utils_1.INSTA_FIX_FALLBACK))
-                    platforms.add('📸 Instagram');
-                else if (link_utils_1.TWITTER_FIXERS.some(f => url.includes(f)))
-                    platforms.add('🐦 X/Twitter');
-                else if (link_utils_1.TIKTOK_FIXERS.some(f => url.includes(f)))
-                    platforms.add('🎵 TikTok');
-                else if (url.includes(link_utils_1.REDDIT_EMBED_DOMAIN))
-                    platforms.add('🟠 Reddit');
-                else if (url.includes('bskx'))
-                    platforms.add('🦋 Bluesky');
-                else if (url.includes('fixdeviantart'))
-                    platforms.add('🎨 DeviantArt');
-                else if (url.includes('phixiv'))
-                    platforms.add('🅿️ Pixiv');
-                else if (url.includes('vxvk'))
-                    platforms.add('💙 VK Video/Clip');
-                else if (url.includes('pinterest') || url.includes('pin.it'))
-                    platforms.add('📌 Pinterest');
-            });
-            const platformStr = platforms.size > 0 ? `(${Array.from(platforms).join(', ')})` : '';
-            runtime_1.log.info('Social links fixed', {
-                chatId,
-                count: fixedLinks.length,
-                platforms: Array.from(platforms),
-            });
-            const chatSettings = isGroup ? await (0, db_1.getChatSettings)(chatId) : null;
+        if (socialLinks.length === 0)
+            return;
+        rememberHandledLinks(handledKey, socialLinks);
+        const L = (0, i18n_1.strings)(isGroup
+            ? ((0, i18n_1.normalizeLang)(chatSettings?.language) ?? 'ru')
+            : (0, i18n_1.langFromCode)(msg.from?.language_code));
+        const msgUserId = msg.from?.id;
+        const eventChatId = isGroup ? chatId : undefined;
+        const fixedLinks = await Promise.all(socialLinks.map(async (link) => {
+            const fullLink = link.startsWith('http') ? link : `https://${link}`;
+            const platform = (0, link_utils_1.classifySocialLink)(fullLink);
+            if (platform === 'pinterest') {
+                return fullLink;
+            }
+            if (platform === 'instagram') {
+                return resolvers.getWorkingInstaFixUrl(fullLink, eventChatId, msgUserId);
+            }
+            if (platform === 'tiktok') {
+                return resolvers.getWorkingTikTokUrl(fullLink, eventChatId, msgUserId);
+            }
+            if (platform === 'twitter') {
+                return resolvers.getWorkingTwitterUrl(fullLink, eventChatId, msgUserId);
+            }
+            (0, db_1.logLinkEvent)(platform ?? 'other', 'converted', false, eventChatId, msgUserId);
+            return (0, link_utils_1.convertToInstaFix)(fullLink);
+        }));
+        const labels = platformLabels(fixedLinks);
+        runtime_1.log.info('Social links fixed', {
+            chatId,
+            count: fixedLinks.length,
+            platforms: labels,
+        });
+        let replaceOriginal = isGroup &&
+            !isCaption &&
+            !alreadyHandled &&
+            !(chatSettings?.keep_original ?? false);
+        const threadId = msg
+            .message_thread_id;
+        if (replaceOriginal && !(await canDeleteMessages(bot, chatId))) {
+            replaceOriginal = false;
+            await maybeSendRightsHint(bot, chatId, chatSettings, L, threadId);
+        }
+        const fullRewrite = replaceOriginal || (!isGroup && !isCaption);
+        let finalMessage;
+        let finalEntities;
+        if (fullRewrite) {
+            const username = msg.from?.username
+                ? `@${msg.from.username}`
+                : L.someone;
+            const platformStr = labels.length > 0 ? `(${labels.join(', ')})` : '';
             const quietMode = chatSettings?.quiet_mode ?? false;
-            const prefix = quietMode
-                ? ''
-                : `Saved ${username} a click ${platformStr}:\n\n`;
-            const ping = (0, entity_utils_1.buildMentionPing)(messageText, msg.entities);
+            const prefix = quietMode ? '' : L.rewritePrefix(username, platformStr);
+            const ping = (0, entity_utils_1.buildMentionPing)(messageText, messageEntities, {
+                label: L.mentionLabel,
+            });
             const fullPrefix = (ping?.text ?? '') + prefix;
-            const replacements = socialLinks.map((original, index) => ({
+            const { text, entities: bodyEntities } = (0, entity_utils_1.applyLinkReplacements)(messageText, messageEntities, socialLinks.map((original, index) => ({
                 original,
                 replacement: fixedLinks[index],
-            }));
-            const { text: finalMessage, entities: bodyEntities } = (0, entity_utils_1.applyLinkReplacements)(messageText, msg.entities, replacements, fullPrefix);
-            const finalEntities = ping
-                ? [...ping.entities, ...bodyEntities]
-                : bodyEntities;
-            const isDownloadable = (url) => link_utils_1.TIKTOK_FIXERS.some(f => url.includes(f));
-            const replyMarkup = options.downloadsEnabled &&
-                fixedLinks.length === 1 &&
-                isDownloadable(fixedLinks[0])
-                ? {
-                    inline_keyboard: [
-                        [
-                            {
-                                text: '📥 Скачать видео/фото',
-                                callback_data: 'download_video',
-                            },
-                        ],
-                    ],
-                }
-                : undefined;
-            if (isGroup) {
-                try {
-                    const replyToMessageId = msg.reply_to_message?.message_id ?? msg.message_id;
-                    const threadId = msg.message_thread_id;
-                    const sendOptions = {
-                        link_preview_options: { is_disabled: false },
-                        reply_parameters: {
-                            message_id: replyToMessageId,
-                            allow_sending_without_reply: true,
-                        },
-                        reply_markup: replyMarkup,
-                    };
-                    if (threadId)
-                        sendOptions.message_thread_id = threadId;
-                    if (finalEntities.length)
-                        sendOptions.entities = finalEntities;
-                    const sent = await bot.sendMessage(chatId, finalMessage, sendOptions);
-                    runtime_1.log.info('Reply sent successfully', {
-                        chatId,
-                        replyToMessageId,
-                    });
-                    scheduleInstaPreviewRefresh(bot, chatId, sent.message_id, finalMessage, finalEntities, fixedLinks, options.downloadsEnabled);
-                    await bot.deleteMessage(chatId, msg.message_id);
-                }
-                catch (error) {
-                    if (error instanceof Error) {
-                        runtime_1.log.error('Failed to send reply', {
-                            chatId,
-                            replyToMessageId: msg.message_id,
-                            err: error.message,
-                        });
-                    }
-                }
+            })), fullPrefix);
+            finalMessage = text;
+            finalEntities = ping ? [...ping.entities, ...bodyEntities] : bodyEntities;
+        }
+        else {
+            finalMessage = fixedLinks.join('\n');
+            finalEntities = [];
+        }
+        const isDownloadable = (url) => link_utils_1.TIKTOK_FIXERS.some(f => url.includes(f));
+        const keyboard = [];
+        if (options.downloadsEnabled &&
+            fixedLinks.length === 1 &&
+            isDownloadable(fixedLinks[0])) {
+            keyboard.push([
+                { text: L.downloadButton, callback_data: 'download_video' },
+            ]);
+        }
+        const extraRows = [];
+        if (isGroup && (chatSettings?.delete_button ?? true) && msgUserId) {
+            extraRows.push([
+                {
+                    text: L.deleteButton,
+                    callback_data: `${exports.DELETE_CALLBACK_PREFIX}${msgUserId}`,
+                },
+            ]);
+        }
+        keyboard.push(...extraRows);
+        const replyMarkup = keyboard.length
+            ? { inline_keyboard: keyboard }
+            : undefined;
+        const sendOptions = {
+            link_preview_options: { is_disabled: false },
+            reply_markup: replyMarkup,
+        };
+        if (finalEntities.length)
+            sendOptions.entities = finalEntities;
+        if (isGroup) {
+            const replyToMessageId = replaceOriginal
+                ? (msg.reply_to_message?.message_id ?? msg.message_id)
+                : msg.message_id;
+            sendOptions.reply_parameters = {
+                message_id: replyToMessageId,
+                allow_sending_without_reply: true,
+            };
+            if (threadId)
+                sendOptions.message_thread_id = threadId;
+        }
+        else if (isCaption) {
+            sendOptions.reply_parameters = {
+                message_id: msg.message_id,
+                allow_sending_without_reply: true,
+            };
+        }
+        let sent;
+        try {
+            sent = await bot.sendMessage(chatId, finalMessage, sendOptions);
+            runtime_1.log.info('Fixed links sent', {
+                chatId,
+                mode: replaceOriginal ? 'replace' : fullRewrite ? 'rewrite' : 'reply',
+            });
+        }
+        catch (error) {
+            runtime_1.log.error('Failed to send fixed links', {
+                chatId,
+                messageId: msg.message_id,
+                err: error instanceof Error ? error.message : String(error),
+            });
+            return;
+        }
+        scheduleInstaPreviewRefresh(bot, chatId, sent.message_id, finalMessage, finalEntities, fixedLinks, options.downloadsEnabled, L, extraRows);
+        if (replaceOriginal) {
+            try {
+                await bot.deleteMessage(chatId, msg.message_id);
             }
-            else {
-                const dmOptions = {
-                    link_preview_options: { is_disabled: false },
-                    reply_markup: replyMarkup,
-                };
-                if (finalEntities.length)
-                    dmOptions.entities = finalEntities;
-                bot
-                    .sendMessage(chatId, finalMessage, dmOptions)
-                    .then(sent => {
-                    scheduleInstaPreviewRefresh(bot, chatId, sent.message_id, finalMessage, finalEntities, fixedLinks, options.downloadsEnabled);
-                })
-                    .catch(() => { });
+            catch (error) {
+                deleteRightsCache.set(chatId, {
+                    value: false,
+                    expires: Date.now() + DELETE_RIGHTS_TTL_MS,
+                });
+                runtime_1.log.warn('Failed to delete original message', {
+                    chatId,
+                    messageId: msg.message_id,
+                    err: error instanceof Error ? error.message : String(error),
+                });
+                await maybeSendRightsHint(bot, chatId, chatSettings, L, threadId);
             }
+        }
+        if (chatSettings?.albums_enabled ?? true) {
             maybeSendInstaCarouselAlbum(bot, chatId, socialLinks, msg).catch(err => {
                 runtime_1.log.warn('insta carousel album send failed', {
                     chatId,
@@ -303,11 +406,18 @@ function registerMessageHandlers(bot, resolvers, options) {
                 });
             });
         }
+    }
+    const safely = (msg, edited) => handleLinkMessage(msg, edited).catch(err => {
+        runtime_1.log.error('Link message handler failed', {
+            chatId: msg.chat.id,
+            err: err instanceof Error ? err.message : String(err),
+        });
     });
+    bot.on('message', msg => safely(msg, false));
+    bot.on('edited_message', msg => safely(msg, true));
 }
 const PREVIEW_REFRESH_BUDGET_BYTES = 18 * 1024 * 1024;
 const PREVIEW_REFRESH_DELAY_MS = 75_000;
-const OVERSIZED_VIDEO_NOTE = '\n\n📦 Видео слишком большое для авто-превью — нажмите кнопку ниже, чтобы посмотреть в чате или сохранить себе.';
 const INSTA_PREVIEW_PATH_REGEX = new RegExp(`(https://${link_utils_1.INSTA_FIX_DOMAIN.replace(/\./g, '\\.')}/(?:reel|reels|p|tv)/[A-Za-z0-9_-]+)(\\?[^\\s]*)?`, 'g');
 function extractShortcodeFromPreviewUrl(url) {
     if (!url.includes(link_utils_1.INSTA_FIX_DOMAIN))
@@ -315,22 +425,21 @@ function extractShortcodeFromPreviewUrl(url) {
     const match = url.match(/\/(?:reel|reels|p|tv)\/([A-Za-z0-9_-]+)/);
     return match ? match[1] : null;
 }
-async function buildInstaSaveRow(bot, shortcode, opts) {
+async function buildInstaSaveRow(bot, shortcode, L, kind) {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(shortcode))
         return null;
     const username = await (0, bot_identity_1.getBotUsername)(bot);
     if (!username)
         return null;
-    const priceStars = opts?.priceStars ?? billing_1.DOWNLOAD_PRICE_STARS;
-    const label = opts?.noun ? `Сохранить ${opts.noun}` : 'Сохранить себе';
+    const priceStars = kind === 'photo' ? billing_1.PHOTO_DOWNLOAD_PRICE_STARS : billing_1.DOWNLOAD_PRICE_STARS;
     return [
         {
-            text: `💾 ${label} за ⭐${priceStars}`,
+            text: L.saveButton(kind, priceStars),
             url: `https://t.me/${username}?start=dl_${shortcode}`,
         },
     ];
 }
-function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, entities, fixedLinks, downloadsEnabled) {
+function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, entities, fixedLinks, downloadsEnabled, L, extraRows) {
     const instaShortcodes = fixedLinks
         .map(extractShortcodeFromPreviewUrl)
         .filter((sc) => Boolean(sc));
@@ -354,14 +463,11 @@ function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, entities, fix
             }
         }
         if (singlePhoto && !anyOversized) {
-            const saveRow = await buildInstaSaveRow(bot, instaShortcodes[0], {
-                priceStars: billing_1.PHOTO_DOWNLOAD_PRICE_STARS,
-                noun: 'фото',
-            });
+            const saveRow = await buildInstaSaveRow(bot, instaShortcodes[0], L, 'photo');
             if (!saveRow)
                 return;
             try {
-                await bot.editMessageReplyMarkup({ inline_keyboard: [saveRow] }, { chat_id: chatId, message_id: messageId });
+                await bot.editMessageReplyMarkup({ inline_keyboard: [saveRow, ...extraRows] }, { chat_id: chatId, message_id: messageId });
                 runtime_1.log.info('Insta paid photo save button attached', {
                     chatId,
                     messageId,
@@ -381,16 +487,18 @@ function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, entities, fix
         const downloadKeyboard = [];
         if (canOfferDownload) {
             downloadKeyboard.push([
-                { text: '📥 Скачать видео в чат', callback_data: 'download_video' },
+                { text: L.downloadToChatButton, callback_data: 'download_video' },
             ]);
         }
-        const refreshSaveRow = await buildInstaSaveRow(bot, instaShortcodes[0]);
+        const refreshSaveRow = await buildInstaSaveRow(bot, instaShortcodes[0], L, 'video');
         if (refreshSaveRow)
             downloadKeyboard.push(refreshSaveRow);
-        const downloadMarkup = downloadKeyboard.length ? { inline_keyboard: downloadKeyboard } : undefined;
-        if (!downloadMarkup)
+        if (downloadKeyboard.length === 0)
             return;
-        const notedText = text + OVERSIZED_VIDEO_NOTE;
+        const downloadMarkup = {
+            inline_keyboard: [...downloadKeyboard, ...extraRows],
+        };
+        const notedText = text + L.oversizedNote;
         try {
             const editOptions = {
                 chat_id: chatId,
@@ -451,7 +559,7 @@ function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, entities, fix
     });
 }
 async function maybeSendInstaCarouselAlbum(bot, chatId, socialLinks, sourceMsg) {
-    const igLinks = socialLinks.filter(link => link.includes('instagram.com') || link.includes('instagr.am'));
+    const igLinks = socialLinks.filter(link => (0, link_utils_1.classifySocialLink)(link) === 'instagram');
     if (igLinks.length !== 1)
         return;
     const shortcode = (0, insta_preview_client_1.extractShortcodeFromUrl)(igLinks[0]);

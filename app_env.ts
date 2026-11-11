@@ -16,3 +16,21 @@ export const INSTA_PREVIEW_TOKEN =
   process.env.INSTA_PREVIEW_TOKEN ||
   process.env.EXTRACTOR_SHARED_TOKEN ||
   '';
+
+// Unset → the default; "0" (or anything non-positive) → keep forever.
+function parseDays(value: string | undefined, fallback: number): number {
+  if (value === undefined || value.trim() === '') return fallback;
+  const days = Number.parseInt(value, 10);
+  return Number.isFinite(days) && days > 0 ? days : 0;
+}
+
+// Days to keep rows in the append-only tables. The bot itself only reads the
+// last 7 days of link_events (/chatstats, /health) and never reads error_logs.
+export const LINK_EVENTS_RETENTION_DAYS = parseDays(
+  process.env.LINK_EVENTS_RETENTION_DAYS,
+  90
+);
+export const ERROR_LOGS_RETENTION_DAYS = parseDays(
+  process.env.ERROR_LOGS_RETENTION_DAYS,
+  30
+);

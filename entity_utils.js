@@ -43,7 +43,7 @@ function buildMentionPing(text, entities, opts = {}) {
     const mentions = entities.filter(e => e.type === 'mention' || e.type === 'text_mention');
     if (mentions.length === 0)
         return null;
-    let out = '🔔 Отметили: ';
+    let out = `${opts.label ?? '🔔 Отметили:'} `;
     const outEntities = [];
     const seen = new Set();
     let count = 0;

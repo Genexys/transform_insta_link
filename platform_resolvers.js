@@ -15,19 +15,29 @@ async function fetchWithRetry(url, opts) {
         return await fetch(url, opts);
     }
 }
+const INSTA_HEALTH_OK_TTL_MS = 30_000;
 function createPlatformResolvers(sendAdminAlert) {
+    let instaHealthyUntil = 0;
+    let instaSelfHostedDown = false;
+    let lastWorkingTikTok;
+    let lastWorkingTwitter;
     async function getWorkingInstaFixUrl(originalUrl, chatId, userId) {
         const reelPreview = (0, link_utils_1.rewriteInstagramReelToPreview)(originalUrl);
         const pagePath = originalUrl.replace(link_utils_1.instaRegex, link_utils_1.INSTA_FIX_DOMAIN);
         const selfHostedUrl = reelPreview ?? pagePath;
         try {
-            await fetchWithRetry(`https://${link_utils_1.INSTA_FIX_DOMAIN}/health`, {
-                method: 'GET',
-                redirect: 'manual',
-                signal: AbortSignal.timeout(INSTA_HEALTH_TIMEOUT_MS),
-            });
+            if (Date.now() >= instaHealthyUntil) {
+                await fetchWithRetry(`https://${link_utils_1.INSTA_FIX_DOMAIN}/health`, {
+                    method: 'GET',
+                    redirect: 'manual',
+                    signal: AbortSignal.timeout(INSTA_HEALTH_TIMEOUT_MS),
+                });
+                instaHealthyUntil = Date.now() + INSTA_HEALTH_OK_TTL_MS;
+                instaSelfHostedDown = false;
+            }
         }
         catch {
+            instaSelfHostedDown = true;
             runtime_1.log.warn('Instagram self-hosted unreachable, using fallback', {
                 url: originalUrl,
             });
@@ -77,6 +87,7 @@ function createPlatformResolvers(sendAdminAlert) {
         try {
             const result = await Promise.any(checks);
             const service = link_utils_1.TIKTOK_FIXERS.find(f => result.includes(f)) ?? link_utils_1.TIKTOK_FIXERS[0];
+            lastWorkingTikTok = service;
             (0, db_1.logLinkEvent)('tiktok', service, service !== link_utils_1.TIKTOK_FIXERS[0], chatId, userId);
             return result;
         }
@@ -101,6 +112,7 @@ function createPlatformResolvers(sendAdminAlert) {
         try {
             const result = await Promise.any(checks);
             const service = link_utils_1.TWITTER_FIXERS.find(f => result.includes(f)) ?? link_utils_1.TWITTER_FIXERS[0];
+            lastWorkingTwitter = service;
             (0, db_1.logLinkEvent)('twitter', service, service !== link_utils_1.TWITTER_FIXERS[0], chatId, userId);
             return result;
         }
@@ -110,7 +122,15 @@ function createPlatformResolvers(sendAdminAlert) {
             return originalUrl.replace(link_utils_1.twitterRegex, link_utils_1.TWITTER_FIXERS[0]);
         }
     }
+    function getPreferredFixers() {
+        return {
+            instagramUseFallback: instaSelfHostedDown,
+            tiktok: lastWorkingTikTok,
+            twitter: lastWorkingTwitter,
+        };
+    }
     return {
+        getPreferredFixers,
         getWorkingInstaFixUrl,
         getWorkingTikTokUrl,
         getWorkingTwitterUrl,

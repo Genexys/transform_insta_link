@@ -5,16 +5,17 @@ exports.rewriteInstagramReelToPreview = rewriteInstagramReelToPreview;
 exports.revertUrlForDownload = revertUrlForDownload;
 exports.convertToInstaFix = convertToInstaFix;
 exports.convertToInlineFix = convertToInlineFix;
+exports.classifySocialLink = classifySocialLink;
 exports.findsocialLinks = findsocialLinks;
 exports.INSTA_FIX_DOMAIN = 'previewlinkbot.xyz';
 exports.INSTA_FIX_DOMAIN_LEGACY = 'instapreviewservice-production.up.railway.app';
-exports.INSTA_FIX_FALLBACK = 'vxinstagram.com';
+exports.INSTA_FIX_FALLBACK = 'kkinstagram.com';
 exports.TIKTOK_FIXERS = ['tnktok.com'];
 exports.TWITTER_FIXERS = ['fxtwitter.com', 'fixupx.com'];
 exports.REDDIT_EMBED_DOMAIN = 'transforminstalink-production.up.railway.app';
-exports.instaRegex = /(?:www\.)?(?:instagram\.com|instagr\.am)/;
+exports.instaRegex = /(?:(?:www|m)\.)?(?:instagram\.com|instagr\.am)/;
 exports.instaReelRegex = /(?:www\.)?(?:instagram\.com|instagr\.am)\/reels?\/([A-Za-z0-9_-]+)/;
-exports.tiktokRegex = /(?:(?:www|vm|vt)\.)?tiktok\.com/;
+exports.tiktokRegex = /(?:(?:www|vm|vt|m)\.)?tiktok\.com/;
 exports.twitterRegex = /(?:(?:www|mobile)\.)?(?:x|twitter)\.com/;
 function rewriteInstagramReelToPreview(url) {
     const match = url.match(exports.instaReelRegex);
@@ -50,9 +51,10 @@ function convertToInstaFix(url) {
     if (reelPreview)
         return reelPreview;
     let convertedUrl = url
-        .replace(/(?:www\.)?instagram\.com/g, exports.INSTA_FIX_DOMAIN)
-        .replace(/(?:www\.)?instagr\.am/g, exports.INSTA_FIX_DOMAIN)
-        .replace(/(?:www\.)?reddit\.com/g, exports.REDDIT_EMBED_DOMAIN)
+        .replace(/(?:(?:www|m)\.)?instagram\.com/g, exports.INSTA_FIX_DOMAIN)
+        .replace(/(?:(?:www|m)\.)?instagr\.am/g, exports.INSTA_FIX_DOMAIN)
+        .replace(/^(https?:\/\/)?redd\.it\//, `$1${exports.REDDIT_EMBED_DOMAIN}/comments/`)
+        .replace(/(?:(?:www|old|new|np|m)\.)?reddit\.com/g, exports.REDDIT_EMBED_DOMAIN)
         .replace(/bsky\.app/g, 'bskx.app')
         .replace(/deviantart\.com/g, 'fixdeviantart.com')
         .replace(/pixiv\.net/g, 'phixiv.net');
@@ -61,85 +63,96 @@ function convertToInstaFix(url) {
     }
     return convertedUrl;
 }
-function convertToInlineFix(url) {
-    if (url.includes('pinterest.com') || url.includes('pin.it/')) {
+function convertToInlineFix(url, prefs = {}) {
+    const platform = classifySocialLink(url);
+    if (platform === 'pinterest') {
         return url;
     }
-    if (exports.instaRegex.test(url)) {
+    if (platform === 'instagram') {
+        if (prefs.instagramUseFallback) {
+            return url.replace(exports.instaRegex, exports.INSTA_FIX_FALLBACK);
+        }
         const reelPreviewInline = rewriteInstagramReelToPreview(url);
         if (reelPreviewInline)
             return reelPreviewInline;
         return url.replace(exports.instaRegex, exports.INSTA_FIX_DOMAIN);
     }
-    if (exports.tiktokRegex.test(url)) {
-        return url.replace(exports.tiktokRegex, exports.TIKTOK_FIXERS[0]);
+    if (platform === 'tiktok') {
+        return url.replace(exports.tiktokRegex, prefs.tiktok ?? exports.TIKTOK_FIXERS[0]);
     }
-    if (exports.twitterRegex.test(url)) {
-        return url.replace(exports.twitterRegex, exports.TWITTER_FIXERS[0]);
+    if (platform === 'twitter') {
+        return url.replace(exports.twitterRegex, prefs.twitter ?? exports.TWITTER_FIXERS[0]);
     }
     return convertToInstaFix(url);
 }
+const URL_CANDIDATE_REGEX = /(?:https?:\/\/)?(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?:[/?#]\S*)?/i;
+const TRAILING_PUNCTUATION_REGEX = /[.,!?;:)\]}>»"']*$/;
+function splitHostAndPath(url) {
+    const withoutScheme = url.replace(/^https?:\/\//i, '');
+    const cut = withoutScheme.search(/[/?#]/);
+    return cut === -1
+        ? { host: withoutScheme.toLowerCase(), path: '' }
+        : {
+            host: withoutScheme.slice(0, cut).toLowerCase(),
+            path: withoutScheme.slice(cut),
+        };
+}
+function hostIs(host, domain) {
+    return host === domain || host.endsWith(`.${domain}`);
+}
+function classifySocialLink(url) {
+    const { host, path } = splitHostAndPath(url);
+    if (hostIs(host, 'instagram.com') || hostIs(host, 'instagr.am')) {
+        if (path.startsWith('/share/'))
+            return null;
+        return /\/(?:p|reel|reels|tv)\//.test(path) ? 'instagram' : null;
+    }
+    if (hostIs(host, 'x.com') || hostIs(host, 'twitter.com')) {
+        return /^\/[A-Za-z0-9_]+\/(?:status\/[0-9]+|replies)/.test(path)
+            ? 'twitter'
+            : null;
+    }
+    if (hostIs(host, 'tiktok.com')) {
+        if (host === 'vt.tiktok.com' || host === 'vm.tiktok.com')
+            return 'tiktok';
+        return /^\/@[A-Za-z0-9_.-]+\/video\/[0-9]+/.test(path) ||
+            /^\/t\/[A-Za-z0-9_-]+/.test(path)
+            ? 'tiktok'
+            : null;
+    }
+    if (hostIs(host, 'reddit.com')) {
+        return /^\/r\/[A-Za-z0-9_]+\/comments/.test(path) ||
+            /^\/r\/[A-Za-z0-9_]+\/s\/[A-Za-z0-9_]+/.test(path)
+            ? 'reddit'
+            : null;
+    }
+    if (host === 'redd.it') {
+        return /^\/[A-Za-z0-9]+\/?(?:[?#]|$)/.test(path) ? 'reddit' : null;
+    }
+    if (hostIs(host, 'bsky.app')) {
+        return path.includes('/post/') ? 'bluesky' : null;
+    }
+    if (hostIs(host, 'deviantart.com')) {
+        return path.includes('/art/') ? 'deviantart' : null;
+    }
+    if (hostIs(host, 'pixiv.net')) {
+        return path.includes('/artworks/') ? 'pixiv' : null;
+    }
+    if ((hostIs(host, 'pinterest.com') && path.startsWith('/pin/')) ||
+        (host === 'pin.it' && path.startsWith('/'))) {
+        return 'pinterest';
+    }
+    return null;
+}
 function findsocialLinks(text) {
-    const words = text.split(/\s+/);
     const socialLinks = [];
-    for (let word of words) {
-        const cleanWord = word.replace(/[.,!?;)]*$/, '');
-        if ((cleanWord.includes('instagram.com') ||
-            cleanWord.includes('instagr.am')) &&
-            (cleanWord.includes('/p/') ||
-                cleanWord.includes('/reel/') ||
-                cleanWord.includes('/reels/') ||
-                cleanWord.includes('/tv/'))) {
-            if (!cleanWord.includes('ddinstagram.com') &&
-                !cleanWord.includes('kkinstagram.com') &&
-                !cleanWord.includes(exports.INSTA_FIX_DOMAIN) &&
-                !cleanWord.includes(exports.INSTA_FIX_DOMAIN_LEGACY) &&
-                !cleanWord.includes('vxinstagram.com')) {
-                socialLinks.push(cleanWord);
-            }
-        }
-        if ((cleanWord.includes('x.com') ||
-            cleanWord.includes('twitter.com') ||
-            cleanWord.includes('mobile.twitter.com')) &&
-            (cleanWord.match(/(?:x\.com|(?:mobile\.)?twitter\.com)\/(?:[A-Za-z0-9_]+)\/status\/[0-9]+/) ||
-                cleanWord.match(/(?:x\.com|(?:mobile\.)?twitter\.com)\/(?:[A-Za-z0-9_]+)\/replies/)) &&
-            !exports.TWITTER_FIXERS.some(f => cleanWord.includes(f))) {
-            socialLinks.push(cleanWord);
-        }
-        if (((cleanWord.includes('tiktok.com') &&
-            cleanWord.match(/tiktok\.com\/@[A-Za-z0-9_.-]+\/video\/[0-9]+/)) ||
-            cleanWord.includes('vt.tiktok.com') ||
-            cleanWord.includes('vm.tiktok.com')) &&
-            !cleanWord.includes('vxtiktok.com')) {
-            socialLinks.push(cleanWord);
-        }
-        if (cleanWord.includes('reddit.com') &&
-            !cleanWord.includes(exports.REDDIT_EMBED_DOMAIN)) {
-            if (cleanWord.match(/reddit\.com\/r\/[A-Za-z0-9_]+\/comments/) ||
-                cleanWord.match(/www\.reddit\.com\/r\/[A-Za-z0-9_]+\/comments/) ||
-                cleanWord.match(/reddit\.com\/r\/[A-Za-z0-9_]+\/s\/[A-Za-z0-9_]+/)) {
-                socialLinks.push(cleanWord);
-            }
-        }
-        if (cleanWord.includes('bsky.app') &&
-            cleanWord.includes('/post/') &&
-            !cleanWord.includes('bskx.app')) {
-            socialLinks.push(cleanWord);
-        }
-        if (cleanWord.includes('deviantart.com') &&
-            (cleanWord.includes('/art/') ||
-                cleanWord.match(/deviantart\.com\/[A-Za-z0-9_-]+\/art\//)) &&
-            !cleanWord.includes('fixdeviantart.com')) {
-            socialLinks.push(cleanWord);
-        }
-        if (cleanWord.includes('pixiv.net') &&
-            cleanWord.includes('/artworks/') &&
-            !cleanWord.includes('phixiv.net')) {
-            socialLinks.push(cleanWord);
-        }
-        if (cleanWord.includes('pinterest.com/pin/') ||
-            cleanWord.includes('pin.it/')) {
-            socialLinks.push(cleanWord);
+    for (const word of text.split(/\s+/)) {
+        const candidate = word.match(URL_CANDIDATE_REGEX);
+        if (!candidate)
+            continue;
+        const link = candidate[0].replace(TRAILING_PUNCTUATION_REGEX, '');
+        if (classifySocialLink(link)) {
+            socialLinks.push(link);
         }
     }
     return socialLinks;

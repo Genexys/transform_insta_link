@@ -40,36 +40,13 @@ test('buildBillingPayload builds donate and personal payloads', () => {
   );
 });
 
-test('buildBillingPayload requires chatId for chat_pro', () => {
-  assert.throws(
-    () => buildBillingPayload('chat_pro', 500),
-    /chatId is required/
-  );
-  assert.equal(
-    buildBillingPayload('chat_pro', 500, { chatId: -1001234567890 }),
-    'billing:chat_pro:500:-1001234567890'
-  );
-});
-
 test('parseBillingPayload parses modern payloads', () => {
   assert.deepEqual(parseBillingPayload('billing:donate:50'), {
     kind: 'donate',
     amount: 50,
-    chatId: undefined,
     raw: 'billing:donate:50',
     isLegacy: false,
   });
-
-  assert.deepEqual(
-    parseBillingPayload('billing:chat_pro:500:-1001234567890'),
-    {
-      kind: 'chat_pro',
-      amount: 500,
-      chatId: -1001234567890,
-      raw: 'billing:chat_pro:500:-1001234567890',
-      isLegacy: false,
-    }
-  );
 });
 
 test('parseBillingPayload supports legacy donate payloads', () => {
@@ -111,7 +88,6 @@ test('personal_pro pass payload carries an optional video shortcode', () => {
   assert.deepEqual(parseBillingPayload('billing:personal_pro:100'), {
     kind: 'personal_pro',
     amount: 100,
-    chatId: undefined,
     raw: 'billing:personal_pro:100',
     isLegacy: false,
   });
@@ -125,9 +101,27 @@ test('personal_pro pass payload carries an optional video shortcode', () => {
 });
 
 test('parseBillingPayload rejects malformed payloads', () => {
-  assert.equal(parseBillingPayload('billing:chat_pro:500'), null);
+  // chat Pro was removed; its payloads are no longer recognised.
+  assert.equal(parseBillingPayload('billing:chat_pro:500:-100123'), null);
   assert.equal(parseBillingPayload('billing:unknown:50'), null);
   assert.equal(parseBillingPayload('billing:download:15'), null);
   assert.equal(parseBillingPayload('billing:download:abc:XYZ'), null);
   assert.equal(parseBillingPayload(''), null);
+});
+
+test('free download limiter allows a burst, then asks to wait until the window frees up', () => {
+  const {
+    freeDownloadWaitSeconds,
+    noteFreeDownload,
+  } = require('../download_handlers.js');
+  const user = 987654321;
+  const t0 = 1_000_000;
+
+  for (let i = 0; i < 5; i++) {
+    assert.equal(freeDownloadWaitSeconds(user, t0 + i), 0);
+    noteFreeDownload(user, t0 + i);
+  }
+  assert.equal(freeDownloadWaitSeconds(user, t0 + 1000), 599);
+  assert.equal(freeDownloadWaitSeconds(user + 1, t0 + 1000), 0);
+  assert.equal(freeDownloadWaitSeconds(user, t0 + 10 * 60 * 1000 + 1), 0);
 });

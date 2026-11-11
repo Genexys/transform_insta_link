@@ -54,11 +54,13 @@ export const log = {
         ts: new Date().toISOString(),
       })
     );
-    Sentry.captureException(
-      meta?.hasOwnProperty('err') ? (meta as any).err : new Error(msg),
-      {
-        extra: meta as Record<string, unknown>,
-      }
-    );
+    // Call sites pass `err: String(error)`, and capturing a bare string gives
+    // Sentry no stack and groups every failure by its (variable) message.
+    // Capture a real Error keyed by the stable log message instead; the
+    // original error text travels in `extra`.
+    const err = (meta as { err?: unknown } | undefined)?.err;
+    Sentry.captureException(err instanceof Error ? err : new Error(msg), {
+      extra: meta as Record<string, unknown>,
+    });
   },
 };

@@ -8,6 +8,7 @@ exports.downloadInstaImageFile = downloadInstaImageFile;
 exports.probeVideoMeta = probeVideoMeta;
 exports.deliverInstaVideo = deliverInstaVideo;
 exports.deliverInstaMedia = deliverInstaMedia;
+const crypto_1 = require("crypto");
 const fs_1 = __importDefault(require("fs"));
 const os_1 = __importDefault(require("os"));
 const path_1 = __importDefault(require("path"));
@@ -17,6 +18,7 @@ const stream_1 = require("stream");
 const promises_1 = require("stream/promises");
 const app_env_1 = require("./app_env");
 const insta_preview_client_1 = require("./insta_preview_client");
+const i18n_1 = require("./i18n");
 const runtime_1 = require("./runtime");
 const execFileAsync = (0, util_1.promisify)(child_process_1.execFile);
 async function downloadInstaVideoFile(shortcode, destPath) {
@@ -85,7 +87,7 @@ async function probeVideoMeta(filePath) {
     }
 }
 async function deliverInstaVideo(bot, chatId, shortcode, opts) {
-    const tempFilePath = path_1.default.join(os_1.default.tmpdir(), `video_${Date.now()}.mp4`);
+    const tempFilePath = path_1.default.join(os_1.default.tmpdir(), `video_${(0, crypto_1.randomUUID)()}.mp4`);
     try {
         await downloadInstaVideoFile(shortcode, tempFilePath);
         if (!fs_1.default.existsSync(tempFilePath)) {
@@ -119,6 +121,7 @@ async function deliverInstaVideo(bot, chatId, shortcode, opts) {
     }
 }
 async function deliverInstaMedia(bot, chatId, shortcode, opts) {
+    const L = (0, i18n_1.strings)(opts.lang ?? 'ru');
     const preview = await (0, insta_preview_client_1.fetchInstaPreview)(shortcode);
     const photo = preview.ok ? (0, insta_preview_client_1.pickDownloadablePhoto)(preview.data) : null;
     if (photo && !(0, insta_preview_client_1.isSavablePhoto)(photo)) {
@@ -127,14 +130,12 @@ async function deliverInstaMedia(bot, chatId, shortcode, opts) {
     if (!photo) {
         await deliverInstaVideo(bot, chatId, shortcode, {
             protect: opts.protect,
-            caption: opts.premium
-                ? '🎥 Ваше видео (безлимит активен) — можно сохранять.'
-                : '🎥 Ваше видео — можно сохранять и пересылать.',
+            caption: L.videoCaption(Boolean(opts.premium)),
             replyToMessageId: opts.replyToMessageId,
         });
         return;
     }
-    const tempFilePath = path_1.default.join(os_1.default.tmpdir(), `photo_${Date.now()}.jpg`);
+    const tempFilePath = path_1.default.join(os_1.default.tmpdir(), `photo_${(0, crypto_1.randomUUID)()}.jpg`);
     try {
         await downloadInstaImageFile(photo.url, tempFilePath);
         if (!fs_1.default.existsSync(tempFilePath)) {
@@ -142,9 +143,7 @@ async function deliverInstaMedia(bot, chatId, shortcode, opts) {
         }
         await bot.sendChatAction(chatId, 'upload_photo');
         await bot.sendPhoto(chatId, tempFilePath, {
-            caption: opts.premium
-                ? '🖼 Ваше фото (безлимит активен) — можно сохранять.'
-                : '🖼 Ваше фото — можно сохранять и пересылать.',
+            caption: L.photoCaption(Boolean(opts.premium)),
             protect_content: opts.protect,
             ...(opts.replyToMessageId
                 ? { reply_parameters: { message_id: opts.replyToMessageId } }

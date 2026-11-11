@@ -1,26 +1,20 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PHOTO_DOWNLOAD_PRICE_STARS = exports.DOWNLOAD_PRICE_STARS = exports.DONATE_AMOUNTS_STARS = exports.CHAT_PRO_PRICE_STARS = exports.PERSONAL_PRO_PRICE_STARS = void 0;
+exports.REFERRAL_PASS_THRESHOLD = exports.PHOTO_DOWNLOAD_PRICE_STARS = exports.DOWNLOAD_PRICE_STARS = exports.DONATE_AMOUNTS_STARS = exports.PERSONAL_PRO_PRICE_STARS = void 0;
 exports.downloadPricing = downloadPricing;
 exports.buildBillingPayload = buildBillingPayload;
 exports.parseBillingPayload = parseBillingPayload;
 exports.PERSONAL_PRO_PRICE_STARS = 100;
-exports.CHAT_PRO_PRICE_STARS = 250;
 exports.DONATE_AMOUNTS_STARS = [50, 100, 250, 500];
 exports.DOWNLOAD_PRICE_STARS = 10;
 exports.PHOTO_DOWNLOAD_PRICE_STARS = 5;
+exports.REFERRAL_PASS_THRESHOLD = 5;
 function downloadPricing(kind) {
     return kind === 'photo'
         ? { stars: exports.PHOTO_DOWNLOAD_PRICE_STARS, noun: 'фото' }
         : { stars: exports.DOWNLOAD_PRICE_STARS, noun: 'видео' };
 }
 function buildBillingPayload(kind, amount, options) {
-    if (kind === 'chat_pro') {
-        if (!options?.chatId) {
-            throw new Error('chatId is required for chat_pro billing payloads');
-        }
-        return `billing:${kind}:${amount}:${options.chatId}`;
-    }
     if (kind === 'download') {
         if (!options?.shortcode) {
             throw new Error('shortcode is required for download billing payloads');
@@ -63,21 +57,16 @@ function parseBillingPayload(payload) {
             isLegacy: false,
         };
     }
-    const modernMatch = normalized.match(/^billing:(donate|personal_pro|chat_pro):(\d+)(?::(-?\d+))?$/);
+    const modernMatch = normalized.match(/^billing:(donate|personal_pro):(\d+)$/);
     if (modernMatch) {
-        const [, kind, amountRaw, chatIdRaw] = modernMatch;
+        const [, kind, amountRaw] = modernMatch;
         const amount = parseInt(amountRaw, 10);
-        const chatId = chatIdRaw ? parseInt(chatIdRaw, 10) : undefined;
         if (!Number.isFinite(amount) || amount <= 0) {
-            return null;
-        }
-        if (kind === 'chat_pro' && !Number.isFinite(chatId)) {
             return null;
         }
         return {
             kind: kind,
             amount,
-            chatId,
             raw: normalized,
             isLegacy: false,
         };

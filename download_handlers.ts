@@ -1,10 +1,11 @@
 import TelegramBot, { type CallbackQuery } from 'node-telegram-bot-api';
+import { randomUUID } from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { YtDlp } from 'ytdlp-nodejs';
 import { DATABASE_URL } from './app_env';
-import { createUser, incrementDownloads, saveErrorLog } from './db';
+import { createUser, getUser, incrementDownloads, saveErrorLog } from './db';
 import { extractShortcodeFromUrl } from './insta_preview_client';
 import {
   INSTA_FIX_DOMAIN,
@@ -12,7 +13,43 @@ import {
   revertUrlForDownload,
 } from './link_utils';
 import { downloadInstaVideoFile, probeVideoMeta } from './video_delivery';
+import { resolveLang } from './chat_lang';
+import { strings } from './i18n';
 import { log } from './runtime';
+
+// The free in-chat download costs real CPU/bandwidth (yt-dlp + upload) and was
+// unbounded: anyone could hammer the button. Per-user, in-memory limits — a
+// restart resets them, which is fine for abuse damping. Pass holders are exempt.
+const FREE_DOWNLOAD_LIMIT = 5;
+const FREE_DOWNLOAD_WINDOW_MS = 10 * 60 * 1000;
+const recentDownloads = new Map<number, number[]>();
+const activeDownloads = new Set<number>();
+
+// Returns how many seconds the user must wait, or 0 if a download may start.
+export function freeDownloadWaitSeconds(
+  telegramId: number,
+  now: number = Date.now()
+): number {
+  const recent = (recentDownloads.get(telegramId) ?? []).filter(
+    ts => now - ts < FREE_DOWNLOAD_WINDOW_MS
+  );
+  if (recent.length === 0) {
+    recentDownloads.delete(telegramId);
+    return 0;
+  }
+  recentDownloads.set(telegramId, recent);
+  if (recent.length < FREE_DOWNLOAD_LIMIT) return 0;
+  return Math.ceil((recent[0] + FREE_DOWNLOAD_WINDOW_MS - now) / 1000);
+}
+
+export function noteFreeDownload(
+  telegramId: number,
+  now: number = Date.now()
+): void {
+  const recent = recentDownloads.get(telegramId) ?? [];
+  recent.push(now);
+  recentDownloads.set(telegramId, recent);
+}
 
 export async function handleDownloadCallback(
   bot: TelegramBot,
@@ -32,6 +69,9 @@ export async function handleDownloadCallback(
   // `query.message` is a MaybeInaccessibleMessage: Telegram sends a stub with
   // no content for messages the bot can no longer read (too old / deleted).
   // Those carry no link to download from, so bail out the same way as no text.
+  const L = strings(
+    await resolveLang(query.message.chat, query.from.language_code)
+  );
   const sourceMessage = 'text' in query.message ? query.message : null;
   const messageText = sourceMessage?.text;
   if (!sourceMessage || !messageText) return;
@@ -48,7 +88,7 @@ export async function handleDownloadCallback(
     urlMatches[0];
   if (!fixedUrl) {
     await bot.answerCallbackQuery(query.id, {
-      text: '❌ Ссылка не найдена',
+      text: L.downloadLinkNotFound,
       show_alert: true,
     });
     return;
@@ -57,17 +97,39 @@ export async function handleDownloadCallback(
   const originalUrl = revertUrlForDownload(fixedUrl);
   const isInstagram = fixedUrl.includes(INSTA_FIX_DOMAIN);
 
-  await bot.answerCallbackQuery(query.id, { text: '⏳ Начинаю загрузку...' });
+  if (activeDownloads.has(telegramId)) {
+    await bot.answerCallbackQuery(query.id, {
+      text: L.downloadBusy,
+      show_alert: true,
+    });
+    return;
+  }
 
-  const loadingMsg = await bot.sendMessage(
-    chatId,
-    '⏳ Скачиваю, это может занять несколько секунд...',
-    { reply_parameters: { message_id: sourceMessage.message_id } }
-  );
+  const isPassHolder = Boolean((await getUser(telegramId))?.is_premium);
+  if (!isPassHolder) {
+    const waitSeconds = freeDownloadWaitSeconds(telegramId);
+    if (waitSeconds > 0) {
+      await bot.answerCallbackQuery(query.id, {
+        text: L.downloadRateLimited(Math.ceil(waitSeconds / 60)),
+        show_alert: true,
+      });
+      return;
+    }
+    noteFreeDownload(telegramId);
+  }
+  activeDownloads.add(telegramId);
 
-  const tempFilePath = path.join(os.tmpdir(), `video_${Date.now()}.mp4`);
+  const tempFilePath = path.join(os.tmpdir(), `video_${randomUUID()}.mp4`);
+  let loadingMsg: { message_id: number } | null = null;
 
   try {
+    await bot.answerCallbackQuery(query.id, { text: L.downloadStarting });
+    loadingMsg = await bot.sendMessage(
+      chatId,
+      L.downloadLoading,
+      { reply_parameters: { message_id: sourceMessage.message_id } }
+    );
+
     log.info('Starting media download', {
       chatId,
       telegramId,
@@ -114,9 +176,10 @@ export async function handleDownloadCallback(
     // applied) so a portrait clip stays portrait.
     const meta = await probeVideoMeta(tempFilePath);
     await bot.sendVideo(chatId, tempFilePath, {
-      caption: '🎥 Ваше видео готово!',
+      caption: L.downloadReady,
       reply_parameters: { message_id: sourceMessage.message_id },
-      protect_content: true,
+      // The free copy is view-only; pass holders get a savable one.
+      protect_content: !isPassHolder,
       ...(meta.width && meta.height
         ? { width: meta.width, height: meta.height }
         : {}),
@@ -127,7 +190,7 @@ export async function handleDownloadCallback(
       await incrementDownloads(telegramId);
     }
 
-    await bot.deleteMessage(chatId, loadingMsg.message_id);
+    await bot.deleteMessage(chatId, loadingMsg.message_id).catch(() => {});
   } catch (error: any) {
     log.error('Media download failed', {
       chatId,
@@ -142,23 +205,27 @@ export async function handleDownloadCallback(
       originalUrl
     );
 
-    let errorMsg = '❌ Ошибка при скачивании.';
+    let errorMsg: string;
     const errStr = (error?.message || '').toLowerCase();
 
     if (errStr.includes('file is larger than') || errStr.includes('too big')) {
-      errorMsg = '❌ Видео слишком большое для отправки через Telegram (>50MB).';
+      errorMsg = L.downloadErrTooBig;
     } else if (errStr.includes('preview_service_')) {
-      errorMsg = `❌ Сервис превью вернул ошибку: ${error.message}. Попробуйте через минуту.`;
+      errorMsg = L.downloadErrPreview(error.message);
     } else {
-      errorMsg =
-        '❌ Произошла ошибка на сервере. Попробуйте позже или используйте другую ссылку.';
+      errorMsg = L.downloadErrGeneric;
     }
 
-    await bot.editMessageText(errorMsg, {
-      chat_id: chatId,
-      message_id: loadingMsg.message_id,
-    });
+    if (loadingMsg) {
+      await bot
+        .editMessageText(errorMsg, {
+          chat_id: chatId,
+          message_id: loadingMsg.message_id,
+        })
+        .catch(() => {});
+    }
   } finally {
+    activeDownloads.delete(telegramId);
     if (fs.existsSync(tempFilePath)) {
       fs.unlink(tempFilePath, err => {
         if (err) {
