@@ -1,5 +1,5 @@
-# Fallback only. The bot builds from the Dockerfile once the Railway builder
-# is "dockerfile" (.railway/railway.ts, applied with `railway config apply`).
-# Delete this file after that switch is live.
+# Fallback only, while the Railway service still has the explicit NIXPACKS
+# builder. `railway config apply` of .railway/railway.ts clears it and Railway
+# then builds the root Dockerfile. Delete this file after that is live.
 [phases.setup]
 nixPkgs = ["nodejs", "yt-dlp", "ffmpeg"]

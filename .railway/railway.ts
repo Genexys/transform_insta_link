@@ -6,7 +6,10 @@ export const partial = "transform_insta_link";
 export default defineRailway(() => {
   const transform_insta_link = service("transform_insta_link", {
     source: github("Genexys/transform_insta_link", { branch: "master", checkSuites: false }),
-    build: { buildEnvironment: "V3", builder: "dockerfile" },
+    // No builder value: Railway builds from the root `Dockerfile` automatically
+    // ("Using detected Dockerfile!" in the build log). Omitting it clears the
+    // old explicit NIXPACKS builder on apply.
+    build: { buildEnvironment: "V3" },
     start: "npm run railway:start",
     // Liveness only: /health reports third-party fixer state and can return
     // 503, which must not fail a deploy of a healthy bot.
