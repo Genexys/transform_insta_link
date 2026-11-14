@@ -54,7 +54,7 @@ The repo is very small:
 - `.env.example` — current env surface
 - `.github/workflows/ci.yml` — minimal CI for install, build, and test
 - `docs/plans/*` — design notes for observability, onboarding, and premium chat features
-- `railway.toml` / `nixpacks.toml` — deployment config
+- `.railway/railway.ts` — Railway service settings (IaC, applied with `railway config apply`, not read at deploy); `nixpacks.toml` — build packages
 - `package.json` / `tsconfig.json` — build config
 
 There is still no `src/` split. CI runs install/build/test and fails when a committed `.js` artifact is out of date with its `.ts` source. Tests cover only the pure modules; handlers, resolvers and DB code have no automated coverage.
