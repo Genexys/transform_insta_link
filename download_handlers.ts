@@ -10,6 +10,7 @@ import { extractShortcodeFromUrl } from './insta_preview_client';
 import {
   INSTA_FIX_DOMAIN,
   TIKTOK_FIXERS,
+  isYouTubeShortsUrl,
   revertUrlForDownload,
 } from './link_utils';
 import { downloadInstaVideoFile, probeVideoMeta } from './video_delivery';
@@ -23,6 +24,38 @@ import { log } from './runtime';
 const FREE_DOWNLOAD_LIMIT = 5;
 const FREE_DOWNLOAD_WINDOW_MS = 10 * 60 * 1000;
 const recentDownloads = new Map<number, number[]>();
+
+// YouTube caps Shorts at 3 minutes. Any video id also opens under /shorts/, so
+// the limit is enforced at download time rather than trusted from the link.
+export const SHORTS_MAX_SECONDS = 180;
+
+// H.264 so every Telegram client can play it; the size filters keep the merged
+// file under the 50 MB Bot API upload limit. Formats of unknown size pass the
+// filter (`<?`), and maxFilesize stays the hard stop.
+export const SHORTS_FORMAT =
+  'bv*[vcodec^=avc1][filesize<?40M]+ba[ext=m4a]/b[ext=mp4][filesize<?48M]';
+
+export function shortsDownloadOptions(output: string) {
+  return {
+    output,
+    format: SHORTS_FORMAT,
+    mergeOutputFormat: 'mp4',
+    maxFilesize: '50M',
+    noPlaylist: true,
+    matchFilter: `duration <= ${SHORTS_MAX_SECONDS}`,
+    // Current YouTube needs a JS challenge solver; yt-dlp-ejs provides the
+    // script and Node (already in the image) runs it.
+    additionalOptions: ['--js-runtimes', 'node'],
+  };
+}
+
+// yt-dlp exits 0 and only logs when --match-filter rejects a video.
+export function rejectedByShortsFilter(output: string): boolean {
+  return /does not pass filter/i.test(output);
+}
+
+class NotAShortError extends Error {}
+
 const activeDownloads = new Set<number>();
 
 // Returns how many seconds the user must wait, or 0 if a download may start.
@@ -85,6 +118,7 @@ export async function handleDownloadCallback(
   const fixedUrl =
     urlMatches.find(u => u.includes(INSTA_FIX_DOMAIN)) ||
     urlMatches.find(u => TIKTOK_FIXERS.some(f => u.includes(f))) ||
+    urlMatches.find(u => isYouTubeShortsUrl(u)) ||
     urlMatches[0];
   if (!fixedUrl) {
     await bot.answerCallbackQuery(query.id, {
@@ -96,6 +130,7 @@ export async function handleDownloadCallback(
 
   const originalUrl = revertUrlForDownload(fixedUrl);
   const isInstagram = fixedUrl.includes(INSTA_FIX_DOMAIN);
+  const isShorts = isYouTubeShortsUrl(originalUrl);
 
   if (activeDownloads.has(telegramId)) {
     await bot.answerCallbackQuery(query.id, {
@@ -135,7 +170,7 @@ export async function handleDownloadCallback(
       telegramId,
       urlHost: new URL(originalUrl).hostname,
       tempFilePath,
-      via: isInstagram ? 'preview-service' : 'yt-dlp',
+      via: isInstagram ? 'preview-service' : isShorts ? 'yt-dlp:shorts' : 'yt-dlp',
     });
 
     if (isInstagram) {
@@ -147,6 +182,16 @@ export async function handleDownloadCallback(
       // oversized Instagram video). Image-only posts are handled by the paid
       // save flow (deliverInstaMedia), not here.
       await downloadInstaVideoFile(shortcode, tempFilePath);
+    } else if (isShorts) {
+      const output = await ytdlp.downloadAsync(
+        originalUrl,
+        shortsDownloadOptions(tempFilePath)
+      );
+      if (rejectedByShortsFilter(output)) {
+        throw new NotAShortError(
+          `Longer than ${SHORTS_MAX_SECONDS}s, not a Short`
+        );
+      }
     } else {
       await ytdlp.downloadAsync(originalUrl, {
         output: tempFilePath,
@@ -208,7 +253,12 @@ export async function handleDownloadCallback(
     let errorMsg: string;
     const errStr = (error?.message || '').toLowerCase();
 
-    if (errStr.includes('file is larger than') || errStr.includes('too big')) {
+    if (error instanceof NotAShortError) {
+      errorMsg = L.downloadErrNotShort(SHORTS_MAX_SECONDS);
+    } else if (
+      errStr.includes('file is larger than') ||
+      errStr.includes('too big')
+    ) {
       errorMsg = L.downloadErrTooBig;
     } else if (errStr.includes('preview_service_')) {
       errorMsg = L.downloadErrPreview(error.message);

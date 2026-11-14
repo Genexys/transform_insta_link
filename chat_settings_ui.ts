@@ -26,6 +26,7 @@ export function effectiveSettings(settings: ChatSettingsRow | null) {
     albumsEnabled: settings?.albums_enabled ?? true,
     deleteButton: settings?.delete_button ?? true,
     disabledPlatforms: settings?.disabled_platforms ?? [],
+    shortsDownload: settings?.shorts_download ?? false,
     language: normalizeLang(settings?.language) ?? 'ru',
   };
 }
@@ -64,6 +65,12 @@ export function buildSettingsKeyboard(
         {
           text: `${L.settingDeleteButton}: ${state(s.deleteButton)}`,
           callback_data: 'set:delbtn',
+        },
+      ],
+      [
+        {
+          text: `${L.settingShorts}: ${state(s.shortsDownload)}`,
+          callback_data: 'set:shorts',
         },
       ],
       [

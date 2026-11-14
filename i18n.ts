@@ -96,6 +96,10 @@ const ru = {
     `❌ Сервис превью вернул ошибку: ${detail}. Попробуйте через минуту.`,
   downloadErrGeneric:
     '❌ Произошла ошибка на сервере. Попробуйте позже или используйте другую ссылку.',
+  downloadErrNotShort: (maxSeconds: number) =>
+    `❌ Скачать можно только Shorts — ролики до ${maxSeconds / 60} мин.`,
+  shortsOffer: '🎬 YouTube Shorts — можно скачать видео в чат',
+  shortsDownloadButton: '📥 Скачать Shorts',
 
   // delivered media captions
   videoCaption: (premium: boolean): string =>
@@ -229,6 +233,7 @@ const ru = {
     '📌 Не удалять оригинал — отвечать ссылкой, не заменяя сообщение\n' +
     '🖼 Альбомы — присылать карусели Instagram альбомом\n' +
     '🗑 Кнопка удаления — под сообщениями бота\n' +
+    '🎬 Shorts — кнопка скачивания под ссылками на YouTube Shorts\n' +
     '🌐 Платформы — какие ссылки исправлять',
   settingsPlatformsTitle:
     '🌐 Платформы\n\nНажмите, чтобы включить или выключить исправление ссылок.',
@@ -236,6 +241,7 @@ const ru = {
   settingKeepOriginal: '📌 Не удалять оригинал',
   settingAlbums: '🖼 Альбомы Instagram',
   settingDeleteButton: '🗑 Кнопка удаления',
+  settingShorts: '🎬 Скачивание Shorts',
   settingPlatforms: '🌐 Платформы',
   settingLanguage: '🗣 Язык',
   settingsBack: '« Назад',
@@ -355,6 +361,10 @@ const en: Strings = {
   downloadErrPreview: detail =>
     `❌ The preview service returned an error: ${detail}. Try again in a minute.`,
   downloadErrGeneric: '❌ Server error. Try again later or use another link.',
+  downloadErrNotShort: maxSeconds =>
+    `❌ Only Shorts can be downloaded — clips up to ${maxSeconds / 60} min.`,
+  shortsOffer: '🎬 YouTube Shorts — the video can be downloaded to this chat',
+  shortsDownloadButton: '📥 Download Short',
 
   videoCaption: premium =>
     premium
@@ -479,6 +489,7 @@ const en: Strings = {
     '📌 Keep original — reply with the link instead of replacing the message\n' +
     '🖼 Albums — send Instagram carousels as an album\n' +
     '🗑 Delete button — under the bot’s messages\n' +
+    '🎬 Shorts — download button under YouTube Shorts links\n' +
     '🌐 Platforms — which links to fix',
   settingsPlatformsTitle:
     '🌐 Platforms\n\nTap to turn link fixing on or off.',
@@ -486,6 +497,7 @@ const en: Strings = {
   settingKeepOriginal: '📌 Keep original',
   settingAlbums: '🖼 Instagram albums',
   settingDeleteButton: '🗑 Delete button',
+  settingShorts: '🎬 Shorts download',
   settingPlatforms: '🌐 Platforms',
   settingLanguage: '🗣 Language',
   settingsBack: '« Back',

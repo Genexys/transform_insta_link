@@ -6,7 +6,7 @@ export const partial = "transform_insta_link";
 export default defineRailway(() => {
   const transform_insta_link = service("transform_insta_link", {
     source: github("Genexys/transform_insta_link", { branch: "master", checkSuites: false }),
-    build: { buildEnvironment: "V3", builder: "nixpacks" },
+    build: { buildEnvironment: "V3", builder: "dockerfile" },
     start: "npm run railway:start",
     // Liveness only: /health reports third-party fixer state and can return
     // 503, which must not fail a deploy of a healthy bot.

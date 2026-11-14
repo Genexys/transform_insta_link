@@ -1,0 +1,18 @@
+version: 2
+updates:
+  # yt-dlp breaks against YouTube/TikTok changes within weeks; keep it current.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      ytdlp:
+        patterns: ["*"]
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly
+    ignore:
+      # A Node major is a deliberate change together with the CI Node version.
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]

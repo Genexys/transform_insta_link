@@ -28,6 +28,8 @@ export type ChatSettingsRow = {
   albums_enabled: boolean | null;
   delete_button: boolean | null;
   disabled_platforms: string[] | null;
+  // Added by migration 005; read as `?? false`.
+  shorts_download: boolean | null;
   language: string | null;
   rights_hint_sent_at: string | null;
 };
@@ -317,6 +319,7 @@ export type ChatSettingColumn =
   | 'albums_enabled'
   | 'delete_button'
   | 'disabled_platforms'
+  | 'shorts_download'
   | 'language'
   | 'rights_hint_sent_at';
 
@@ -326,6 +329,7 @@ const CHAT_SETTING_COLUMNS: ReadonlySet<string> = new Set<ChatSettingColumn>([
   'albums_enabled',
   'delete_button',
   'disabled_platforms',
+  'shorts_download',
   'language',
   'rights_hint_sent_at',
 ]);

@@ -7,6 +7,9 @@ exports.convertToInstaFix = convertToInstaFix;
 exports.convertToInlineFix = convertToInlineFix;
 exports.classifySocialLink = classifySocialLink;
 exports.findsocialLinks = findsocialLinks;
+exports.youTubeShortsId = youTubeShortsId;
+exports.isYouTubeShortsUrl = isYouTubeShortsUrl;
+exports.findYouTubeShortsUrl = findYouTubeShortsUrl;
 exports.INSTA_FIX_DOMAIN = 'previewlinkbot.xyz';
 exports.INSTA_FIX_DOMAIN_LEGACY = 'instapreviewservice-production.up.railway.app';
 exports.INSTA_FIX_FALLBACK = 'kkinstagram.com';
@@ -156,4 +159,22 @@ function findsocialLinks(text) {
         }
     }
     return socialLinks;
+}
+const YOUTUBE_SHORTS_REGEX = /^(?:https?:\/\/)?(?:(?:www|m)\.)?youtube\.com\/shorts\/([A-Za-z0-9_-]{11})(?=$|[/?#])/i;
+function youTubeShortsId(url) {
+    return url.match(YOUTUBE_SHORTS_REGEX)?.[1] ?? null;
+}
+function isYouTubeShortsUrl(url) {
+    return youTubeShortsId(url) !== null;
+}
+function findYouTubeShortsUrl(text) {
+    for (const word of text.split(/\s+/)) {
+        const candidate = word.match(URL_CANDIDATE_REGEX);
+        if (!candidate)
+            continue;
+        const id = youTubeShortsId(candidate[0].replace(TRAILING_PUNCTUATION_REGEX, ''));
+        if (id)
+            return `https://www.youtube.com/shorts/${id}`;
+    }
+    return null;
 }

@@ -215,6 +215,48 @@ function registerMessageHandlers(bot, resolvers, options) {
             (0, db_1.logLinkEvent)((0, link_utils_1.classifySocialLink)(link) ?? 'other', 'inline', false, undefined, result.from.id);
         }
     });
+    async function offerShortsDownload(msg, messageText, isGroup) {
+        if (!options.downloadsEnabled)
+            return;
+        const shortsUrl = (0, link_utils_1.findYouTubeShortsUrl)(messageText);
+        if (!shortsUrl)
+            return;
+        const chatId = msg.chat.id;
+        const handledKey = `${chatId}:${msg.message_id}`;
+        if (handledLinksByMessage.get(handledKey)?.has(shortsUrl))
+            return;
+        const chatSettings = isGroup ? await (0, db_1.getChatSettings)(chatId) : null;
+        if (isGroup && !(chatSettings?.shorts_download ?? false))
+            return;
+        rememberHandledLinks(handledKey, [shortsUrl]);
+        const L = (0, i18n_1.strings)(isGroup
+            ? ((0, i18n_1.normalizeLang)(chatSettings?.language) ?? 'ru')
+            : (0, i18n_1.langFromCode)(msg.from?.language_code));
+        const threadId = msg
+            .message_thread_id;
+        try {
+            await bot.sendMessage(chatId, `${L.shortsOffer}\n${shortsUrl}`, {
+                link_preview_options: { is_disabled: true },
+                reply_parameters: {
+                    message_id: msg.message_id,
+                    allow_sending_without_reply: true,
+                },
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: L.shortsDownloadButton, callback_data: 'download_video' }],
+                    ],
+                },
+                ...(isGroup && threadId ? { message_thread_id: threadId } : {}),
+            });
+            (0, db_1.logLinkEvent)('youtube_shorts', 'download_offer', false, isGroup ? chatId : undefined, msg.from?.id);
+        }
+        catch (error) {
+            runtime_1.log.error('Failed to offer Shorts download', {
+                chatId,
+                err: error instanceof Error ? error.message : String(error),
+            });
+        }
+    }
     async function handleLinkMessage(msg, edited) {
         const chatId = msg.chat.id;
         const isCaption = !msg.text && Boolean(msg.caption);
@@ -233,8 +275,10 @@ function registerMessageHandlers(bot, resolvers, options) {
             textLength: messageText.length,
         });
         let socialLinks = (0, link_utils_1.findsocialLinks)(messageText);
-        if (socialLinks.length === 0)
+        if (socialLinks.length === 0) {
+            await offerShortsDownload(msg, messageText, isGroup);
             return;
+        }
         const chatSettings = isGroup ? await (0, db_1.getChatSettings)(chatId) : null;
         const disabledPlatforms = chatSettings?.disabled_platforms ?? [];
         if (disabledPlatforms.length > 0) {

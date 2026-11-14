@@ -11,9 +11,9 @@ The project is intentionally small and pragmatic. `bot.ts` is now a very thin ru
 - **TypeScript** runtime split into small modules and compiled into committed `.js` artifacts
 - **node-telegram-bot-api** for Telegram polling, commands, callbacks, inline mode, payments
 - **PostgreSQL** via `pg` for users, premium state, link events, error logs, chat settings
-- **yt-dlp + ffmpeg** for TikTok downloads
+- **yt-dlp + ffmpeg** for TikTok and YouTube Shorts downloads (yt-dlp pinned in `requirements-ytdlp.txt`, with `yt-dlp-ejs` for YouTube)
 - **Sentry** for exception capture
-- **Railway + Nixpacks** for deployment
+- **Railway + Dockerfile** for deployment
 - **Built-in `http` server** for `/health` and Reddit embed proxy
 
 ## Repository Shape
@@ -54,7 +54,7 @@ The repo is very small:
 - `.env.example` — current env surface
 - `.github/workflows/ci.yml` — minimal CI for install, build, and test
 - `docs/plans/*` — design notes for observability, onboarding, and premium chat features
-- `.railway/railway.ts` — Railway service settings (IaC, applied with `railway config apply`, not read at deploy); `nixpacks.toml` — build packages
+- `.railway/railway.ts` — Railway service settings (IaC, applied with `railway config apply`, not read at deploy); `Dockerfile` + `requirements-ytdlp.txt` — image with Node 26, ffmpeg and pinned yt-dlp
 - `package.json` / `tsconfig.json` — build config
 
 There is still no `src/` split. CI runs install/build/test and fails when a committed `.js` artifact is out of date with its `.ts` source. Tests cover only the pure modules; handlers, resolvers and DB code have no automated coverage.
@@ -210,11 +210,17 @@ This health endpoint is more truthful now, but it still does not perform an end-
 
 ### Deployment
 
-Deployment is configured for Railway via Nixpacks. Required system packages:
+Deployment is configured for Railway via the `Dockerfile`: Node 26, ffmpeg from
+Debian, and yt-dlp (+ `yt-dlp-ejs`) from PyPI in `/opt/ytdlp`, pinned in
+`requirements-ytdlp.txt` and updated by Dependabot. Distro/Nix yt-dlp packages
+lag months behind, and YouTube and TikTok break old releases.
 
-- `nodejs`
-- `yt-dlp`
-- `ffmpeg`
+YouTube Shorts: a `youtube.com/shorts/<id>` link is not rewritten (Telegram
+previews YouTube itself); the bot answers it with a download button. Always in
+private chats, in groups only with the `🎬 Shorts` setting (`shorts_download`,
+off by default). The download enforces the Shorts length (≤ 180 s) because any
+video id opens under `/shorts/`, picks H.264 within 50 MB, and needs
+`--js-runtimes node` for YouTube's JS challenge.
 
 The bot runs through polling, not webhooks. Railway startup now runs migrations before starting `bot.js`.
 

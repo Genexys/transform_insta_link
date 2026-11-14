@@ -67,6 +67,9 @@ const ru = {
     downloadErrTooBig: '❌ Видео слишком большое для отправки через Telegram (>50MB).',
     downloadErrPreview: (detail) => `❌ Сервис превью вернул ошибку: ${detail}. Попробуйте через минуту.`,
     downloadErrGeneric: '❌ Произошла ошибка на сервере. Попробуйте позже или используйте другую ссылку.',
+    downloadErrNotShort: (maxSeconds) => `❌ Скачать можно только Shorts — ролики до ${maxSeconds / 60} мин.`,
+    shortsOffer: '🎬 YouTube Shorts — можно скачать видео в чат',
+    shortsDownloadButton: '📥 Скачать Shorts',
     videoCaption: (premium) => premium
         ? '🎥 Ваше видео (безлимит активен) — можно сохранять.'
         : '🎥 Ваше видео — можно сохранять и пересылать.',
@@ -163,12 +166,14 @@ const ru = {
         '📌 Не удалять оригинал — отвечать ссылкой, не заменяя сообщение\n' +
         '🖼 Альбомы — присылать карусели Instagram альбомом\n' +
         '🗑 Кнопка удаления — под сообщениями бота\n' +
+        '🎬 Shorts — кнопка скачивания под ссылками на YouTube Shorts\n' +
         '🌐 Платформы — какие ссылки исправлять',
     settingsPlatformsTitle: '🌐 Платформы\n\nНажмите, чтобы включить или выключить исправление ссылок.',
     settingQuiet: '🔇 Тихий режим',
     settingKeepOriginal: '📌 Не удалять оригинал',
     settingAlbums: '🖼 Альбомы Instagram',
     settingDeleteButton: '🗑 Кнопка удаления',
+    settingShorts: '🎬 Скачивание Shorts',
     settingPlatforms: '🌐 Платформы',
     settingLanguage: '🗣 Язык',
     settingsBack: '« Назад',
@@ -257,6 +262,9 @@ const en = {
     downloadErrTooBig: '❌ The video is too large to send via Telegram (>50MB).',
     downloadErrPreview: detail => `❌ The preview service returned an error: ${detail}. Try again in a minute.`,
     downloadErrGeneric: '❌ Server error. Try again later or use another link.',
+    downloadErrNotShort: maxSeconds => `❌ Only Shorts can be downloaded — clips up to ${maxSeconds / 60} min.`,
+    shortsOffer: '🎬 YouTube Shorts — the video can be downloaded to this chat',
+    shortsDownloadButton: '📥 Download Short',
     videoCaption: premium => premium
         ? '🎥 Your video (unlimited pass active) — free to save.'
         : '🎥 Your video — free to save and forward.',
@@ -353,12 +361,14 @@ const en = {
         '📌 Keep original — reply with the link instead of replacing the message\n' +
         '🖼 Albums — send Instagram carousels as an album\n' +
         '🗑 Delete button — under the bot’s messages\n' +
+        '🎬 Shorts — download button under YouTube Shorts links\n' +
         '🌐 Platforms — which links to fix',
     settingsPlatformsTitle: '🌐 Platforms\n\nTap to turn link fixing on or off.',
     settingQuiet: '🔇 Quiet mode',
     settingKeepOriginal: '📌 Keep original',
     settingAlbums: '🖼 Instagram albums',
     settingDeleteButton: '🗑 Delete button',
+    settingShorts: '🎬 Shorts download',
     settingPlatforms: '🌐 Platforms',
     settingLanguage: '🗣 Language',
     settingsBack: '« Back',

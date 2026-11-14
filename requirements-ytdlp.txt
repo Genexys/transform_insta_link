@@ -1,0 +1,5 @@
+# yt-dlp for the in-chat download button (TikTok, YouTube Shorts).
+# yt-dlp-ejs is YouTube's JS challenge solver, run by Node from the image.
+# Pinned so builds are reproducible; Dependabot proposes updates weekly.
+yt-dlp[default]==2026.10.26
+yt-dlp-ejs==0.8.0

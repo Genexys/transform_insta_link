@@ -3,6 +3,9 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.SHORTS_FORMAT = exports.SHORTS_MAX_SECONDS = void 0;
+exports.shortsDownloadOptions = shortsDownloadOptions;
+exports.rejectedByShortsFilter = rejectedByShortsFilter;
 exports.freeDownloadWaitSeconds = freeDownloadWaitSeconds;
 exports.noteFreeDownload = noteFreeDownload;
 exports.handleDownloadCallback = handleDownloadCallback;
@@ -21,6 +24,24 @@ const runtime_1 = require("./runtime");
 const FREE_DOWNLOAD_LIMIT = 5;
 const FREE_DOWNLOAD_WINDOW_MS = 10 * 60 * 1000;
 const recentDownloads = new Map();
+exports.SHORTS_MAX_SECONDS = 180;
+exports.SHORTS_FORMAT = 'bv*[vcodec^=avc1][filesize<?40M]+ba[ext=m4a]/b[ext=mp4][filesize<?48M]';
+function shortsDownloadOptions(output) {
+    return {
+        output,
+        format: exports.SHORTS_FORMAT,
+        mergeOutputFormat: 'mp4',
+        maxFilesize: '50M',
+        noPlaylist: true,
+        matchFilter: `duration <= ${exports.SHORTS_MAX_SECONDS}`,
+        additionalOptions: ['--js-runtimes', 'node'],
+    };
+}
+function rejectedByShortsFilter(output) {
+    return /does not pass filter/i.test(output);
+}
+class NotAShortError extends Error {
+}
 const activeDownloads = new Set();
 function freeDownloadWaitSeconds(telegramId, now = Date.now()) {
     const recent = (recentDownloads.get(telegramId) ?? []).filter(ts => now - ts < FREE_DOWNLOAD_WINDOW_MS);
@@ -55,6 +76,7 @@ async function handleDownloadCallback(bot, query, ytdlp) {
     const urlMatches = messageText.match(/https?:\/\/\S+/g) || [];
     const fixedUrl = urlMatches.find(u => u.includes(link_utils_1.INSTA_FIX_DOMAIN)) ||
         urlMatches.find(u => link_utils_1.TIKTOK_FIXERS.some(f => u.includes(f))) ||
+        urlMatches.find(u => (0, link_utils_1.isYouTubeShortsUrl)(u)) ||
         urlMatches[0];
     if (!fixedUrl) {
         await bot.answerCallbackQuery(query.id, {
@@ -65,6 +87,7 @@ async function handleDownloadCallback(bot, query, ytdlp) {
     }
     const originalUrl = (0, link_utils_1.revertUrlForDownload)(fixedUrl);
     const isInstagram = fixedUrl.includes(link_utils_1.INSTA_FIX_DOMAIN);
+    const isShorts = (0, link_utils_1.isYouTubeShortsUrl)(originalUrl);
     if (activeDownloads.has(telegramId)) {
         await bot.answerCallbackQuery(query.id, {
             text: L.downloadBusy,
@@ -95,7 +118,7 @@ async function handleDownloadCallback(bot, query, ytdlp) {
             telegramId,
             urlHost: new URL(originalUrl).hostname,
             tempFilePath,
-            via: isInstagram ? 'preview-service' : 'yt-dlp',
+            via: isInstagram ? 'preview-service' : isShorts ? 'yt-dlp:shorts' : 'yt-dlp',
         });
         if (isInstagram) {
             const shortcode = (0, insta_preview_client_1.extractShortcodeFromUrl)(originalUrl);
@@ -103,6 +126,12 @@ async function handleDownloadCallback(bot, query, ytdlp) {
                 throw new Error('Не удалось распознать shortcode Instagram-ссылки.');
             }
             await (0, video_delivery_1.downloadInstaVideoFile)(shortcode, tempFilePath);
+        }
+        else if (isShorts) {
+            const output = await ytdlp.downloadAsync(originalUrl, shortsDownloadOptions(tempFilePath));
+            if (rejectedByShortsFilter(output)) {
+                throw new NotAShortError(`Longer than ${exports.SHORTS_MAX_SECONDS}s, not a Short`);
+            }
         }
         else {
             await ytdlp.downloadAsync(originalUrl, {
@@ -145,7 +174,11 @@ async function handleDownloadCallback(bot, query, ytdlp) {
         await (0, db_1.saveErrorLog)(telegramId, error.message || 'Unknown error', error.stack || '', originalUrl);
         let errorMsg;
         const errStr = (error?.message || '').toLowerCase();
-        if (errStr.includes('file is larger than') || errStr.includes('too big')) {
+        if (error instanceof NotAShortError) {
+            errorMsg = L.downloadErrNotShort(exports.SHORTS_MAX_SECONDS);
+        }
+        else if (errStr.includes('file is larger than') ||
+            errStr.includes('too big')) {
             errorMsg = L.downloadErrTooBig;
         }
         else if (errStr.includes('preview_service_')) {

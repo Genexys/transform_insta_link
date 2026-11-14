@@ -42,6 +42,9 @@ async function handleSettingsCallback(bot, query, chatId, messageId, action) {
     else if (action === 'delbtn') {
         saved = await (0, db_1.setChatSetting)(chatId, 'delete_button', !current.deleteButton);
     }
+    else if (action === 'shorts') {
+        saved = await (0, db_1.setChatSetting)(chatId, 'shorts_download', !current.shortsDownload);
+    }
     else if (action === 'lang') {
         const next = current.language === 'ru' ? 'en' : 'ru';
         saved = await (0, db_1.setChatSetting)(chatId, 'language', next);
