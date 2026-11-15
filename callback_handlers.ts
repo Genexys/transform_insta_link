@@ -65,6 +65,12 @@ async function handleSettingsCallback(
     );
   } else if (action === 'delbtn') {
     saved = await setChatSetting(chatId, 'delete_button', !current.deleteButton);
+  } else if (action === 'shorts') {
+    saved = await setChatSetting(
+      chatId,
+      'shorts_download',
+      !current.shortsDownload
+    );
   } else if (action === 'lang') {
     const next = current.language === 'ru' ? 'en' : 'ru';
     saved = await setChatSetting(chatId, 'language', next);

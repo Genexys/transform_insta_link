@@ -23,6 +23,7 @@ import {
   convertToInstaFix,
   type FixerPreferences,
   findsocialLinks,
+  findYouTubeShortsUrl,
   INSTA_FIX_DOMAIN,
   INSTA_FIX_FALLBACK,
   REDDIT_EMBED_DOMAIN,
@@ -339,6 +340,64 @@ export function registerMessageHandlers(
     }
   });
 
+  // Telegram previews YouTube itself, so a Shorts link is not rewritten; the
+  // bot only answers it with a download button. Always in private chats, in
+  // groups only when an admin enabled it (one reply per link would be noise).
+  async function offerShortsDownload(
+    msg: Message,
+    messageText: string,
+    isGroup: boolean
+  ) {
+    if (!options.downloadsEnabled) return;
+    const shortsUrl = findYouTubeShortsUrl(messageText);
+    if (!shortsUrl) return;
+
+    const chatId = msg.chat.id;
+    const handledKey = `${chatId}:${msg.message_id}`;
+    if (handledLinksByMessage.get(handledKey)?.has(shortsUrl)) return;
+
+    const chatSettings = isGroup ? await getChatSettings(chatId) : null;
+    if (isGroup && !(chatSettings?.shorts_download ?? false)) return;
+    rememberHandledLinks(handledKey, [shortsUrl]);
+
+    const L = strings(
+      isGroup
+        ? (normalizeLang(chatSettings?.language) ?? 'ru')
+        : langFromCode(msg.from?.language_code)
+    );
+    const threadId = (msg as Message & { message_thread_id?: number })
+      .message_thread_id;
+    try {
+      // The download callback finds the link in this message's text.
+      await bot.sendMessage(chatId, `${L.shortsOffer}\n${shortsUrl}`, {
+        // The original message already shows YouTube's own preview.
+        link_preview_options: { is_disabled: true },
+        reply_parameters: {
+          message_id: msg.message_id,
+          allow_sending_without_reply: true,
+        },
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: L.shortsDownloadButton, callback_data: 'download_video' }],
+          ],
+        },
+        ...(isGroup && threadId ? { message_thread_id: threadId } : {}),
+      } as SendMessageOptionsWithEntities);
+      logLinkEvent(
+        'youtube_shorts',
+        'download_offer',
+        false,
+        isGroup ? chatId : undefined,
+        msg.from?.id
+      );
+    } catch (error) {
+      log.error('Failed to offer Shorts download', {
+        chatId,
+        err: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   async function handleLinkMessage(msg: Message, edited: boolean) {
     const chatId = msg.chat.id;
     // Links can sit in the caption of a photo/video as well as in plain text.
@@ -364,7 +423,10 @@ export function registerMessageHandlers(
     });
 
     let socialLinks = findsocialLinks(messageText);
-    if (socialLinks.length === 0) return;
+    if (socialLinks.length === 0) {
+      await offerShortsDownload(msg, messageText, isGroup);
+      return;
+    }
 
     const chatSettings = isGroup ? await getChatSettings(chatId) : null;
     const disabledPlatforms = chatSettings?.disabled_platforms ?? [];

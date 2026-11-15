@@ -59,9 +59,9 @@ const resolvers = {
     url.replace(/(?:x|twitter)\.com/, TWITTER_FIXERS[0]),
 };
 
-function setup(botOptions) {
+function setup(botOptions, { downloadsEnabled = false } = {}) {
   const bot = createBot(botOptions);
-  registerMessageHandlers(bot, resolvers, { downloadsEnabled: false });
+  registerMessageHandlers(bot, resolvers, { downloadsEnabled });
   return bot;
 }
 
@@ -206,4 +206,49 @@ test('delete button works for the author and admins only', async () => {
   press(7); // a chat admin
   await settle();
   assert.equal(bot.of('deleteMessage').length, 2);
+});
+
+const SHORTS = 'https://www.youtube.com/shorts/jNQXAC9IVRw';
+
+test('a Shorts link in a private chat gets a download button, once', async () => {
+  const bot = setup({}, { downloadsEnabled: true });
+  const msg = {
+    message_id: 4,
+    chat: { id: 43, type: 'private' },
+    from: { id: 43, language_code: 'en' },
+    text: 'https://youtube.com/shorts/jNQXAC9IVRw?si=abc',
+  };
+  bot.emit('message', msg);
+  await settle();
+  bot.emit('edited_message', { ...msg, text: `${msg.text} !` });
+  await settle();
+
+  const sent = bot.of('sendMessage');
+  assert.equal(sent.length, 1);
+  assert.equal(
+    sent[0].args[1],
+    `🎬 YouTube Shorts — the video can be downloaded to this chat\n${SHORTS}`
+  );
+  assert.deepEqual(sent[0].args[2].reply_markup.inline_keyboard, [
+    [{ text: '📥 Download Short', callback_data: 'download_video' }],
+  ]);
+  assert.equal(sent[0].args[2].link_preview_options.is_disabled, true);
+  assert.equal(sent[0].args[2].reply_parameters.message_id, 4);
+});
+
+test('Shorts links are ignored in groups by default and when downloads are off', async () => {
+  const group = setup({}, { downloadsEnabled: true });
+  group.emit('message', groupMessage({ text: SHORTS }));
+  await settle();
+  assert.equal(group.of('sendMessage').length, 0);
+
+  const off = setup();
+  off.emit('message', {
+    message_id: 5,
+    chat: { id: 44, type: 'private' },
+    from: { id: 44 },
+    text: SHORTS,
+  });
+  await settle();
+  assert.equal(off.of('sendMessage').length, 0);
 });

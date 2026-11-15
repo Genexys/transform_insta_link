@@ -8,7 +8,7 @@ architecture overview.
 - **Autodeploy is enabled from `master` (Railway).** Merging a PR into `master`
   ships to production automatically — there is **no manual deploy step**.
 - Practical effect: once a PR is merged, the change is live shortly after
-  (Railway builds via Nixpacks → `npm run railway:start`, which runs migrations
+  (Railway builds the `Dockerfile` → `npm run railway:start`, which runs migrations
   then starts `bot.js`). Verify with `curl -s https://<bot-host>/health`.
 - Do **not** run manual deploy commands; just merge to `master`.
 - Because deploy follows `master`, keep `master` releasable — build + tests must
@@ -16,7 +16,7 @@ architecture overview.
 
 ## Railway service settings
 
-- Build and deploy settings (Nixpacks builder, start command, `/healthz` healthcheck, restart policy) live in `.railway/railway.ts`
+- Build and deploy settings (Dockerfile builder, start command, `/healthz` healthcheck, restart policy) live in `.railway/railway.ts`
   (Railway Infrastructure as Code). `railway.toml` was removed: Railway stopped
   reading Config as Code files on 2026-12-01.
 - Railway does **not** read `.railway/` at deploy time. An edit takes effect

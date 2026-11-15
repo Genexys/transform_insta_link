@@ -224,6 +224,7 @@ const CHAT_SETTING_COLUMNS = new Set([
     'albums_enabled',
     'delete_button',
     'disabled_platforms',
+    'shorts_download',
     'language',
     'rights_hint_sent_at',
 ]);

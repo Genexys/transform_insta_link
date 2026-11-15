@@ -7,7 +7,7 @@ Telegram bot that rewrites social links into preview-friendly fixer URLs so Tele
 - rewrites supported social links in group chats
 - replies with the fixed link and deletes the original message when it has permission
 - supports inline mode
-- supports TikTok media download through `yt-dlp`
+- supports TikTok and YouTube Shorts download through `yt-dlp` (Shorts: always in private chats, in groups when enabled in `/settings`)
 - supports Telegram Stars donations and premium chat features
 - exposes `/healthz` (liveness), `/health` (dependency report) and a Reddit embed proxy over HTTP
 
@@ -34,7 +34,7 @@ Not currently active:
 - PostgreSQL via `pg`
 - `yt-dlp` + `ffmpeg`
 - Sentry
-- Railway / Nixpacks
+- Railway / Dockerfile
 
 ## Project Layout
 
@@ -141,4 +141,4 @@ npm start
 - Database schema is now managed through `node-pg-migrate` migrations.
 - Railway startup runs migrations before booting the bot.
 - The recommended local PostgreSQL instance is exposed at `localhost:54329` to avoid clashing with a system Postgres on `5432`.
-- If `yt-dlp` or `ffmpeg` are missing locally, the bot still starts, but TikTok download flow is disabled on that instance.
+- If `yt-dlp` or `ffmpeg` are missing locally, the bot still starts, but the TikTok/Shorts download flow is disabled on that instance. YouTube additionally needs `yt-dlp-ejs` (`pip install -r requirements-ytdlp.txt`).

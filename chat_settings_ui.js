@@ -22,6 +22,7 @@ function effectiveSettings(settings) {
         albumsEnabled: settings?.albums_enabled ?? true,
         deleteButton: settings?.delete_button ?? true,
         disabledPlatforms: settings?.disabled_platforms ?? [],
+        shortsDownload: settings?.shorts_download ?? false,
         language: (0, i18n_1.normalizeLang)(settings?.language) ?? 'ru',
     };
 }
@@ -54,6 +55,12 @@ function buildSettingsKeyboard(settings, L) {
                 {
                     text: `${L.settingDeleteButton}: ${state(s.deleteButton)}`,
                     callback_data: 'set:delbtn',
+                },
+            ],
+            [
+                {
+                    text: `${L.settingShorts}: ${state(s.shortsDownload)}`,
+                    callback_data: 'set:shorts',
                 },
             ],
             [

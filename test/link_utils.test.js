@@ -6,6 +6,8 @@ const {
   convertToInlineFix,
   convertToInstaFix,
   findsocialLinks,
+  findYouTubeShortsUrl,
+  isYouTubeShortsUrl,
   INSTA_FIX_DOMAIN,
   INSTA_FIX_FALLBACK,
   REDDIT_EMBED_DOMAIN,
@@ -241,4 +243,28 @@ test('converters handle subdomains without leaving a broken host', () => {
     convertToInlineFix('https://m.instagram.com/p/abc123/'),
     `https://${INSTA_FIX_DOMAIN}/p/abc123/`
   );
+});
+
+test('findYouTubeShortsUrl finds Shorts links and normalises them', () => {
+  const canonical = 'https://www.youtube.com/shorts/jNQXAC9IVRw';
+  for (const text of [
+    'https://youtube.com/shorts/jNQXAC9IVRw?si=tracking',
+    'смотри:https://www.youtube.com/shorts/jNQXAC9IVRw.',
+    'm.youtube.com/shorts/jNQXAC9IVRw',
+    'two https://youtube.com/shorts/jNQXAC9IVRw https://youtube.com/shorts/aaaaaaaaaaa',
+  ]) {
+    assert.equal(findYouTubeShortsUrl(text), canonical, text);
+  }
+  for (const text of [
+    'https://youtu.be/jNQXAC9IVRw',
+    'https://www.youtube.com/watch?v=jNQXAC9IVRw',
+    'https://youtube.com/shorts/tooShort',
+    'https://www.youtube.com/shorts/jNQXAC9IVRwX',
+    'https://notyoutube.com/shorts/jNQXAC9IVRw',
+  ]) {
+    assert.equal(findYouTubeShortsUrl(text), null, text);
+  }
+  assert.equal(isYouTubeShortsUrl(canonical), true);
+  // Shorts are not rewritten, so they are not "social links".
+  assert.deepEqual(findsocialLinks(canonical), []);
 });

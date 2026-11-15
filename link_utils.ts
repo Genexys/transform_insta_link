@@ -233,3 +233,33 @@ export function findsocialLinks(text: string): string[] {
 
   return socialLinks;
 }
+
+// YouTube Shorts. Telegram already previews YouTube links, so these are never
+// rewritten; the bot only offers a download button for them. Only the
+// /shorts/ path counts: a youtu.be or /watch link can't be told apart from a
+// long video without fetching it. Any video id also opens under /shorts/, so
+// the download itself still enforces the Shorts duration limit.
+const YOUTUBE_SHORTS_REGEX =
+  /^(?:https?:\/\/)?(?:(?:www|m)\.)?youtube\.com\/shorts\/([A-Za-z0-9_-]{11})(?=$|[/?#])/i;
+
+export function youTubeShortsId(url: string): string | null {
+  return url.match(YOUTUBE_SHORTS_REGEX)?.[1] ?? null;
+}
+
+export function isYouTubeShortsUrl(url: string): boolean {
+  return youTubeShortsId(url) !== null;
+}
+
+// The first Shorts link in a message, normalised to a canonical URL (tracking
+// parameters such as ?si= dropped).
+export function findYouTubeShortsUrl(text: string): string | null {
+  for (const word of text.split(/\s+/)) {
+    const candidate = word.match(URL_CANDIDATE_REGEX);
+    if (!candidate) continue;
+    const id = youTubeShortsId(
+      candidate[0].replace(TRAILING_PUNCTUATION_REGEX, '')
+    );
+    if (id) return `https://www.youtube.com/shorts/${id}`;
+  }
+  return null;
+}

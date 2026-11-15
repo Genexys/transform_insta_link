@@ -19,7 +19,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: '26.13.1'
           cache: npm
 
       - name: Install dependencies
@@ -35,3 +35,7 @@ jobs:
 
       - name: Test
         run: npm test
+
+      # Railway builds this Dockerfile; catch a broken image before merge.
+      - name: Docker build
+        run: docker build -t transform-insta-link .

@@ -45,6 +45,7 @@ test('chat settings fall back to defaults and render every toggle', () => {
     albumsEnabled: true,
     deleteButton: true,
     disabledPlatforms: [],
+    shortsDownload: false,
     language: 'ru',
   });
   const keyboard = buildSettingsKeyboard(
@@ -53,6 +54,7 @@ test('chat settings fall back to defaults and render every toggle', () => {
   );
   const labels = keyboard.inline_keyboard.map(row => row[0].text);
   assert.equal(labels[0], '🔇 Quiet mode: ✅ on');
-  assert.equal(labels[4], '🌐 Platforms: 6/7');
-  assert.equal(labels[5], '🗣 Language: English');
+  assert.equal(labels[4], '🎬 Shorts download: ▫️ off');
+  assert.equal(labels[5], '🌐 Platforms: 6/7');
+  assert.equal(labels[6], '🗣 Language: English');
 });
