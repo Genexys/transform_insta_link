@@ -24,6 +24,13 @@ export function resolveFromPath(
   return null;
 }
 
+// Absolute yt-dlp and ffmpeg paths, or null when either is missing.
+export function ytDlpBinaries(): { ytDlp: string; ffmpeg: string } | null {
+  const ytDlp = resolveFromPath('yt-dlp');
+  const ffmpeg = resolveFromPath('ffmpeg');
+  return ytDlp && ffmpeg ? { ytDlp, ffmpeg } : null;
+}
+
 function hasBinary(binary: string, versionArg: string): boolean {
   const result = spawnSync(binary, [versionArg], { stdio: 'ignore' });
   return !result.error && result.status === 0;

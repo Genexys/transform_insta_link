@@ -14,6 +14,14 @@ architecture overview.
 - Because deploy follows `master`, keep `master` releasable — build + tests must
   pass before merging (CI covers install/build/test).
 
+## Home YouTube worker
+
+- `youtube_worker.ts` runs on the owner's home machine (`compose.worker.yaml`),
+  not on Railway. Merging to `master` does not update it; after a yt-dlp bump
+  the owner rebuilds it. See `docs/youtube-home-worker.md`.
+- The bot side (`/internal/yt-worker/*`) is inactive until `YT_WORKER_TOKEN` is
+  set on the Railway service.
+
 ## Railway service settings
 
 - Build and deploy settings (Dockerfile builder, start command, `/healthz` healthcheck, restart policy) live in `.railway/railway.ts`

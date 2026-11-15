@@ -4,6 +4,7 @@ import { dbClient, logLinkEvent } from './db';
 import { getDependencyHealth } from './health';
 import { REDDIT_EMBED_DOMAIN } from './link_utils';
 import { log } from './runtime';
+import { youtubeWorkerRelay } from './youtube_worker_relay';
 
 function escapeHtml(str: string): string {
   return str
@@ -145,6 +146,8 @@ export function startHttpServer() {
   const server = http.createServer(async (req, res) => {
     const urlPath = req.url || '';
 
+    if (await youtubeWorkerRelay.handle(req, res)) return;
+
     if (urlPath.startsWith('/r/') || urlPath.startsWith('/comments/')) {
       await handleRedditEmbed(urlPath, res);
       return;
@@ -176,6 +179,9 @@ export function startHttpServer() {
             twitter: dependencyHealth.twitter,
             other: dependencyHealth.other,
             checks: dependencyHealth.checks,
+            // Informational: does not change `status`. The bot works without
+            // the worker; Shorts then download through the local yt-dlp.
+            youtube_worker: youtubeWorkerRelay.status(),
             ...(stats && { stats }),
           },
           null,

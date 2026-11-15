@@ -10,6 +10,7 @@ const db_1 = require("./db");
 const health_1 = require("./health");
 const link_utils_1 = require("./link_utils");
 const runtime_1 = require("./runtime");
+const youtube_worker_relay_1 = require("./youtube_worker_relay");
 function escapeHtml(str) {
     return str
         .replace(/&/g, '&amp;')
@@ -128,6 +129,8 @@ function getCachedDependencyHealth() {
 function startHttpServer() {
     const server = http_1.default.createServer(async (req, res) => {
         const urlPath = req.url || '';
+        if (await youtube_worker_relay_1.youtubeWorkerRelay.handle(req, res))
+            return;
         if (urlPath.startsWith('/r/') || urlPath.startsWith('/comments/')) {
             await handleRedditEmbed(urlPath, res);
             return;
@@ -148,6 +151,7 @@ function startHttpServer() {
                 twitter: dependencyHealth.twitter,
                 other: dependencyHealth.other,
                 checks: dependencyHealth.checks,
+                youtube_worker: youtube_worker_relay_1.youtubeWorkerRelay.status(),
                 ...(stats && { stats }),
             }, null, 2));
             return;
