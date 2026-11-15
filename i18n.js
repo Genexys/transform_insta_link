@@ -69,7 +69,6 @@ const ru = {
     downloadErrGeneric: '❌ Произошла ошибка на сервере. Попробуйте позже или используйте другую ссылку.',
     downloadErrNotShort: (maxSeconds) => `❌ Скачать можно только Shorts — ролики до ${maxSeconds / 60} мин.`,
     downloadErrYouTubeUnavailable: '❌ YouTube сейчас не даёт скачать это видео. Попробуйте позже.',
-    shortsOffer: '🎬 YouTube Shorts — можно скачать видео в чат',
     shortsDownloadButton: '📥 Скачать Shorts',
     videoCaption: (premium) => premium
         ? '🎥 Ваше видео (безлимит активен) — можно сохранять.'
@@ -265,7 +264,6 @@ const en = {
     downloadErrGeneric: '❌ Server error. Try again later or use another link.',
     downloadErrNotShort: maxSeconds => `❌ Only Shorts can be downloaded — clips up to ${maxSeconds / 60} min.`,
     downloadErrYouTubeUnavailable: '❌ YouTube is not letting us download this video right now. Try again later.',
-    shortsOffer: '🎬 YouTube Shorts — the video can be downloaded to this chat',
     shortsDownloadButton: '📥 Download Short',
     videoCaption: premium => premium
         ? '🎥 Your video (unlimited pass active) — free to save.'
