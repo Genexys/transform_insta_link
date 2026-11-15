@@ -219,7 +219,8 @@ Debian, and yt-dlp (+ `yt-dlp-ejs`) from PyPI in `/opt/ytdlp`, pinned in
 lag months behind, and YouTube and TikTok break old releases.
 
 YouTube Shorts: a `youtube.com/shorts/<id>` link is not rewritten (Telegram
-previews YouTube itself); the bot answers it with a download button. Always in
+previews YouTube itself); the bot answers it with the link (Telegram's YouTube
+card: cover, title, description; compact in groups) and a download button. Always in
 private chats, in groups only with the `🎬 Shorts` setting (`shorts_download`,
 off by default). The download enforces the Shorts length (≤ 180 s) because any
 video id opens under `/shorts/`, picks H.264 within 50 MB, and needs

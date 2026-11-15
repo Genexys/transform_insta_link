@@ -225,14 +225,16 @@ test('a Shorts link in a private chat gets a download button, once', async () =>
 
   const sent = bot.of('sendMessage');
   assert.equal(sent.length, 1);
-  assert.equal(
-    sent[0].args[1],
-    `🎬 YouTube Shorts — the video can be downloaded to this chat\n${SHORTS}`
-  );
+  // Just the link, like a TikTok reply: Telegram's YouTube card shows the
+  // cover, title and description.
+  assert.equal(sent[0].args[1], SHORTS);
   assert.deepEqual(sent[0].args[2].reply_markup.inline_keyboard, [
     [{ text: '📥 Download Short', callback_data: 'download_video' }],
   ]);
-  assert.equal(sent[0].args[2].link_preview_options.is_disabled, true);
+  assert.deepEqual(sent[0].args[2].link_preview_options, {
+    url: SHORTS,
+    prefer_large_media: true,
+  });
   assert.equal(sent[0].args[2].reply_parameters.message_id, 4);
 });
 

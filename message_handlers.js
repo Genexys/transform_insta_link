@@ -235,8 +235,13 @@ function registerMessageHandlers(bot, resolvers, options) {
         const threadId = msg
             .message_thread_id;
         try {
-            await bot.sendMessage(chatId, `${L.shortsOffer}\n${shortsUrl}`, {
-                link_preview_options: { is_disabled: true },
+            await bot.sendMessage(chatId, shortsUrl, {
+                link_preview_options: {
+                    url: shortsUrl,
+                    ...(isGroup
+                        ? { prefer_small_media: true }
+                        : { prefer_large_media: true }),
+                },
                 reply_parameters: {
                     message_id: msg.message_id,
                     allow_sending_without_reply: true,

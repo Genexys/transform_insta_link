@@ -341,8 +341,9 @@ export function registerMessageHandlers(
   });
 
   // Telegram previews YouTube itself, so a Shorts link is not rewritten; the
-  // bot only answers it with a download button. Always in private chats, in
-  // groups only when an admin enabled it (one reply per link would be noise).
+  // bot answers it with the link and a download button, like a TikTok reply.
+  // Always in private chats, in groups only when an admin enabled it (one
+  // reply per link would be noise).
   async function offerShortsDownload(
     msg: Message,
     messageText: string,
@@ -369,9 +370,16 @@ export function registerMessageHandlers(
       .message_thread_id;
     try {
       // The download callback finds the link in this message's text.
-      await bot.sendMessage(chatId, `${L.shortsOffer}\n${shortsUrl}`, {
-        // The original message already shows YouTube's own preview.
-        link_preview_options: { is_disabled: true },
+      await bot.sendMessage(chatId, shortsUrl, {
+        // Telegram's own YouTube card: cover, title, description and its
+        // in-app player. A group already shows the original message's large
+        // card right above, so the reply there keeps a compact one.
+        link_preview_options: {
+          url: shortsUrl,
+          ...(isGroup
+            ? { prefer_small_media: true }
+            : { prefer_large_media: true }),
+        },
         reply_parameters: {
           message_id: msg.message_id,
           allow_sending_without_reply: true,
