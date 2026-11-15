@@ -17,6 +17,13 @@ import { downloadInstaVideoFile, probeVideoMeta } from './video_delivery';
 import { resolveLang } from './chat_lang';
 import { strings } from './i18n';
 import { log } from './runtime';
+import { ytDlpBinaries } from './media_runtime';
+import {
+  SHORTS_MAX_SECONDS,
+  ShortsDownloadError,
+  downloadShortWithYtDlp,
+} from './youtube_shorts';
+import { youtubeWorkerRelay } from './youtube_worker_relay';
 
 // The free in-chat download costs real CPU/bandwidth (yt-dlp + upload) and was
 // unbounded: anyone could hammer the button. Per-user, in-memory limits — a
@@ -25,36 +32,36 @@ const FREE_DOWNLOAD_LIMIT = 5;
 const FREE_DOWNLOAD_WINDOW_MS = 10 * 60 * 1000;
 const recentDownloads = new Map<number, number[]>();
 
-// YouTube caps Shorts at 3 minutes. Any video id also opens under /shorts/, so
-// the limit is enforced at download time rather than trusted from the link.
-export const SHORTS_MAX_SECONDS = 180;
-
-// H.264 so every Telegram client can play it; the size filters keep the merged
-// file under the 50 MB Bot API upload limit. Formats of unknown size pass the
-// filter (`<?`), and maxFilesize stays the hard stop.
-export const SHORTS_FORMAT =
-  'bv*[vcodec^=avc1][filesize<?40M]+ba[ext=m4a]/b[ext=mp4][filesize<?48M]';
-
-export function shortsDownloadOptions(output: string) {
-  return {
-    output,
-    format: SHORTS_FORMAT,
-    mergeOutputFormat: 'mp4',
-    maxFilesize: '50M',
-    noPlaylist: true,
-    matchFilter: `duration <= ${SHORTS_MAX_SECONDS}`,
-    // Current YouTube needs a JS challenge solver; yt-dlp-ejs provides the
-    // script and Node (already in the image) runs it.
-    additionalOptions: ['--js-runtimes', 'node'],
-  };
+// Datacenter IPs get YouTube's bot check, so Shorts go through the home
+// worker whenever it is polling, and through the local yt-dlp otherwise.
+async function downloadShort(url: string, outPath: string): Promise<void> {
+  if (youtubeWorkerRelay.isOnline()) {
+    await youtubeWorkerRelay.download(url, outPath);
+    return;
+  }
+  const binaries = ytDlpBinaries();
+  if (!binaries) {
+    throw new ShortsDownloadError('failed', 'yt-dlp or ffmpeg is missing');
+  }
+  await downloadShortWithYtDlp(binaries, url, outPath);
 }
 
-// yt-dlp exits 0 and only logs when --match-filter rejects a video.
-export function rejectedByShortsFilter(output: string): boolean {
-  return /does not pass filter/i.test(output);
+function shortsErrorMessage(
+  L: ReturnType<typeof strings>,
+  error: ShortsDownloadError
+): string {
+  switch (error.code) {
+    case 'not_short':
+      return L.downloadErrNotShort(SHORTS_MAX_SECONDS);
+    case 'too_big':
+      return L.downloadErrTooBig;
+    case 'blocked':
+    case 'unavailable':
+      return L.downloadErrYouTubeUnavailable;
+    default:
+      return L.downloadErrGeneric;
+  }
 }
-
-class NotAShortError extends Error {}
 
 const activeDownloads = new Set<number>();
 
@@ -170,7 +177,13 @@ export async function handleDownloadCallback(
       telegramId,
       urlHost: new URL(originalUrl).hostname,
       tempFilePath,
-      via: isInstagram ? 'preview-service' : isShorts ? 'yt-dlp:shorts' : 'yt-dlp',
+      via: isInstagram
+        ? 'preview-service'
+        : isShorts
+          ? youtubeWorkerRelay.isOnline()
+            ? 'home-worker'
+            : 'yt-dlp:shorts'
+          : 'yt-dlp',
     });
 
     if (isInstagram) {
@@ -183,15 +196,7 @@ export async function handleDownloadCallback(
       // save flow (deliverInstaMedia), not here.
       await downloadInstaVideoFile(shortcode, tempFilePath);
     } else if (isShorts) {
-      const output = await ytdlp.downloadAsync(
-        originalUrl,
-        shortsDownloadOptions(tempFilePath)
-      );
-      if (rejectedByShortsFilter(output)) {
-        throw new NotAShortError(
-          `Longer than ${SHORTS_MAX_SECONDS}s, not a Short`
-        );
-      }
+      await downloadShort(originalUrl, tempFilePath);
     } else {
       await ytdlp.downloadAsync(originalUrl, {
         output: tempFilePath,
@@ -253,8 +258,8 @@ export async function handleDownloadCallback(
     let errorMsg: string;
     const errStr = (error?.message || '').toLowerCase();
 
-    if (error instanceof NotAShortError) {
-      errorMsg = L.downloadErrNotShort(SHORTS_MAX_SECONDS);
+    if (error instanceof ShortsDownloadError) {
+      errorMsg = shortsErrorMessage(L, error);
     } else if (
       errStr.includes('file is larger than') ||
       errStr.includes('too big')

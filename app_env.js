@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ERROR_LOGS_RETENTION_DAYS = exports.LINK_EVENTS_RETENTION_DAYS = exports.INSTA_PREVIEW_TOKEN = exports.INSTA_PREVIEW_HOST = exports.PORT = exports.ADMIN_CHAT_ID = exports.DATABASE_URL = void 0;
+exports.ERROR_LOGS_RETENTION_DAYS = exports.LINK_EVENTS_RETENTION_DAYS = exports.YT_WORKER_TOKEN = exports.INSTA_PREVIEW_TOKEN = exports.INSTA_PREVIEW_HOST = exports.PORT = exports.ADMIN_CHAT_ID = exports.DATABASE_URL = void 0;
 exports.getBotToken = getBotToken;
 const runtime_1 = require("./runtime");
 function getBotToken() {
@@ -13,6 +13,7 @@ exports.INSTA_PREVIEW_HOST = process.env.INSTA_PREVIEW_HOST || 'previewlinkbot.x
 exports.INSTA_PREVIEW_TOKEN = process.env.INSTA_PREVIEW_TOKEN ||
     process.env.EXTRACTOR_SHARED_TOKEN ||
     '';
+exports.YT_WORKER_TOKEN = process.env.YT_WORKER_TOKEN?.trim() || '';
 function parseDays(value, fallback) {
     if (value === undefined || value.trim() === '')
         return fallback;

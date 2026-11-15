@@ -40,7 +40,10 @@ The repo is very small:
 - `platform_resolvers.ts` — Instagram/TikTok/Twitter fixer resolution and fallback selection
 - `message_handlers.ts` — inline query and main message rewrite registration
 - `callback_handlers.ts` — callback-query routing: settings menu, delete button, downloads, invoices
-- `download_handlers.ts` — TikTok download callback flow and error persistence
+- `download_handlers.ts` — TikTok/Shorts download callback flow and error persistence
+- `youtube_shorts.ts` — Shorts yt-dlp arguments, the download itself and failure codes (shared with the worker)
+- `youtube_worker_relay.ts` — bot side of the home YouTube worker: in-memory job queue and the `/internal/yt-worker/*` routes
+- `youtube_worker.ts` — the home worker entrypoint (runs off Railway, `compose.worker.yaml`)
 - `payment_handlers.ts` — Stars invoices (donation, paid download, lifetime pass), pre-checkout, payment fulfilment and refunds
 - `command_handlers.ts` — text commands (`/start`, `/help`, `/premium`, `/purchases`, `/paysupport`, `/terms`, `/settings`, `/chatstats`, `/invite`, `/donate`, `/feedback`, owner-only `/admin`) and onboarding
 - `http_server.ts` — `/healthz` liveness, `/health` dependency report, Reddit embed proxy, and HTTP server startup
@@ -221,6 +224,12 @@ private chats, in groups only with the `🎬 Shorts` setting (`shorts_download`,
 off by default). The download enforces the Shorts length (≤ 180 s) because any
 video id opens under `/shorts/`, picks H.264 within 50 MB, and needs
 `--js-runtimes node` for YouTube's JS challenge.
+
+YouTube blocks Railway's egress (429 / "Sign in to confirm you're not a bot"),
+so Shorts are downloaded by the home worker (`youtube_worker.ts`) on a
+residential connection. It long-polls the bot over HTTPS and uploads the mp4;
+nothing listens at home. While it is offline, the bot falls back to its own
+yt-dlp. Setup, updates and safety: `docs/youtube-home-worker.md`.
 
 The bot runs through polling, not webhooks. Railway startup now runs migrations before starting `bot.js`.
 

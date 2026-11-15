@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.resolveFromPath = resolveFromPath;
+exports.ytDlpBinaries = ytDlpBinaries;
 exports.initMediaRuntime = initMediaRuntime;
 const child_process_1 = require("child_process");
 const fs_1 = __importDefault(require("fs"));
@@ -23,6 +24,11 @@ function resolveFromPath(binary, envPath = process.env.PATH ?? '') {
         }
     }
     return null;
+}
+function ytDlpBinaries() {
+    const ytDlp = resolveFromPath('yt-dlp');
+    const ffmpeg = resolveFromPath('ffmpeg');
+    return ytDlp && ffmpeg ? { ytDlp, ffmpeg } : null;
 }
 function hasBinary(binary, versionArg) {
     const result = (0, child_process_1.spawnSync)(binary, [versionArg], { stdio: 'ignore' });

@@ -17,6 +17,10 @@ export const INSTA_PREVIEW_TOKEN =
   process.env.EXTRACTOR_SHARED_TOKEN ||
   '';
 
+// Shared secret of the home YouTube worker (youtube_worker_relay.ts). Unset →
+// no worker routes, and Shorts download through the local yt-dlp.
+export const YT_WORKER_TOKEN = process.env.YT_WORKER_TOKEN?.trim() || '';
+
 // Unset → the default; "0" (or anything non-positive) → keep forever.
 function parseDays(value: string | undefined, fallback: number): number {
   if (value === undefined || value.trim() === '') return fallback;
