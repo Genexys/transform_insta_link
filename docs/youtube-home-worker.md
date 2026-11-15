@@ -43,8 +43,8 @@ user taps "Download Short"
    Setting a variable redeploys the bot.
 
    ```bash
-   npx -y @railway/cli@5.74.0 variables -s transform_insta_link -e production \
-     --set "YT_WORKER_TOKEN=$(sed -n 's/^YT_WORKER_TOKEN=//p' .env.worker)"
+   sed -n 's/^YT_WORKER_TOKEN=//p' .env.worker | npx -y @railway/cli@5.74.0 \
+     variable set YT_WORKER_TOKEN --stdin -s transform_insta_link -e production
    ```
 
 3. Start the worker. It builds the bot's own `Dockerfile`, so it runs the same
