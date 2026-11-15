@@ -11,7 +11,7 @@ const stream_1 = require("stream");
 const promises_1 = require("stream/promises");
 const app_env_1 = require("./app_env");
 const runtime_1 = require("./runtime");
-const youtube_shorts_1 = require("./youtube_shorts");
+const youtube_download_1 = require("./youtube_download");
 const MAX_REPORT_BYTES = 4096;
 function sha256(value) {
     return (0, crypto_1.createHash)('sha256').update(value).digest();
@@ -36,18 +36,18 @@ async function readSmallBody(req, limit) {
     return Buffer.concat(chunks).toString('utf8');
 }
 function createYoutubeWorkerRelay(options) {
-    const token = options.token.length >= youtube_shorts_1.MIN_WORKER_TOKEN_LENGTH ? options.token : '';
+    const token = options.token.length >= youtube_download_1.MIN_WORKER_TOKEN_LENGTH ? options.token : '';
     if (options.token && !token) {
         runtime_1.log.warn('YT_WORKER_TOKEN is too short; the home worker is disabled', {
-            minLength: youtube_shorts_1.MIN_WORKER_TOKEN_LENGTH,
+            minLength: youtube_download_1.MIN_WORKER_TOKEN_LENGTH,
         });
     }
     const tokenDigest = token ? sha256(token) : null;
     const pollHoldMs = options.pollHoldMs ?? 25_000;
     const claimTimeoutMs = options.claimTimeoutMs ?? 45_000;
-    const jobTimeoutMs = options.jobTimeoutMs ?? 90_000;
-    const uploadTimeoutMs = options.uploadTimeoutMs ?? 60_000;
-    const maxUploadBytes = options.maxUploadBytes ?? youtube_shorts_1.SHORTS_MAX_BYTES;
+    const jobTimeoutMs = options.jobTimeoutMs ?? 180_000;
+    const uploadTimeoutMs = options.uploadTimeoutMs ?? 120_000;
+    const maxUploadBytes = options.maxUploadBytes ?? youtube_download_1.TELEGRAM_UPLOAD_MAX_BYTES;
     const onlineWindowMs = options.onlineWindowMs ?? 90_000;
     const maxQueued = options.maxQueued ?? 10;
     const now = options.now ?? Date.now;
@@ -73,7 +73,7 @@ function createYoutubeWorkerRelay(options) {
         clearTimeout(job.timer);
         job.state = 'claimed';
         claimed.set(job.id, job);
-        job.timer = setTimeout(() => finish(job, new youtube_shorts_1.ShortsDownloadError('unavailable', 'home worker did not answer in time')), jobTimeoutMs);
+        job.timer = setTimeout(() => finish(job, new youtube_download_1.YouTubeDownloadError('unavailable', 'home worker did not answer in time')), jobTimeoutMs);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ id: job.id, url: job.url }));
     }
@@ -129,23 +129,23 @@ function createYoutubeWorkerRelay(options) {
             catch {
                 report = null;
             }
-            const code = (0, youtube_shorts_1.isShortsFailure)(report?.code) ? report.code : 'failed';
+            const code = (0, youtube_download_1.isYouTubeFailure)(report?.code) ? report.code : 'failed';
             const detail = typeof report?.message === 'string' ? report.message.slice(0, 500) : '';
             respond(res, 204);
-            finish(job, new youtube_shorts_1.ShortsDownloadError(code, `home worker: ${code}${detail ? `: ${detail}` : ''}`));
+            finish(job, new youtube_download_1.YouTubeDownloadError(code, `home worker: ${code}${detail ? `: ${detail}` : ''}`));
             return;
         }
         if (!type.startsWith('video/mp4')) {
             req.resume();
             respond(res, 415);
-            finish(job, new youtube_shorts_1.ShortsDownloadError('failed', `home worker sent ${type || 'no type'}`));
+            finish(job, new youtube_download_1.YouTubeDownloadError('failed', `home worker sent ${type || 'no type'}`));
             return;
         }
         const declared = Number(req.headers['content-length']);
         if (Number.isFinite(declared) && declared > maxUploadBytes) {
             req.resume();
             respond(res, 413);
-            finish(job, new youtube_shorts_1.ShortsDownloadError('too_big', `upload of ${declared} B`));
+            finish(job, new youtube_download_1.YouTubeDownloadError('too_big', `upload of ${declared} B`));
             return;
         }
         let received = 0;
@@ -167,13 +167,13 @@ function createYoutubeWorkerRelay(options) {
             await fs_1.default.promises.rm(job.outPath, { force: true });
             const tooBig = err instanceof UploadTooLargeError;
             respond(res, tooBig ? 413 : 400);
-            finish(job, new youtube_shorts_1.ShortsDownloadError(tooBig ? 'too_big' : 'failed', `upload from home worker failed: ${String(err)}`));
+            finish(job, new youtube_download_1.YouTubeDownloadError(tooBig ? 'too_big' : 'failed', `upload from home worker failed: ${String(err)}`));
             return;
         }
         if (received === 0) {
             await fs_1.default.promises.rm(job.outPath, { force: true });
             respond(res, 400);
-            finish(job, new youtube_shorts_1.ShortsDownloadError('failed', 'empty upload'));
+            finish(job, new youtube_download_1.YouTubeDownloadError('failed', 'empty upload'));
             return;
         }
         respond(res, 204);
@@ -185,7 +185,7 @@ function createYoutubeWorkerRelay(options) {
     }
     async function handle(req, res) {
         const [pathname] = (req.url ?? '').split('?');
-        if (!pathname.startsWith(`${youtube_shorts_1.WORKER_ROUTE_PREFIX}/`))
+        if (!pathname.startsWith(`${youtube_download_1.WORKER_ROUTE_PREFIX}/`))
             return false;
         if (!tokenDigest) {
             req.resume();
@@ -197,7 +197,7 @@ function createYoutubeWorkerRelay(options) {
             respond(res, 401);
             return true;
         }
-        const route = pathname.slice(youtube_shorts_1.WORKER_ROUTE_PREFIX.length);
+        const route = pathname.slice(youtube_download_1.WORKER_ROUTE_PREFIX.length);
         if (req.method === 'GET' && route === '/next') {
             handlePoll(res);
             return true;
@@ -205,7 +205,7 @@ function createYoutubeWorkerRelay(options) {
         const jobMatch = /^\/jobs\/([^/]+)$/.exec(route);
         if (req.method === 'POST' &&
             jobMatch &&
-            youtube_shorts_1.WORKER_JOB_ID_REGEX.test(jobMatch[1])) {
+            youtube_download_1.WORKER_JOB_ID_REGEX.test(jobMatch[1])) {
             await handleResult(jobMatch[1], req, res);
             return true;
         }
@@ -220,10 +220,10 @@ function createYoutubeWorkerRelay(options) {
     }
     function download(url, outPath) {
         if (!tokenDigest) {
-            return Promise.reject(new youtube_shorts_1.ShortsDownloadError('unavailable', 'home worker not configured'));
+            return Promise.reject(new youtube_download_1.YouTubeDownloadError('unavailable', 'home worker not configured'));
         }
         if (queue.length >= maxQueued) {
-            return Promise.reject(new youtube_shorts_1.ShortsDownloadError('unavailable', 'home worker queue is full'));
+            return Promise.reject(new youtube_download_1.YouTubeDownloadError('unavailable', 'home worker queue is full'));
         }
         return new Promise((resolve, reject) => {
             const job = {
@@ -234,7 +234,7 @@ function createYoutubeWorkerRelay(options) {
                 resolve,
                 reject,
             };
-            job.timer = setTimeout(() => finish(job, new youtube_shorts_1.ShortsDownloadError('unavailable', 'home worker did not pick up the job')), claimTimeoutMs);
+            job.timer = setTimeout(() => finish(job, new youtube_download_1.YouTubeDownloadError('unavailable', 'home worker did not pick up the job')), claimTimeoutMs);
             queue.push(job);
             dispatch();
         });
@@ -256,7 +256,7 @@ function createYoutubeWorkerRelay(options) {
             respond(waiter.res, 204);
         }
         for (const job of [...queue, ...claimed.values()]) {
-            finish(job, new youtube_shorts_1.ShortsDownloadError('unavailable', 'relay closed'));
+            finish(job, new youtube_download_1.YouTubeDownloadError('unavailable', 'relay closed'));
         }
     }
     return { handle, isOnline, download, status, close };

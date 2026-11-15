@@ -67,9 +67,11 @@ const ru = {
     downloadErrTooBig: '❌ Видео слишком большое для отправки через Telegram (>50MB).',
     downloadErrPreview: (detail) => `❌ Сервис превью вернул ошибку: ${detail}. Попробуйте через минуту.`,
     downloadErrGeneric: '❌ Произошла ошибка на сервере. Попробуйте позже или используйте другую ссылку.',
-    downloadErrNotShort: (maxSeconds) => `❌ Скачать можно только Shorts — ролики до ${maxSeconds / 60} мин.`,
+    downloadErrYouTubeTooLong: '❌ Видео слишком длинное: даже в 240p оно больше 50 МБ — это предел Telegram для файлов от ботов.',
+    downloadErrYouTubeLive: '❌ Прямую трансляцию скачать нельзя.',
     downloadErrYouTubeUnavailable: '❌ YouTube сейчас не даёт скачать это видео. Попробуйте позже.',
     shortsDownloadButton: '📥 Скачать Shorts',
+    youtubeDownloadButton: '📥 Скачать видео',
     videoCaption: (premium) => premium
         ? '🎥 Ваше видео (безлимит активен) — можно сохранять.'
         : '🎥 Ваше видео — можно сохранять и пересылать.',
@@ -166,14 +168,14 @@ const ru = {
         '📌 Не удалять оригинал — отвечать ссылкой, не заменяя сообщение\n' +
         '🖼 Альбомы — присылать карусели Instagram альбомом\n' +
         '🗑 Кнопка удаления — под сообщениями бота\n' +
-        '🎬 Shorts — кнопка скачивания под ссылками на YouTube Shorts\n' +
+        '🎬 YouTube — кнопка скачивания под ссылками на YouTube\n' +
         '🌐 Платформы — какие ссылки исправлять',
     settingsPlatformsTitle: '🌐 Платформы\n\nНажмите, чтобы включить или выключить исправление ссылок.',
     settingQuiet: '🔇 Тихий режим',
     settingKeepOriginal: '📌 Не удалять оригинал',
     settingAlbums: '🖼 Альбомы Instagram',
     settingDeleteButton: '🗑 Кнопка удаления',
-    settingShorts: '🎬 Скачивание Shorts',
+    settingShorts: '🎬 Скачивание YouTube',
     settingPlatforms: '🌐 Платформы',
     settingLanguage: '🗣 Язык',
     settingsBack: '« Назад',
@@ -262,9 +264,11 @@ const en = {
     downloadErrTooBig: '❌ The video is too large to send via Telegram (>50MB).',
     downloadErrPreview: detail => `❌ The preview service returned an error: ${detail}. Try again in a minute.`,
     downloadErrGeneric: '❌ Server error. Try again later or use another link.',
-    downloadErrNotShort: maxSeconds => `❌ Only Shorts can be downloaded — clips up to ${maxSeconds / 60} min.`,
+    downloadErrYouTubeTooLong: '❌ The video is too long: even at 240p it is over 50 MB, the Telegram limit for files from bots.',
+    downloadErrYouTubeLive: '❌ Live streams cannot be downloaded.',
     downloadErrYouTubeUnavailable: '❌ YouTube is not letting us download this video right now. Try again later.',
     shortsDownloadButton: '📥 Download Short',
+    youtubeDownloadButton: '📥 Download video',
     videoCaption: premium => premium
         ? '🎥 Your video (unlimited pass active) — free to save.'
         : '🎥 Your video — free to save and forward.',
@@ -361,14 +365,14 @@ const en = {
         '📌 Keep original — reply with the link instead of replacing the message\n' +
         '🖼 Albums — send Instagram carousels as an album\n' +
         '🗑 Delete button — under the bot’s messages\n' +
-        '🎬 Shorts — download button under YouTube Shorts links\n' +
+        '🎬 YouTube — download button under YouTube links\n' +
         '🌐 Platforms — which links to fix',
     settingsPlatformsTitle: '🌐 Platforms\n\nTap to turn link fixing on or off.',
     settingQuiet: '🔇 Quiet mode',
     settingKeepOriginal: '📌 Keep original',
     settingAlbums: '🖼 Instagram albums',
     settingDeleteButton: '🗑 Delete button',
-    settingShorts: '🎬 Shorts download',
+    settingShorts: '🎬 YouTube download',
     settingPlatforms: '🌐 Platforms',
     settingLanguage: '🗣 Language',
     settingsBack: '« Back',

@@ -7,9 +7,10 @@ exports.convertToInstaFix = convertToInstaFix;
 exports.convertToInlineFix = convertToInlineFix;
 exports.classifySocialLink = classifySocialLink;
 exports.findsocialLinks = findsocialLinks;
-exports.youTubeShortsId = youTubeShortsId;
-exports.isYouTubeShortsUrl = isYouTubeShortsUrl;
-exports.findYouTubeShortsUrl = findYouTubeShortsUrl;
+exports.youTubeVideo = youTubeVideo;
+exports.isYouTubeVideoUrl = isYouTubeVideoUrl;
+exports.canonicalYouTubeUrl = canonicalYouTubeUrl;
+exports.findYouTubeVideo = findYouTubeVideo;
 exports.INSTA_FIX_DOMAIN = 'previewlinkbot.xyz';
 exports.INSTA_FIX_DOMAIN_LEGACY = 'instapreviewservice-production.up.railway.app';
 exports.INSTA_FIX_FALLBACK = 'kkinstagram.com';
@@ -160,21 +161,53 @@ function findsocialLinks(text) {
     }
     return socialLinks;
 }
-const YOUTUBE_SHORTS_REGEX = /^(?:https?:\/\/)?(?:(?:www|m)\.)?youtube\.com\/shorts\/([A-Za-z0-9_-]{11})(?=$|[/?#])/i;
-function youTubeShortsId(url) {
-    return url.match(YOUTUBE_SHORTS_REGEX)?.[1] ?? null;
+const YOUTUBE_ID_REGEX = /^[A-Za-z0-9_-]{11}$/;
+const YOUTUBE_HOSTS = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com']);
+function youTubeVideo(url) {
+    let parsed;
+    try {
+        parsed = new URL(/^[a-z][a-z0-9+.-]*:/i.test(url) ? url : `https://${url}`);
+    }
+    catch {
+        return null;
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:')
+        return null;
+    const host = parsed.hostname.toLowerCase();
+    if (host === 'youtu.be') {
+        const id = parsed.pathname.split('/')[1] ?? '';
+        return YOUTUBE_ID_REGEX.test(id) ? { id, isShorts: false } : null;
+    }
+    if (!YOUTUBE_HOSTS.has(host))
+        return null;
+    const shorts = parsed.pathname.match(/^\/shorts\/([^/]+)\/?$/);
+    if (shorts) {
+        return YOUTUBE_ID_REGEX.test(shorts[1])
+            ? { id: shorts[1], isShorts: true }
+            : null;
+    }
+    if (parsed.pathname === '/watch' || parsed.pathname === '/watch/') {
+        const id = parsed.searchParams.get('v') ?? '';
+        return YOUTUBE_ID_REGEX.test(id) ? { id, isShorts: false } : null;
+    }
+    return null;
 }
-function isYouTubeShortsUrl(url) {
-    return youTubeShortsId(url) !== null;
+function isYouTubeVideoUrl(url) {
+    return youTubeVideo(url) !== null;
 }
-function findYouTubeShortsUrl(text) {
+function canonicalYouTubeUrl(video) {
+    return video.isShorts
+        ? `https://www.youtube.com/shorts/${video.id}`
+        : `https://www.youtube.com/watch?v=${video.id}`;
+}
+function findYouTubeVideo(text) {
     for (const word of text.split(/\s+/)) {
         const candidate = word.match(URL_CANDIDATE_REGEX);
         if (!candidate)
             continue;
-        const id = youTubeShortsId(candidate[0].replace(TRAILING_PUNCTUATION_REGEX, ''));
-        if (id)
-            return `https://www.youtube.com/shorts/${id}`;
+        const video = youTubeVideo(candidate[0].replace(TRAILING_PUNCTUATION_REGEX, ''));
+        if (video)
+            return video;
     }
     return null;
 }

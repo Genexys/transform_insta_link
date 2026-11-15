@@ -6,8 +6,10 @@ const {
   convertToInlineFix,
   convertToInstaFix,
   findsocialLinks,
-  findYouTubeShortsUrl,
-  isYouTubeShortsUrl,
+  canonicalYouTubeUrl,
+  findYouTubeVideo,
+  isYouTubeVideoUrl,
+  youTubeVideo,
   INSTA_FIX_DOMAIN,
   INSTA_FIX_FALLBACK,
   REDDIT_EMBED_DOMAIN,
@@ -245,26 +247,38 @@ test('converters handle subdomains without leaving a broken host', () => {
   );
 });
 
-test('findYouTubeShortsUrl finds Shorts links and normalises them', () => {
-  const canonical = 'https://www.youtube.com/shorts/jNQXAC9IVRw';
-  for (const text of [
-    'https://youtube.com/shorts/jNQXAC9IVRw?si=tracking',
-    'смотри:https://www.youtube.com/shorts/jNQXAC9IVRw.',
-    'm.youtube.com/shorts/jNQXAC9IVRw',
-    'two https://youtube.com/shorts/jNQXAC9IVRw https://youtube.com/shorts/aaaaaaaaaaa',
-  ]) {
-    assert.equal(findYouTubeShortsUrl(text), canonical, text);
+test('findYouTubeVideo finds video and Shorts links and normalises them', () => {
+  const watch = 'https://www.youtube.com/watch?v=jNQXAC9IVRw';
+  const shorts = 'https://www.youtube.com/shorts/jNQXAC9IVRw';
+  const cases = [
+    ['https://youtube.com/shorts/jNQXAC9IVRw?si=tracking', shorts],
+    ['смотри:https://www.youtube.com/shorts/jNQXAC9IVRw.', shorts],
+    ['m.youtube.com/shorts/jNQXAC9IVRw', shorts],
+    ['https://youtu.be/jNQXAC9IVRw?si=abc&t=42', watch],
+    ['глянь https://www.youtube.com/watch?v=jNQXAC9IVRw&list=PL1&t=10s!', watch],
+    ['https://m.youtube.com/watch?feature=share&v=jNQXAC9IVRw', watch],
+    ['two https://youtu.be/jNQXAC9IVRw https://youtube.com/shorts/aaaaaaaaaaa', watch],
+  ];
+  for (const [text, expected] of cases) {
+    const video = findYouTubeVideo(text);
+    assert.ok(video, text);
+    assert.equal(canonicalYouTubeUrl(video), expected, text);
   }
   for (const text of [
-    'https://youtu.be/jNQXAC9IVRw',
-    'https://www.youtube.com/watch?v=jNQXAC9IVRw',
     'https://youtube.com/shorts/tooShort',
     'https://www.youtube.com/shorts/jNQXAC9IVRwX',
     'https://notyoutube.com/shorts/jNQXAC9IVRw',
+    'https://www.youtube.com/watch?v=short',
+    'https://www.youtube.com/playlist?list=PL1234567890',
+    'https://www.youtube.com/live/jNQXAC9IVRw',
+    'https://music.youtube.com/watch?v=jNQXAC9IVRw',
+    'https://www.youtube.com/@channel',
   ]) {
-    assert.equal(findYouTubeShortsUrl(text), null, text);
+    assert.equal(findYouTubeVideo(text), null, text);
   }
-  assert.equal(isYouTubeShortsUrl(canonical), true);
-  // Shorts are not rewritten, so they are not "social links".
-  assert.deepEqual(findsocialLinks(canonical), []);
+  assert.deepEqual(youTubeVideo(shorts), { id: 'jNQXAC9IVRw', isShorts: true });
+  assert.equal(youTubeVideo('ftp://youtube.com/watch?v=jNQXAC9IVRw'), null);
+  assert.equal(isYouTubeVideoUrl(watch), true);
+  // YouTube links are not rewritten, so they are not "social links".
+  assert.deepEqual(findsocialLinks(`${shorts} ${watch}`), []);
 });

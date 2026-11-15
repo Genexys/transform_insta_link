@@ -4,6 +4,7 @@ import { registerCallbackHandlers } from './callback_handlers';
 import { registerMessageHandlers } from './message_handlers';
 import { createPlatformResolvers } from './platform_resolvers';
 import { startHttpServer } from './http_server';
+import { youtubeWorkerRelay } from './youtube_worker_relay';
 import { initMediaRuntime } from './media_runtime';
 import { createAlertDeduper } from './admin_alerts';
 import {
@@ -59,6 +60,7 @@ const resolvers = createPlatformResolvers(sendAdminAlert);
 
 registerMessageHandlers(bot, resolvers, {
   downloadsEnabled: mediaRuntime.downloadsEnabled,
+  youtubeAvailable: () => youtubeWorkerRelay.isOnline(),
 });
 registerCallbackHandlers(bot, mediaRuntime.ytdlp);
 

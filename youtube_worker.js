@@ -13,22 +13,19 @@ const promises_1 = require("timers/promises");
 const link_utils_1 = require("./link_utils");
 const media_runtime_1 = require("./media_runtime");
 const runtime_1 = require("./runtime");
-const youtube_shorts_1 = require("./youtube_shorts");
+const youtube_download_1 = require("./youtube_download");
 const POLL_TIMEOUT_MS = 40_000;
-const UPLOAD_TIMEOUT_MS = 60_000;
+const UPLOAD_TIMEOUT_MS = 120_000;
 const REPORT_TIMEOUT_MS = 15_000;
 const MAX_BACKOFF_MS = 60_000;
 function parseJob(value) {
     if (!value || typeof value !== 'object')
         return null;
     const { id, url } = value;
-    if (typeof id !== 'string' || !youtube_shorts_1.WORKER_JOB_ID_REGEX.test(id))
+    if (typeof id !== 'string' || !youtube_download_1.WORKER_JOB_ID_REGEX.test(id))
         return null;
-    const videoId = typeof url === 'string' ? (0, link_utils_1.youTubeShortsId)(url) : null;
-    return {
-        id,
-        url: videoId ? `https://www.youtube.com/shorts/${videoId}` : null,
-    };
+    const video = typeof url === 'string' ? (0, link_utils_1.youTubeVideo)(url) : null;
+    return { id, url: video ? (0, link_utils_1.canonicalYouTubeUrl)(video) : null };
 }
 function workerBaseUrl(botUrl) {
     const url = new URL(botUrl);
@@ -36,7 +33,7 @@ function workerBaseUrl(botUrl) {
     if (url.protocol !== 'https:' && !(url.protocol === 'http:' && local)) {
         throw new Error('YT_WORKER_BOT_URL must be an https:// URL');
     }
-    return `${url.origin}${youtube_shorts_1.WORKER_ROUTE_PREFIX}`;
+    return `${url.origin}${youtube_download_1.WORKER_ROUTE_PREFIX}`;
 }
 function pollError(status) {
     if (status === 401) {
@@ -58,7 +55,7 @@ async function report(ctx, id, failure) {
         await res.text().catch(() => '');
     }
     catch (err) {
-        runtime_1.log.warn('Failed to report a Shorts failure', {
+        runtime_1.log.warn('Failed to report a download failure', {
             jobId: id,
             err: String(err),
         });
@@ -69,7 +66,7 @@ async function runJob(ctx, job) {
     if (!job.url) {
         await report(ctx, job.id, {
             code: 'failed',
-            message: 'not a YouTube Shorts URL',
+            message: 'not a YouTube video URL',
         });
         return;
     }
@@ -80,10 +77,10 @@ async function runJob(ctx, job) {
             await ctx.download(job.url, output);
         }
         catch (err) {
-            const failure = err instanceof youtube_shorts_1.ShortsDownloadError
+            const failure = err instanceof youtube_download_1.YouTubeDownloadError
                 ? { code: err.code, message: err.message }
                 : { code: 'failed', message: String(err) };
-            runtime_1.log.warn('Shorts download failed', {
+            runtime_1.log.warn('YouTube download failed', {
                 jobId: job.id,
                 url: job.url,
                 code: failure.code,
@@ -100,7 +97,7 @@ async function runJob(ctx, job) {
             signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
         });
         await res.text().catch(() => '');
-        runtime_1.log.info('Shorts job delivered', {
+        runtime_1.log.info('YouTube job delivered', {
             jobId: job.id,
             url: job.url,
             sizeBytes: body.length,
@@ -109,7 +106,7 @@ async function runJob(ctx, job) {
         });
     }
     catch (err) {
-        runtime_1.log.warn('Shorts upload failed', { jobId: job.id, err: String(err) });
+        runtime_1.log.warn('YouTube upload failed', { jobId: job.id, err: String(err) });
     }
     finally {
         await fs_1.default.promises.rm(dir, { recursive: true, force: true });
@@ -177,8 +174,8 @@ function concurrencyFromEnv() {
 async function main() {
     const base = workerBaseUrl((0, runtime_1.requireEnv)('YT_WORKER_BOT_URL'));
     const token = (0, runtime_1.requireEnv)('YT_WORKER_TOKEN');
-    if (token.length < youtube_shorts_1.MIN_WORKER_TOKEN_LENGTH) {
-        throw new Error(`YT_WORKER_TOKEN must be at least ${youtube_shorts_1.MIN_WORKER_TOKEN_LENGTH} characters`);
+    if (token.length < youtube_download_1.MIN_WORKER_TOKEN_LENGTH) {
+        throw new Error(`YT_WORKER_TOKEN must be at least ${youtube_download_1.MIN_WORKER_TOKEN_LENGTH} characters`);
     }
     const binaries = (0, media_runtime_1.ytDlpBinaries)();
     if (!binaries)
@@ -200,7 +197,7 @@ async function main() {
         token,
         concurrency,
         signal: controller.signal,
-        download: (url, output) => (0, youtube_shorts_1.downloadShortWithYtDlp)(binaries, url, output, youtube_shorts_1.SHORTS_DOWNLOAD_TIMEOUT_MS),
+        download: (url, output) => (0, youtube_download_1.downloadYouTubeWithYtDlp)(binaries, url, output, youtube_download_1.YOUTUBE_DOWNLOAD_TIMEOUT_MS).then(() => undefined),
     });
 }
 if (require.main === module) {

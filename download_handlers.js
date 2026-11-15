@@ -19,28 +19,28 @@ const chat_lang_1 = require("./chat_lang");
 const i18n_1 = require("./i18n");
 const runtime_1 = require("./runtime");
 const media_runtime_1 = require("./media_runtime");
-const youtube_shorts_1 = require("./youtube_shorts");
+const youtube_download_1 = require("./youtube_download");
 const youtube_worker_relay_1 = require("./youtube_worker_relay");
 const FREE_DOWNLOAD_LIMIT = 5;
 const FREE_DOWNLOAD_WINDOW_MS = 10 * 60 * 1000;
 const recentDownloads = new Map();
-async function downloadShort(url, outPath) {
+async function downloadYouTube(url, outPath) {
     if (youtube_worker_relay_1.youtubeWorkerRelay.isOnline()) {
         await youtube_worker_relay_1.youtubeWorkerRelay.download(url, outPath);
         return;
     }
     const binaries = (0, media_runtime_1.ytDlpBinaries)();
     if (!binaries) {
-        throw new youtube_shorts_1.ShortsDownloadError('failed', 'yt-dlp or ffmpeg is missing');
+        throw new youtube_download_1.YouTubeDownloadError('failed', 'yt-dlp or ffmpeg is missing');
     }
-    await (0, youtube_shorts_1.downloadShortWithYtDlp)(binaries, url, outPath);
+    await (0, youtube_download_1.downloadYouTubeWithYtDlp)(binaries, url, outPath);
 }
-function shortsErrorMessage(L, error) {
+function youTubeErrorMessage(L, error) {
     switch (error.code) {
-        case 'not_short':
-            return L.downloadErrNotShort(youtube_shorts_1.SHORTS_MAX_SECONDS);
         case 'too_big':
-            return L.downloadErrTooBig;
+            return L.downloadErrYouTubeTooLong;
+        case 'live':
+            return L.downloadErrYouTubeLive;
         case 'blocked':
         case 'unavailable':
             return L.downloadErrYouTubeUnavailable;
@@ -82,7 +82,7 @@ async function handleDownloadCallback(bot, query, ytdlp) {
     const urlMatches = messageText.match(/https?:\/\/\S+/g) || [];
     const fixedUrl = urlMatches.find(u => u.includes(link_utils_1.INSTA_FIX_DOMAIN)) ||
         urlMatches.find(u => link_utils_1.TIKTOK_FIXERS.some(f => u.includes(f))) ||
-        urlMatches.find(u => (0, link_utils_1.isYouTubeShortsUrl)(u)) ||
+        urlMatches.find(u => (0, link_utils_1.isYouTubeVideoUrl)(u)) ||
         urlMatches[0];
     if (!fixedUrl) {
         await bot.answerCallbackQuery(query.id, {
@@ -93,7 +93,7 @@ async function handleDownloadCallback(bot, query, ytdlp) {
     }
     const originalUrl = (0, link_utils_1.revertUrlForDownload)(fixedUrl);
     const isInstagram = fixedUrl.includes(link_utils_1.INSTA_FIX_DOMAIN);
-    const isShorts = (0, link_utils_1.isYouTubeShortsUrl)(originalUrl);
+    const isYouTube = (0, link_utils_1.isYouTubeVideoUrl)(originalUrl);
     if (activeDownloads.has(telegramId)) {
         await bot.answerCallbackQuery(query.id, {
             text: L.downloadBusy,
@@ -126,10 +126,10 @@ async function handleDownloadCallback(bot, query, ytdlp) {
             tempFilePath,
             via: isInstagram
                 ? 'preview-service'
-                : isShorts
+                : isYouTube
                     ? youtube_worker_relay_1.youtubeWorkerRelay.isOnline()
                         ? 'home-worker'
-                        : 'yt-dlp:shorts'
+                        : 'yt-dlp:youtube'
                     : 'yt-dlp',
         });
         if (isInstagram) {
@@ -139,8 +139,8 @@ async function handleDownloadCallback(bot, query, ytdlp) {
             }
             await (0, video_delivery_1.downloadInstaVideoFile)(shortcode, tempFilePath);
         }
-        else if (isShorts) {
-            await downloadShort(originalUrl, tempFilePath);
+        else if (isYouTube) {
+            await downloadYouTube(originalUrl, tempFilePath);
         }
         else {
             await ytdlp.downloadAsync(originalUrl, {
@@ -164,6 +164,7 @@ async function handleDownloadCallback(bot, query, ytdlp) {
             caption: L.downloadReady,
             reply_parameters: { message_id: sourceMessage.message_id },
             protect_content: !isPassHolder,
+            supports_streaming: true,
             ...(meta.width && meta.height
                 ? { width: meta.width, height: meta.height }
                 : {}),
@@ -183,8 +184,8 @@ async function handleDownloadCallback(bot, query, ytdlp) {
         await (0, db_1.saveErrorLog)(telegramId, error.message || 'Unknown error', error.stack || '', originalUrl);
         let errorMsg;
         const errStr = (error?.message || '').toLowerCase();
-        if (error instanceof youtube_shorts_1.ShortsDownloadError) {
-            errorMsg = shortsErrorMessage(L, error);
+        if (error instanceof youtube_download_1.YouTubeDownloadError) {
+            errorMsg = youTubeErrorMessage(L, error);
         }
         else if (errStr.includes('file is larger than') ||
             errStr.includes('too big')) {

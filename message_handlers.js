@@ -215,29 +215,32 @@ function registerMessageHandlers(bot, resolvers, options) {
             (0, db_1.logLinkEvent)((0, link_utils_1.classifySocialLink)(link) ?? 'other', 'inline', false, undefined, result.from.id);
         }
     });
-    async function offerShortsDownload(msg, messageText, isGroup) {
+    async function offerYouTubeDownload(msg, messageText, isGroup) {
         if (!options.downloadsEnabled)
             return;
-        const shortsUrl = (0, link_utils_1.findYouTubeShortsUrl)(messageText);
-        if (!shortsUrl)
+        const video = (0, link_utils_1.findYouTubeVideo)(messageText);
+        if (!video)
             return;
+        if (!(options.youtubeAvailable?.() ?? false))
+            return;
+        const videoUrl = (0, link_utils_1.canonicalYouTubeUrl)(video);
         const chatId = msg.chat.id;
         const handledKey = `${chatId}:${msg.message_id}`;
-        if (handledLinksByMessage.get(handledKey)?.has(shortsUrl))
+        if (handledLinksByMessage.get(handledKey)?.has(videoUrl))
             return;
         const chatSettings = isGroup ? await (0, db_1.getChatSettings)(chatId) : null;
         if (isGroup && !(chatSettings?.shorts_download ?? false))
             return;
-        rememberHandledLinks(handledKey, [shortsUrl]);
+        rememberHandledLinks(handledKey, [videoUrl]);
         const L = (0, i18n_1.strings)(isGroup
             ? ((0, i18n_1.normalizeLang)(chatSettings?.language) ?? 'ru')
             : (0, i18n_1.langFromCode)(msg.from?.language_code));
         const threadId = msg
             .message_thread_id;
         try {
-            await bot.sendMessage(chatId, shortsUrl, {
+            await bot.sendMessage(chatId, videoUrl, {
                 link_preview_options: {
-                    url: shortsUrl,
+                    url: videoUrl,
                     ...(isGroup
                         ? { prefer_small_media: true }
                         : { prefer_large_media: true }),
@@ -248,15 +251,22 @@ function registerMessageHandlers(bot, resolvers, options) {
                 },
                 reply_markup: {
                     inline_keyboard: [
-                        [{ text: L.shortsDownloadButton, callback_data: 'download_video' }],
+                        [
+                            {
+                                text: video.isShorts
+                                    ? L.shortsDownloadButton
+                                    : L.youtubeDownloadButton,
+                                callback_data: 'download_video',
+                            },
+                        ],
                     ],
                 },
                 ...(isGroup && threadId ? { message_thread_id: threadId } : {}),
             });
-            (0, db_1.logLinkEvent)('youtube_shorts', 'download_offer', false, isGroup ? chatId : undefined, msg.from?.id);
+            (0, db_1.logLinkEvent)(video.isShorts ? 'youtube_shorts' : 'youtube', 'download_offer', false, isGroup ? chatId : undefined, msg.from?.id);
         }
         catch (error) {
-            runtime_1.log.error('Failed to offer Shorts download', {
+            runtime_1.log.error('Failed to offer YouTube download', {
                 chatId,
                 err: error instanceof Error ? error.message : String(error),
             });
@@ -281,7 +291,7 @@ function registerMessageHandlers(bot, resolvers, options) {
         });
         let socialLinks = (0, link_utils_1.findsocialLinks)(messageText);
         if (socialLinks.length === 0) {
-            await offerShortsDownload(msg, messageText, isGroup);
+            await offerYouTubeDownload(msg, messageText, isGroup);
             return;
         }
         const chatSettings = isGroup ? await (0, db_1.getChatSettings)(chatId) : null;

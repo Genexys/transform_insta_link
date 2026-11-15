@@ -23,7 +23,8 @@ import {
   convertToInstaFix,
   type FixerPreferences,
   findsocialLinks,
-  findYouTubeShortsUrl,
+  canonicalYouTubeUrl,
+  findYouTubeVideo,
   INSTA_FIX_DOMAIN,
   INSTA_FIX_FALLBACK,
   REDDIT_EMBED_DOMAIN,
@@ -186,7 +187,11 @@ async function maybeSendRightsHint(
 export function registerMessageHandlers(
   bot: TelegramBot,
   resolvers: Resolvers,
-  options: { downloadsEnabled: boolean }
+  options: {
+    downloadsEnabled: boolean;
+    // Whether a YouTube download can succeed now (the home worker is connected).
+    youtubeAvailable?: () => boolean;
+  }
 ) {
   bot.on('inline_query', async query => {
     const queryText = query.query.trim();
@@ -340,26 +345,29 @@ export function registerMessageHandlers(
     }
   });
 
-  // Telegram previews YouTube itself, so a Shorts link is not rewritten; the
+  // Telegram previews YouTube itself, so a YouTube link is not rewritten; the
   // bot answers it with the link and a download button, like a TikTok reply.
-  // Always in private chats, in groups only when an admin enabled it (one
-  // reply per link would be noise).
-  async function offerShortsDownload(
+  // YouTube refuses the bot's own IP, so the button is offered only while the
+  // home worker is connected. Always in private chats, in groups only when an
+  // admin enabled it (one reply per link would be noise).
+  async function offerYouTubeDownload(
     msg: Message,
     messageText: string,
     isGroup: boolean
   ) {
     if (!options.downloadsEnabled) return;
-    const shortsUrl = findYouTubeShortsUrl(messageText);
-    if (!shortsUrl) return;
+    const video = findYouTubeVideo(messageText);
+    if (!video) return;
+    if (!(options.youtubeAvailable?.() ?? false)) return;
+    const videoUrl = canonicalYouTubeUrl(video);
 
     const chatId = msg.chat.id;
     const handledKey = `${chatId}:${msg.message_id}`;
-    if (handledLinksByMessage.get(handledKey)?.has(shortsUrl)) return;
+    if (handledLinksByMessage.get(handledKey)?.has(videoUrl)) return;
 
     const chatSettings = isGroup ? await getChatSettings(chatId) : null;
     if (isGroup && !(chatSettings?.shorts_download ?? false)) return;
-    rememberHandledLinks(handledKey, [shortsUrl]);
+    rememberHandledLinks(handledKey, [videoUrl]);
 
     const L = strings(
       isGroup
@@ -370,12 +378,12 @@ export function registerMessageHandlers(
       .message_thread_id;
     try {
       // The download callback finds the link in this message's text.
-      await bot.sendMessage(chatId, shortsUrl, {
+      await bot.sendMessage(chatId, videoUrl, {
         // Telegram's own YouTube card: cover, title, description and its
         // in-app player. A group already shows the original message's large
         // card right above, so the reply there keeps a compact one.
         link_preview_options: {
-          url: shortsUrl,
+          url: videoUrl,
           ...(isGroup
             ? { prefer_small_media: true }
             : { prefer_large_media: true }),
@@ -386,20 +394,27 @@ export function registerMessageHandlers(
         },
         reply_markup: {
           inline_keyboard: [
-            [{ text: L.shortsDownloadButton, callback_data: 'download_video' }],
+            [
+              {
+                text: video.isShorts
+                  ? L.shortsDownloadButton
+                  : L.youtubeDownloadButton,
+                callback_data: 'download_video',
+              },
+            ],
           ],
         },
         ...(isGroup && threadId ? { message_thread_id: threadId } : {}),
       } as SendMessageOptionsWithEntities);
       logLinkEvent(
-        'youtube_shorts',
+        video.isShorts ? 'youtube_shorts' : 'youtube',
         'download_offer',
         false,
         isGroup ? chatId : undefined,
         msg.from?.id
       );
     } catch (error) {
-      log.error('Failed to offer Shorts download', {
+      log.error('Failed to offer YouTube download', {
         chatId,
         err: error instanceof Error ? error.message : String(error),
       });
@@ -432,7 +447,7 @@ export function registerMessageHandlers(
 
     let socialLinks = findsocialLinks(messageText);
     if (socialLinks.length === 0) {
-      await offerShortsDownload(msg, messageText, isGroup);
+      await offerYouTubeDownload(msg, messageText, isGroup);
       return;
     }
 

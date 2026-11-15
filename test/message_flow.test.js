@@ -59,9 +59,12 @@ const resolvers = {
     url.replace(/(?:x|twitter)\.com/, TWITTER_FIXERS[0]),
 };
 
-function setup(botOptions, { downloadsEnabled = false } = {}) {
+function setup(
+  botOptions,
+  { downloadsEnabled = false, youtubeAvailable = () => true } = {}
+) {
   const bot = createBot(botOptions);
-  registerMessageHandlers(bot, resolvers, { downloadsEnabled });
+  registerMessageHandlers(bot, resolvers, { downloadsEnabled, youtubeAvailable });
   return bot;
 }
 
@@ -236,6 +239,35 @@ test('a Shorts link in a private chat gets a download button, once', async () =>
     prefer_large_media: true,
   });
   assert.equal(sent[0].args[2].reply_parameters.message_id, 4);
+});
+
+test('a regular YouTube link gets the video button', async () => {
+  const bot = setup({}, { downloadsEnabled: true });
+  bot.emit('message', {
+    message_id: 6,
+    chat: { id: 45, type: 'private' },
+    from: { id: 45, language_code: 'ru' },
+    text: 'https://youtu.be/jNQXAC9IVRw?si=abc',
+  });
+  await settle();
+  const sent = bot.of('sendMessage');
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].args[1], 'https://www.youtube.com/watch?v=jNQXAC9IVRw');
+  assert.deepEqual(sent[0].args[2].reply_markup.inline_keyboard, [
+    [{ text: '📥 Скачать видео', callback_data: 'download_video' }],
+  ]);
+});
+
+test('no YouTube button while the home worker is offline', async () => {
+  const bot = setup({}, { downloadsEnabled: true, youtubeAvailable: () => false });
+  bot.emit('message', {
+    message_id: 7,
+    chat: { id: 46, type: 'private' },
+    from: { id: 46 },
+    text: SHORTS,
+  });
+  await settle();
+  assert.equal(bot.of('sendMessage').length, 0);
 });
 
 test('Shorts links are ignored in groups by default and when downloads are off', async () => {

@@ -1,9 +1,9 @@
 // Bot side of the home YouTube worker (youtube_worker.ts).
 //
 // YouTube refuses Railway's datacenter egress ("Sign in to confirm you're not a
-// bot", HTTP 429), so Shorts are downloaded on a machine with a residential IP.
+// bot", HTTP 429), so videos are downloaded on a machine with a residential IP.
 // That machine only makes outbound requests: it long-polls GET /next for a
-// job, downloads the Short, and POSTs the mp4 (or a failure report) to
+// job, downloads the video, and POSTs the mp4 (or a failure report) to
 // /jobs/<id>. Jobs live in memory; a bot restart drops them, and the user sees
 // the "try later" message.
 
@@ -16,12 +16,12 @@ import { YT_WORKER_TOKEN } from './app_env';
 import { log } from './runtime';
 import {
   MIN_WORKER_TOKEN_LENGTH,
-  SHORTS_MAX_BYTES,
-  ShortsDownloadError,
+  TELEGRAM_UPLOAD_MAX_BYTES,
+  YouTubeDownloadError,
   WORKER_JOB_ID_REGEX,
   WORKER_ROUTE_PREFIX,
-  isShortsFailure,
-} from './youtube_shorts';
+  isYouTubeFailure,
+} from './youtube_download';
 const MAX_REPORT_BYTES = 4096;
 
 type JobState = 'queued' | 'claimed' | 'uploading' | 'done';
@@ -99,9 +99,9 @@ export function createYoutubeWorkerRelay(options: RelayOptions) {
   const tokenDigest = token ? sha256(token) : null;
   const pollHoldMs = options.pollHoldMs ?? 25_000;
   const claimTimeoutMs = options.claimTimeoutMs ?? 45_000;
-  const jobTimeoutMs = options.jobTimeoutMs ?? 90_000;
-  const uploadTimeoutMs = options.uploadTimeoutMs ?? 60_000;
-  const maxUploadBytes = options.maxUploadBytes ?? SHORTS_MAX_BYTES;
+  const jobTimeoutMs = options.jobTimeoutMs ?? 180_000;
+  const uploadTimeoutMs = options.uploadTimeoutMs ?? 120_000;
+  const maxUploadBytes = options.maxUploadBytes ?? TELEGRAM_UPLOAD_MAX_BYTES;
   const onlineWindowMs = options.onlineWindowMs ?? 90_000;
   const maxQueued = options.maxQueued ?? 10;
   const now = options.now ?? Date.now;
@@ -130,7 +130,7 @@ export function createYoutubeWorkerRelay(options: RelayOptions) {
       () =>
         finish(
           job,
-          new ShortsDownloadError(
+          new YouTubeDownloadError(
             'unavailable',
             'home worker did not answer in time'
           )
@@ -199,13 +199,13 @@ export function createYoutubeWorkerRelay(options: RelayOptions) {
       } catch {
         report = null;
       }
-      const code = isShortsFailure(report?.code) ? report!.code : 'failed';
+      const code = isYouTubeFailure(report?.code) ? report!.code : 'failed';
       const detail =
         typeof report?.message === 'string' ? report.message.slice(0, 500) : '';
       respond(res, 204);
       finish(
         job,
-        new ShortsDownloadError(
+        new YouTubeDownloadError(
           code,
           `home worker: ${code}${detail ? `: ${detail}` : ''}`
         )
@@ -218,7 +218,7 @@ export function createYoutubeWorkerRelay(options: RelayOptions) {
       respond(res, 415);
       finish(
         job,
-        new ShortsDownloadError(
+        new YouTubeDownloadError(
           'failed',
           `home worker sent ${type || 'no type'}`
         )
@@ -232,7 +232,7 @@ export function createYoutubeWorkerRelay(options: RelayOptions) {
       respond(res, 413);
       finish(
         job,
-        new ShortsDownloadError('too_big', `upload of ${declared} B`)
+        new YouTubeDownloadError('too_big', `upload of ${declared} B`)
       );
       return;
     }
@@ -262,7 +262,7 @@ export function createYoutubeWorkerRelay(options: RelayOptions) {
       respond(res, tooBig ? 413 : 400);
       finish(
         job,
-        new ShortsDownloadError(
+        new YouTubeDownloadError(
           tooBig ? 'too_big' : 'failed',
           `upload from home worker failed: ${String(err)}`
         )
@@ -273,7 +273,7 @@ export function createYoutubeWorkerRelay(options: RelayOptions) {
     if (received === 0) {
       await fs.promises.rm(job.outPath, { force: true });
       respond(res, 400);
-      finish(job, new ShortsDownloadError('failed', 'empty upload'));
+      finish(job, new YouTubeDownloadError('failed', 'empty upload'));
       return;
     }
     respond(res, 204);
@@ -332,16 +332,16 @@ export function createYoutubeWorkerRelay(options: RelayOptions) {
     return waiters.length > 0 || now() - lastSeenAt < onlineWindowMs;
   }
 
-  // Resolves once the mp4 is at outPath; rejects with ShortsDownloadError.
+  // Resolves once the mp4 is at outPath; rejects with YouTubeDownloadError.
   function download(url: string, outPath: string): Promise<void> {
     if (!tokenDigest) {
       return Promise.reject(
-        new ShortsDownloadError('unavailable', 'home worker not configured')
+        new YouTubeDownloadError('unavailable', 'home worker not configured')
       );
     }
     if (queue.length >= maxQueued) {
       return Promise.reject(
-        new ShortsDownloadError('unavailable', 'home worker queue is full')
+        new YouTubeDownloadError('unavailable', 'home worker queue is full')
       );
     }
     return new Promise<void>((resolve, reject) => {
@@ -357,7 +357,7 @@ export function createYoutubeWorkerRelay(options: RelayOptions) {
         () =>
           finish(
             job,
-            new ShortsDownloadError(
+            new YouTubeDownloadError(
               'unavailable',
               'home worker did not pick up the job'
             )
@@ -388,7 +388,7 @@ export function createYoutubeWorkerRelay(options: RelayOptions) {
       respond(waiter.res, 204);
     }
     for (const job of [...queue, ...claimed.values()]) {
-      finish(job, new ShortsDownloadError('unavailable', 'relay closed'));
+      finish(job, new YouTubeDownloadError('unavailable', 'relay closed'));
     }
   }
 
