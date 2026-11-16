@@ -69,6 +69,17 @@ const ru = {
     downloadErrGeneric: '❌ Произошла ошибка на сервере. Попробуйте позже или используйте другую ссылку.',
     downloadErrYouTubeTooLong: '❌ Видео слишком длинное: даже в 240p оно больше 50 МБ — это предел Telegram для файлов от ботов.',
     downloadErrYouTubeLive: '❌ Прямую трансляцию скачать нельзя.',
+    downloadErrYouTubeTooLongPass: '❌ Видео больше 50 МБ — столько Telegram не даёт отправить боту. С пассом бот присылает такие видео ссылкой на скачивание в 720p: /premium',
+    downloadLinkProgress: (stage, percent) => stage === 'link_queued'
+        ? '⏳ Видео больше 50 МБ — столько Telegram не даёт отправить боту, поэтому будет ссылка на скачивание. Сейчас готовится другая ссылка, ваша следующая…'
+        : stage === 'link_downloading'
+            ? '⏳ Видео больше 50 МБ — столько Telegram не даёт отправить боту, поэтому будет ссылка на скачивание. Скачиваю с YouTube…'
+            : `⏳ Готовлю ссылку на скачивание: загружаю файл… ${percent ?? 0}%`,
+    downloadLinkReady: (quality, size, hours) => `🔗 Видео больше 50 МБ, поэтому оно по ссылке: ${quality}p, ${size}. Ссылка работает ${hours} ч.`,
+    downloadLinkButton: (quality, size) => `📥 Скачать · ${quality}p · ${size}`,
+    sizeLabel: (bytes) => bytes >= 1024 ** 3
+        ? `${(bytes / 1024 ** 3).toFixed(1).replace('.', ',')} ГБ`
+        : `${Math.max(1, Math.round(bytes / 1024 ** 2))} МБ`,
     downloadErrYouTubeUnavailable: '❌ YouTube сейчас не даёт скачать это видео. Попробуйте позже.',
     shortsDownloadButton: '📥 Скачать Shorts',
     youtubeDownloadButton: '📥 Скачать видео',
@@ -266,6 +277,17 @@ const en = {
     downloadErrGeneric: '❌ Server error. Try again later or use another link.',
     downloadErrYouTubeTooLong: '❌ The video is too long: even at 240p it is over 50 MB, the Telegram limit for files from bots.',
     downloadErrYouTubeLive: '❌ Live streams cannot be downloaded.',
+    downloadErrYouTubeTooLongPass: '❌ The video is over 50 MB, more than Telegram lets a bot send. With a pass, the bot sends such videos as a 720p download link: /premium',
+    downloadLinkProgress: (stage, percent) => stage === 'link_queued'
+        ? '⏳ The video is over 50 MB, more than Telegram lets a bot send, so you will get a download link. Another link is being prepared; yours is next…'
+        : stage === 'link_downloading'
+            ? '⏳ The video is over 50 MB, more than Telegram lets a bot send, so you will get a download link. Downloading from YouTube…'
+            : `⏳ Preparing the download link: uploading the file… ${percent ?? 0}%`,
+    downloadLinkReady: (quality, size, hours) => `🔗 The video is over 50 MB, so here is a link: ${quality}p, ${size}. It works for ${hours} h.`,
+    downloadLinkButton: (quality, size) => `📥 Download · ${quality}p · ${size}`,
+    sizeLabel: bytes => bytes >= 1024 ** 3
+        ? `${(bytes / 1024 ** 3).toFixed(1)} GB`
+        : `${Math.max(1, Math.round(bytes / 1024 ** 2))} MB`,
     downloadErrYouTubeUnavailable: '❌ YouTube is not letting us download this video right now. Try again later.',
     shortsDownloadButton: '📥 Download Short',
     youtubeDownloadButton: '📥 Download video',

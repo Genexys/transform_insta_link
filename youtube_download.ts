@@ -25,6 +25,13 @@ export const YOUTUBE_MAX_QUALITY = 1080;
 
 export const YOUTUBE_DOWNLOAD_TIMEOUT_MS = 150_000;
 
+// A video over the Telegram limit can be shared as a download link instead
+// (home worker with R2): 720p keeps an hour near 1 GB, and 2 GiB covers about
+// three and a half hours while staying a few minutes of upload from home.
+export const LINK_MAX_BYTES = 2 * 1024 * 1024 * 1024;
+export const LINK_MAX_QUALITY = 720;
+export const LINK_DOWNLOAD_TIMEOUT_MS = 15 * 60_000;
+
 // The parts of yt-dlp's --dump-single-json output the picker reads.
 export type YtDlpFormat = {
   format_id: string;
@@ -89,7 +96,8 @@ function isPlainFormat(format: YtDlpFormat): boolean {
 // Telegram client. Null when even the smallest allowed pair does not fit.
 export function pickYouTubeFormats(
   info: YtDlpInfo,
-  budgetBytes: number = YOUTUBE_TARGET_BYTES
+  budgetBytes: number = YOUTUBE_TARGET_BYTES,
+  maxQuality: number = YOUTUBE_MAX_QUALITY
 ): FormatChoice | null {
   const duration = info.duration ?? 0;
   const formats = (info.formats ?? []).filter(isPlainFormat);
@@ -100,7 +108,7 @@ export function pickYouTubeFormats(
         Boolean(f.vcodec?.startsWith('avc1')) &&
         (!f.acodec || f.acodec === 'none') &&
         quality(f) >= YOUTUBE_MIN_QUALITY &&
-        quality(f) <= YOUTUBE_MAX_QUALITY
+        quality(f) <= maxQuality
     ),
     duration
   ).sort(
@@ -213,7 +221,8 @@ export function youTubeDownloadArgs(
   infoJsonPath: string,
   formatSpec: string,
   output: string,
-  ffmpegPath: string
+  ffmpegPath: string,
+  maxBytes: number = TELEGRAM_UPLOAD_MAX_BYTES
 ): string[] {
   return [
     ...COMMON_ARGS,
@@ -227,7 +236,7 @@ export function youTubeDownloadArgs(
     '--postprocessor-args',
     'Merger+ffmpeg_o:-movflags +faststart',
     '--max-filesize',
-    '50M',
+    `${Math.floor(maxBytes / (1024 * 1024))}M`,
     '--ffmpeg-location',
     ffmpegPath,
     '--output',
@@ -271,15 +280,14 @@ function isLive(info: YtDlpInfo): boolean {
   );
 }
 
-// Downloads one video to `output` in the best quality under the Telegram
-// limit, or throws YouTubeDownloadError.
-export async function downloadYouTubeWithYtDlp(
+export type YouTubeInfo = { info: YtDlpInfo; infoText: string };
+
+// First run: the video's metadata and formats. Throws for live streams.
+export async function fetchYouTubeInfo(
   binaries: YtDlpBinaries,
   url: string,
-  output: string,
   timeoutMs: number = YOUTUBE_DOWNLOAD_TIMEOUT_MS
-): Promise<FormatChoice> {
-  const deadline = Date.now() + timeoutMs;
+): Promise<YouTubeInfo> {
   const infoText = await runYtDlp(
     binaries.ytDlp,
     youTubeInfoArgs(url),
@@ -294,14 +302,17 @@ export async function downloadYouTubeWithYtDlp(
   if (isLive(info)) {
     throw new YouTubeDownloadError('live', 'live streams cannot be downloaded');
   }
-  const choice = pickYouTubeFormats(info);
-  if (!choice) {
-    throw new YouTubeDownloadError(
-      'too_big',
-      `${Math.round(info.duration ?? 0)} s does not fit ${YOUTUBE_TARGET_BYTES} B at ${YOUTUBE_MIN_QUALITY}p`
-    );
-  }
+  return { info, infoText };
+}
 
+// Second run: the chosen formats, from the saved metadata, into `output`.
+export async function downloadChosenFormats(
+  binaries: YtDlpBinaries,
+  { infoText }: YouTubeInfo,
+  choice: FormatChoice,
+  output: string,
+  { maxBytes, timeoutMs }: { maxBytes: number; timeoutMs: number }
+): Promise<void> {
   const infoJsonPath = `${output}.info.json`;
   await fs.promises.writeFile(infoJsonPath, infoText, { mode: 0o600 });
   let stdout: string;
@@ -312,9 +323,10 @@ export async function downloadYouTubeWithYtDlp(
         infoJsonPath,
         choice.formatSpec,
         output,
-        binaries.ffmpeg
+        binaries.ffmpeg,
+        maxBytes
       ),
-      deadline - Date.now()
+      timeoutMs
     );
   } finally {
     await fs.promises.rm(infoJsonPath, { force: true });
@@ -325,15 +337,89 @@ export async function downloadYouTubeWithYtDlp(
       lastLines(stdout) || 'yt-dlp produced no file'
     );
   }
+}
+
+export function tooLongError(info: YtDlpInfo, budgetBytes: number) {
+  return new YouTubeDownloadError(
+    'too_big',
+    `${Math.round(info.duration ?? 0)} s does not fit ${budgetBytes} B at ${YOUTUBE_MIN_QUALITY}p`
+  );
+}
+
+// Downloads one video to `output` in the best quality under the Telegram
+// limit, or throws YouTubeDownloadError.
+export async function downloadYouTubeWithYtDlp(
+  binaries: YtDlpBinaries,
+  url: string,
+  output: string,
+  timeoutMs: number = YOUTUBE_DOWNLOAD_TIMEOUT_MS
+): Promise<FormatChoice> {
+  const deadline = Date.now() + timeoutMs;
+  const meta = await fetchYouTubeInfo(binaries, url, timeoutMs);
+  const choice = pickYouTubeFormats(meta.info);
+  if (!choice) throw tooLongError(meta.info, YOUTUBE_TARGET_BYTES);
+  await downloadChosenFormats(binaries, meta, choice, output, {
+    maxBytes: TELEGRAM_UPLOAD_MAX_BYTES,
+    timeoutMs: deadline - Date.now(),
+  });
   return choice;
 }
 
 // HTTP routes on the bot that the home worker polls; see youtube_worker_relay.ts.
 export const WORKER_ROUTE_PREFIX = '/internal/yt-worker';
+// Sent with every poll by a worker that can answer with download links (R2).
+export const WORKER_LINKS_HEADER = 'x-worker-links';
 export const WORKER_JOB_ID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // The token is the only thing guarding the routes; both sides refuse a short one.
 export const MIN_WORKER_TOKEN_LENGTH = 32;
 
+// What the bot hands the worker. `allowLink`: a video over the Telegram limit
+// may come back as a download link.
+export type WorkerJobPayload = { id: string; url: string; allowLink: boolean };
+
 // Worker request body for a failed job.
 export type WorkerFailureReport = { code: YouTubeFailure; message?: string };
+
+// Worker request body when the video went to R2 instead of Telegram.
+export type DownloadLink = {
+  url: string;
+  bytes: number;
+  quality: number;
+  expiresAt: string;
+};
+export type WorkerLinkReport = { link: DownloadLink };
+
+// Sent while a long job runs; it also keeps the job alive on the bot.
+export type WorkerStage = 'link_queued' | 'link_downloading' | 'link_uploading';
+export type WorkerProgress = { stage: WorkerStage; percent?: number };
+const WORKER_STAGES: ReadonlySet<string> = new Set([
+  'link_queued',
+  'link_downloading',
+  'link_uploading',
+]);
+export function isWorkerStage(value: unknown): value is WorkerStage {
+  return typeof value === 'string' && WORKER_STAGES.has(value);
+}
+
+// The bot forwards a worker's link to users, so it accepts only a presigned
+// R2 URL: https, the account's r2.cloudflarestorage.com host (or its EU /
+// FedRAMP jurisdiction host), and a signature.
+export function isR2DownloadUrl(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length > 4096) return false;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  return (
+    url.protocol === 'https:' &&
+    /^[0-9a-f]{32}\.(?:(?:eu|fedramp)\.)?r2\.cloudflarestorage\.com$/.test(
+      url.hostname
+    ) &&
+    !url.username &&
+    !url.password &&
+    url.searchParams.has('X-Amz-Signature')
+  );
+}

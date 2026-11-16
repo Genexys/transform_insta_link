@@ -44,6 +44,7 @@ The repo is very small:
 - `youtube_download.ts` — YouTube download: format picking under the 50 MB limit, the two yt-dlp runs, failure codes (shared with the worker)
 - `youtube_worker_relay.ts` — bot side of the home YouTube worker: in-memory job queue and the `/internal/yt-worker/*` routes
 - `youtube_worker.ts` — the home worker entrypoint (runs off Railway, `compose.worker.yaml`)
+- `r2_storage.ts` — the worker's R2 upload and presigned download links (keys only at home)
 - `payment_handlers.ts` — Stars invoices (donation, paid download, lifetime pass), pre-checkout, payment fulfilment and refunds
 - `command_handlers.ts` — text commands (`/start`, `/help`, `/premium`, `/purchases`, `/paysupport`, `/terms`, `/settings`, `/chatstats`, `/invite`, `/donate`, `/feedback`, owner-only `/admin`) and onboarding
 - `http_server.ts` — `/healthz` liveness, `/health` dependency report, Reddit embed proxy, and HTTP server startup
@@ -231,7 +232,11 @@ It long-polls the bot over HTTPS and uploads the mp4; nothing listens at home.
 The download reads the formats first and takes the best H.264 + AAC pair under
 47 MiB (Telegram's 50 MB bot upload limit), 240p–1080p measured on the short
 side; a longer video gets "too long", a live stream "cannot be downloaded".
-Setup, updates and safety: `docs/youtube-home-worker.md`.
+For pass holders, a video over that limit comes back as a 24-hour download
+link instead when the worker has Cloudflare R2 keys (`r2_storage.ts`): up to 720p and 2 GiB, uploaded
+from home to a private bucket and shared as a presigned URL; the bot shows the
+job's progress and then a link button. Setup, updates and safety:
+`docs/youtube-home-worker.md`.
 
 The bot runs through polling, not webhooks. Railway startup now runs migrations before starting `bot.js`.
 
