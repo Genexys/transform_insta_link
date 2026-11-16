@@ -221,7 +221,7 @@ async function pollLoop(ctx, slot) {
     while (!ctx.signal.aborted) {
         try {
             const res = await fetch(`${ctx.base}/next`, {
-                headers: ctx.auth,
+                headers: ctx.pollHeaders,
                 signal: AbortSignal.any([
                     ctx.signal,
                     AbortSignal.timeout(ctx.pollTimeoutMs),
@@ -263,6 +263,10 @@ async function runWorker(options) {
     const ctx = {
         base: options.base,
         auth: { Authorization: `Bearer ${options.token}` },
+        pollHeaders: {
+            Authorization: `Bearer ${options.token}`,
+            ...(options.links ? { [youtube_download_1.WORKER_LINKS_HEADER]: 'r2' } : {}),
+        },
         handle: options.handle,
         signal: options.signal ?? new AbortController().signal,
         pollTimeoutMs: options.pollTimeoutMs ?? POLL_TIMEOUT_MS,
@@ -284,7 +288,18 @@ async function main() {
     const binaries = (0, media_runtime_1.ytDlpBinaries)();
     if (!binaries)
         throw new Error('yt-dlp and ffmpeg must be on PATH');
-    const r2 = (0, r2_storage_1.r2ConfigFromEnv)();
+    let r2 = null;
+    try {
+        r2 = (0, r2_storage_1.r2ConfigFromEnv)();
+        if (r2)
+            await (0, r2_storage_1.checkAccess)(r2);
+    }
+    catch (err) {
+        runtime_1.log.error('Download links are off: R2 is misconfigured', {
+            err: String(err),
+        });
+        r2 = null;
+    }
     const controller = new AbortController();
     for (const signal of ['SIGTERM', 'SIGINT']) {
         process.once(signal, () => {
@@ -304,6 +319,7 @@ async function main() {
         concurrency,
         signal: controller.signal,
         handle: createYouTubeJobHandler(binaries, r2),
+        links: r2 !== null,
     });
 }
 if (require.main === module) {

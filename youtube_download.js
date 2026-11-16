@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.MIN_WORKER_TOKEN_LENGTH = exports.WORKER_JOB_ID_REGEX = exports.WORKER_ROUTE_PREFIX = exports.YouTubeDownloadError = exports.LINK_DOWNLOAD_TIMEOUT_MS = exports.LINK_MAX_QUALITY = exports.LINK_MAX_BYTES = exports.YOUTUBE_DOWNLOAD_TIMEOUT_MS = exports.YOUTUBE_MAX_QUALITY = exports.YOUTUBE_MIN_QUALITY = exports.YOUTUBE_TARGET_BYTES = exports.TELEGRAM_UPLOAD_MAX_BYTES = void 0;
+exports.MIN_WORKER_TOKEN_LENGTH = exports.WORKER_JOB_ID_REGEX = exports.WORKER_LINKS_HEADER = exports.WORKER_ROUTE_PREFIX = exports.YouTubeDownloadError = exports.LINK_DOWNLOAD_TIMEOUT_MS = exports.LINK_MAX_QUALITY = exports.LINK_MAX_BYTES = exports.YOUTUBE_DOWNLOAD_TIMEOUT_MS = exports.YOUTUBE_MAX_QUALITY = exports.YOUTUBE_MIN_QUALITY = exports.YOUTUBE_TARGET_BYTES = exports.TELEGRAM_UPLOAD_MAX_BYTES = void 0;
 exports.pickYouTubeFormats = pickYouTubeFormats;
 exports.isYouTubeFailure = isYouTubeFailure;
 exports.classifyYtDlpFailure = classifyYtDlpFailure;
@@ -208,6 +208,7 @@ async function downloadYouTubeWithYtDlp(binaries, url, output, timeoutMs = expor
     return choice;
 }
 exports.WORKER_ROUTE_PREFIX = '/internal/yt-worker';
+exports.WORKER_LINKS_HEADER = 'x-worker-links';
 exports.WORKER_JOB_ID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 exports.MIN_WORKER_TOKEN_LENGTH = 32;
 const WORKER_STAGES = new Set([
@@ -229,7 +230,7 @@ function isR2DownloadUrl(value) {
         return false;
     }
     return (url.protocol === 'https:' &&
-        /^[0-9a-f]{32}\.r2\.cloudflarestorage\.com$/.test(url.hostname) &&
+        /^[0-9a-f]{32}\.(?:(?:eu|fedramp)\.)?r2\.cloudflarestorage\.com$/.test(url.hostname) &&
         !url.username &&
         !url.password &&
         url.searchParams.has('X-Amz-Signature'));

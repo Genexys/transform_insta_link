@@ -160,6 +160,19 @@ test('without a token (or with a short one) the worker routes do not exist', asy
   );
 });
 
+test('the worker tells the bot on each poll whether it can send links', async t => {
+  const server = await startRelay({ pollHoldMs: 20 });
+  t.after(() => server.stop());
+  assert.equal(server.relay.linksAvailable(), false);
+  await fetch(`${server.base}/next`, {
+    headers: { ...auth, 'X-Worker-Links': 'r2' },
+  });
+  assert.equal(server.relay.linksAvailable(), true);
+  assert.equal(server.relay.status().links, true);
+  await fetch(`${server.base}/next`, { headers: auth });
+  assert.equal(server.relay.linksAvailable(), false);
+});
+
 test('a wrong token is refused and an idle poll ends with 204', async t => {
   const server = await startRelay({ pollHoldMs: 50 });
   t.after(() => server.stop());
@@ -331,6 +344,7 @@ test('the home worker downloads a queued Short and the bot gets the file', async
     token: TOKEN,
     signal: controller.signal,
     concurrency: 2,
+    links: true,
     async handle({ url, allowLink }, output, progress) {
       downloads.push(url);
       if (url.endsWith('blockedVid1')) {
@@ -354,6 +368,7 @@ test('the home worker downloads a queued Short and the bot gets the file', async
     await worker;
   });
   await waitFor(() => server.relay.isOnline());
+  assert.equal(server.relay.linksAvailable(), true);
 
   const output = tempOutput(t);
   await server.relay.download(

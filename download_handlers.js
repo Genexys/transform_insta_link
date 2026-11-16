@@ -24,7 +24,7 @@ const youtube_worker_relay_1 = require("./youtube_worker_relay");
 const FREE_DOWNLOAD_LIMIT = 5;
 const FREE_DOWNLOAD_WINDOW_MS = 10 * 60 * 1000;
 const recentDownloads = new Map();
-const DOWNLOAD_LINKS_PASS_HOLDERS_ONLY = false;
+const DOWNLOAD_LINKS_PASS_HOLDERS_ONLY = true;
 async function downloadYouTube(url, outPath, options) {
     if (youtube_worker_relay_1.youtubeWorkerRelay.isOnline()) {
         return youtube_worker_relay_1.youtubeWorkerRelay.download(url, outPath, options);
@@ -76,10 +76,12 @@ async function sendDownloadLink(bot, chatId, messageId, L, link) {
         },
     });
 }
-function youTubeErrorMessage(L, error) {
+function youTubeErrorMessage(L, error, offerPass) {
     switch (error.code) {
         case 'too_big':
-            return L.downloadErrYouTubeTooLong;
+            return offerPass
+                ? L.downloadErrYouTubeTooLongPass
+                : L.downloadErrYouTubeTooLong;
         case 'live':
             return L.downloadErrYouTubeLive;
         case 'blocked':
@@ -159,7 +161,9 @@ async function handleDownloadCallback(bot, query, ytdlp) {
     let loadingMsg = null;
     try {
         await bot.answerCallbackQuery(query.id, { text: L.downloadStarting });
-        loadingMsg = await bot.sendMessage(chatId, L.downloadLoading, { reply_parameters: { message_id: sourceMessage.message_id } });
+        loadingMsg = await bot.sendMessage(chatId, L.downloadLoading, {
+            reply_parameters: { message_id: sourceMessage.message_id },
+        });
         runtime_1.log.info('Starting media download', {
             chatId,
             telegramId,
@@ -249,7 +253,9 @@ async function handleDownloadCallback(bot, query, ytdlp) {
         let errorMsg;
         const errStr = (error?.message || '').toLowerCase();
         if (error instanceof youtube_download_1.YouTubeDownloadError) {
-            errorMsg = youTubeErrorMessage(L, error);
+            errorMsg = youTubeErrorMessage(L, error, DOWNLOAD_LINKS_PASS_HOLDERS_ONLY &&
+                !isPassHolder &&
+                youtube_worker_relay_1.youtubeWorkerRelay.linksAvailable());
         }
         else if (errStr.includes('file is larger than') ||
             errStr.includes('too big')) {

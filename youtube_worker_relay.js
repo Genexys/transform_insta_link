@@ -56,6 +56,7 @@ function createYoutubeWorkerRelay(options) {
     const claimed = new Map();
     const waiters = [];
     let lastSeenAt = 0;
+    let workerHasLinks = false;
     function finish(job, outcome) {
         if (job.state === 'done')
             return;
@@ -146,8 +147,9 @@ function createYoutubeWorkerRelay(options) {
         if (at !== -1)
             waiters.splice(at, 1);
     }
-    function handlePoll(res) {
+    function handlePoll(req, res) {
         lastSeenAt = now();
+        workerHasLinks = req.headers[youtube_download_1.WORKER_LINKS_HEADER] === 'r2';
         const job = queue.shift();
         if (job) {
             claim(job, res);
@@ -261,7 +263,7 @@ function createYoutubeWorkerRelay(options) {
         }
         const route = pathname.slice(youtube_download_1.WORKER_ROUTE_PREFIX.length);
         if (req.method === 'GET' && route === '/next') {
-            handlePoll(res);
+            handlePoll(req, res);
             return true;
         }
         const jobMatch = /^\/jobs\/([^/]+)(\/progress)?$/.exec(route);
@@ -277,6 +279,9 @@ function createYoutubeWorkerRelay(options) {
         req.resume();
         respond(res, 404);
         return true;
+    }
+    function linksAvailable() {
+        return isOnline() && workerHasLinks;
     }
     function isOnline() {
         if (!tokenDigest)
@@ -313,6 +318,7 @@ function createYoutubeWorkerRelay(options) {
             last_seen_seconds_ago: lastSeenAt
                 ? Math.round((now() - lastSeenAt) / 1000)
                 : null,
+            links: linksAvailable(),
             queued: queue.length,
             in_progress: claimed.size,
         };
@@ -326,7 +332,7 @@ function createYoutubeWorkerRelay(options) {
             finish(job, new youtube_download_1.YouTubeDownloadError('unavailable', 'relay closed'));
         }
     }
-    return { handle, isOnline, download, status, close };
+    return { handle, isOnline, linksAvailable, download, status, close };
 }
 exports.youtubeWorkerRelay = createYoutubeWorkerRelay({
     token: app_env_1.YT_WORKER_TOKEN,

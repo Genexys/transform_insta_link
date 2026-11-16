@@ -6,7 +6,7 @@
 // objects after a day (docs/youtube-home-worker.md).
 
 import fs from 'fs';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { Transform } from 'stream';
 import { AwsClient } from 'aws4fetch';
 
@@ -24,35 +24,58 @@ export type R2Config = {
 export const LINK_TTL_SECONDS = 24 * 60 * 60;
 
 const ACCOUNT_ID_REGEX = /^[0-9a-f]{32}$/;
+// The S3 endpoint Cloudflare shows next to the keys; a bucket created in a
+// jurisdiction has its own host (https://<id>.eu.r2.cloudflarestorage.com).
+const ENDPOINT_REGEX =
+  /^https:\/\/([0-9a-f]{32})\.((?:eu|fedramp)\.)?r2\.cloudflarestorage\.com\/?$/;
 const BUCKET_REGEX = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/;
 
 // All of R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and R2_BUCKET,
-// or null (download links off). Throws on a partial or malformed set, so a
-// typo fails the worker at start instead of every link later.
+// or null (download links off). R2_ACCOUNT_ID takes the 32-character id or the
+// whole S3 endpoint URL (needed for an EU-jurisdiction bucket). Throws on a
+// partial or malformed set, so a typo fails the worker at start instead of
+// every link later.
 export function r2ConfigFromEnv(
   env: NodeJS.ProcessEnv = process.env
 ): R2Config | null {
-  const accountId = env.R2_ACCOUNT_ID?.trim() ?? '';
+  const accountInput = env.R2_ACCOUNT_ID?.trim() ?? '';
   const accessKeyId = env.R2_ACCESS_KEY_ID?.trim() ?? '';
-  const secretAccessKey = env.R2_SECRET_ACCESS_KEY?.trim() ?? '';
+  const secretInput = env.R2_SECRET_ACCESS_KEY?.trim() ?? '';
   const bucket = env.R2_BUCKET?.trim() ?? '';
-  const values = [accountId, accessKeyId, secretAccessKey, bucket];
+  const values = [accountInput, accessKeyId, secretInput, bucket];
   if (values.every(v => !v)) return null;
   if (values.some(v => !v)) {
     throw new Error(
       'Set all of R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and R2_BUCKET, or none'
     );
   }
+  const fromEndpoint = ENDPOINT_REGEX.exec(accountInput);
+  const accountId = fromEndpoint ? fromEndpoint[1] : accountInput;
   if (!ACCOUNT_ID_REGEX.test(accountId)) {
-    throw new Error('R2_ACCOUNT_ID must be the 32-character account id');
+    throw new Error(
+      'R2_ACCOUNT_ID must be the 32-character account id or the https://<id>.r2.cloudflarestorage.com endpoint'
+    );
   }
   if (!BUCKET_REGEX.test(bucket)) {
     throw new Error('R2_BUCKET is not a valid bucket name');
   }
+  const secretAccessKey = r2SecretAccessKey(secretInput);
   const endpoint = (
-    env.R2_ENDPOINT?.trim() || `https://${accountId}.r2.cloudflarestorage.com`
+    env.R2_ENDPOINT?.trim() ||
+    (fromEndpoint
+      ? `https://${accountId}.${fromEndpoint[2] ?? ''}r2.cloudflarestorage.com`
+      : `https://${accountId}.r2.cloudflarestorage.com`)
   ).replace(/\/+$/, '');
   return { accountId, accessKeyId, secretAccessKey, bucket, endpoint };
+}
+
+// R2's S3 secret is the SHA-256 (hex) of the API token value
+// (developers.cloudflare.com/r2/api/tokens). Take the 64-hex secret as is, and
+// derive it when the token value was pasted instead.
+export function r2SecretAccessKey(value: string): string {
+  return /^[0-9a-f]{64}$/.test(value)
+    ? value
+    : createHash('sha256').update(value).digest('hex');
 }
 
 function client(config: R2Config): AwsClient {
@@ -89,6 +112,23 @@ export function contentDisposition(title: string): string {
       .slice(0, 120) || 'video';
   const ascii = name.replace(/[^\x20-\x7e]+/g, '_').replace(/["%;\\]/g, '_');
   return `attachment; filename="${ascii}.mp4"; filename*=UTF-8''${encodeURIComponent(`${name}.mp4`)}`;
+}
+
+// Checks the keys and the bucket at worker start by listing one object: 200
+// when both work; otherwise R2's error code (NoSuchBucket for a bucket in
+// another jurisdiction, AccessDenied, SignatureDoesNotMatch …) in the error.
+export async function checkAccess(config: R2Config): Promise<void> {
+  const url = `${config.endpoint}/${config.bucket}?list-type=2&max-keys=1`;
+  const res = await client(config).fetch(url, {
+    signal: AbortSignal.timeout(15_000),
+  });
+  const body = await res.text().catch(() => '');
+  if (res.status !== 200) {
+    const code = /<Code>([^<]+)<\/Code>/.exec(body)?.[1] ?? 'no error code';
+    throw new Error(
+      `R2 answered HTTP ${res.status} (${code}) for bucket ${config.bucket} at ${new URL(config.endpoint).host.replace(/^[0-9a-f]{32}/, '<account>')}`
+    );
+  }
 }
 
 // Streams the file to R2 with a single PUT (R2 takes up to 5 GiB that way).

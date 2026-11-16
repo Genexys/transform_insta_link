@@ -69,6 +69,7 @@ const ru = {
     downloadErrGeneric: '❌ Произошла ошибка на сервере. Попробуйте позже или используйте другую ссылку.',
     downloadErrYouTubeTooLong: '❌ Видео слишком длинное: даже в 240p оно больше 50 МБ — это предел Telegram для файлов от ботов.',
     downloadErrYouTubeLive: '❌ Прямую трансляцию скачать нельзя.',
+    downloadErrYouTubeTooLongPass: '❌ Видео больше 50 МБ — столько Telegram не даёт отправить боту. С пассом бот присылает такие видео ссылкой на скачивание в 720p: /premium',
     downloadLinkProgress: (stage, percent) => stage === 'link_queued'
         ? '⏳ Видео больше 50 МБ — столько Telegram не даёт отправить боту, поэтому будет ссылка на скачивание. Сейчас готовится другая ссылка, ваша следующая…'
         : stage === 'link_downloading'
@@ -276,6 +277,7 @@ const en = {
     downloadErrGeneric: '❌ Server error. Try again later or use another link.',
     downloadErrYouTubeTooLong: '❌ The video is too long: even at 240p it is over 50 MB, the Telegram limit for files from bots.',
     downloadErrYouTubeLive: '❌ Live streams cannot be downloaded.',
+    downloadErrYouTubeTooLongPass: '❌ The video is over 50 MB, more than Telegram lets a bot send. With a pass, the bot sends such videos as a 720p download link: /premium',
     downloadLinkProgress: (stage, percent) => stage === 'link_queued'
         ? '⏳ The video is over 50 MB, more than Telegram lets a bot send, so you will get a download link. Another link is being prepared; yours is next…'
         : stage === 'link_downloading'

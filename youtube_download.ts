@@ -367,6 +367,8 @@ export async function downloadYouTubeWithYtDlp(
 
 // HTTP routes on the bot that the home worker polls; see youtube_worker_relay.ts.
 export const WORKER_ROUTE_PREFIX = '/internal/yt-worker';
+// Sent with every poll by a worker that can answer with download links (R2).
+export const WORKER_LINKS_HEADER = 'x-worker-links';
 export const WORKER_JOB_ID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // The token is the only thing guarding the routes; both sides refuse a short one.
@@ -401,7 +403,8 @@ export function isWorkerStage(value: unknown): value is WorkerStage {
 }
 
 // The bot forwards a worker's link to users, so it accepts only a presigned
-// R2 URL: https, the account's r2.cloudflarestorage.com host, and a signature.
+// R2 URL: https, the account's r2.cloudflarestorage.com host (or its EU /
+// FedRAMP jurisdiction host), and a signature.
 export function isR2DownloadUrl(value: unknown): value is string {
   if (typeof value !== 'string' || value.length > 4096) return false;
   let url: URL;
@@ -412,7 +415,9 @@ export function isR2DownloadUrl(value: unknown): value is string {
   }
   return (
     url.protocol === 'https:' &&
-    /^[0-9a-f]{32}\.r2\.cloudflarestorage\.com$/.test(url.hostname) &&
+    /^[0-9a-f]{32}\.(?:(?:eu|fedramp)\.)?r2\.cloudflarestorage\.com$/.test(
+      url.hostname
+    ) &&
     !url.username &&
     !url.password &&
     url.searchParams.has('X-Amz-Signature')

@@ -21,6 +21,7 @@ import {
   TELEGRAM_UPLOAD_MAX_BYTES,
   YouTubeDownloadError,
   WORKER_JOB_ID_REGEX,
+  WORKER_LINKS_HEADER,
   WORKER_ROUTE_PREFIX,
   type WorkerJobPayload,
   type WorkerStage,
@@ -79,6 +80,8 @@ export type RelayStatus = {
   configured: boolean;
   online: boolean;
   last_seen_seconds_ago: number | null;
+  // The connected worker can answer with download links.
+  links: boolean;
   queued: number;
   in_progress: number;
 };
@@ -132,6 +135,7 @@ export function createYoutubeWorkerRelay(options: RelayOptions) {
   const claimed = new Map<string, Job>();
   const waiters: Waiter[] = [];
   let lastSeenAt = 0;
+  let workerHasLinks = false;
 
   function finish(job: Job, outcome: Error | RelayResult): void {
     if (job.state === 'done') return;
@@ -235,8 +239,12 @@ export function createYoutubeWorkerRelay(options: RelayOptions) {
     if (at !== -1) waiters.splice(at, 1);
   }
 
-  function handlePoll(res: http.ServerResponse): void {
+  function handlePoll(
+    req: http.IncomingMessage,
+    res: http.ServerResponse
+  ): void {
     lastSeenAt = now();
+    workerHasLinks = req.headers[WORKER_LINKS_HEADER] === 'r2';
     const job = queue.shift();
     if (job) {
       claim(job, res);
@@ -401,7 +409,7 @@ export function createYoutubeWorkerRelay(options: RelayOptions) {
 
     const route = pathname.slice(WORKER_ROUTE_PREFIX.length);
     if (req.method === 'GET' && route === '/next') {
-      handlePoll(res);
+      handlePoll(req, res);
       return true;
     }
     const jobMatch = /^\/jobs\/([^/]+)(\/progress)?$/.exec(route);
@@ -417,6 +425,11 @@ export function createYoutubeWorkerRelay(options: RelayOptions) {
     req.resume();
     respond(res, 404);
     return true;
+  }
+
+  // Whether a video over the Telegram limit can come back as a link now.
+  function linksAvailable(): boolean {
+    return isOnline() && workerHasLinks;
   }
 
   function isOnline(): boolean {
@@ -476,6 +489,7 @@ export function createYoutubeWorkerRelay(options: RelayOptions) {
       last_seen_seconds_ago: lastSeenAt
         ? Math.round((now() - lastSeenAt) / 1000)
         : null,
+      links: linksAvailable(),
       queued: queue.length,
       in_progress: claimed.size,
     };
@@ -492,7 +506,7 @@ export function createYoutubeWorkerRelay(options: RelayOptions) {
     }
   }
 
-  return { handle, isOnline, download, status, close };
+  return { handle, isOnline, linksAvailable, download, status, close };
 }
 
 export type YoutubeWorkerRelay = ReturnType<typeof createYoutubeWorkerRelay>;

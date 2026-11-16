@@ -8,6 +8,7 @@ const {
   objectUrl,
   presignDownload,
   r2ConfigFromEnv,
+  r2SecretAccessKey,
 } = require('../r2_storage.js');
 const { isR2DownloadUrl } = require('../youtube_download.js');
 
@@ -15,7 +16,7 @@ const ACCOUNT = '0123456789abcdef0123456789abcdef';
 const ENV = {
   R2_ACCOUNT_ID: ACCOUNT,
   R2_ACCESS_KEY_ID: 'key-id',
-  R2_SECRET_ACCESS_KEY: 'secret',
+  R2_SECRET_ACCESS_KEY: 'a'.repeat(64),
   R2_BUCKET: 'yt-links',
 };
 
@@ -24,7 +25,7 @@ test('r2ConfigFromEnv is all-or-nothing and checks the ids', () => {
   assert.deepEqual(r2ConfigFromEnv(ENV), {
     accountId: ACCOUNT,
     accessKeyId: 'key-id',
-    secretAccessKey: 'secret',
+    secretAccessKey: 'a'.repeat(64),
     bucket: 'yt-links',
     endpoint: `https://${ACCOUNT}.r2.cloudflarestorage.com`,
   });
@@ -40,6 +41,45 @@ test('r2ConfigFromEnv is all-or-nothing and checks the ids', () => {
   assert.equal(
     r2ConfigFromEnv({ ...ENV, R2_ENDPOINT: 'http://127.0.0.1:9000/' }).endpoint,
     'http://127.0.0.1:9000'
+  );
+});
+
+test('R2_ACCOUNT_ID also takes the S3 endpoint, including a jurisdiction one', () => {
+  for (const [input, endpoint] of [
+    [
+      `https://${ACCOUNT}.r2.cloudflarestorage.com`,
+      `https://${ACCOUNT}.r2.cloudflarestorage.com`,
+    ],
+    [
+      `https://${ACCOUNT}.eu.r2.cloudflarestorage.com/`,
+      `https://${ACCOUNT}.eu.r2.cloudflarestorage.com`,
+    ],
+  ]) {
+    const config = r2ConfigFromEnv({ ...ENV, R2_ACCOUNT_ID: input });
+    assert.equal(config.accountId, ACCOUNT);
+    assert.equal(config.endpoint, endpoint);
+  }
+  assert.throws(
+    () =>
+      r2ConfigFromEnv({
+        ...ENV,
+        R2_ACCOUNT_ID: `https://${ACCOUNT}.evil.example`,
+      }),
+    /account id/
+  );
+});
+
+test('a pasted API token value becomes the S3 secret (its SHA-256)', () => {
+  // developers.cloudflare.com/r2/api/tokens: Secret Access Key = SHA-256 of the token value.
+  assert.equal(
+    r2SecretAccessKey('token-value'),
+    'e6c02a5742ea9d4de588eb9b9de7bed43dc17011552186bed3e98b2c5958ff4a'
+  );
+  assert.equal(r2SecretAccessKey('b'.repeat(64)), 'b'.repeat(64));
+  assert.equal(
+    r2ConfigFromEnv({ ...ENV, R2_SECRET_ACCESS_KEY: 'token-value' })
+      .secretAccessKey,
+    r2SecretAccessKey('token-value')
   );
 });
 

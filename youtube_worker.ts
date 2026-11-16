@@ -19,6 +19,7 @@ import { ytDlpBinaries } from './media_runtime';
 import {
   LINK_TTL_SECONDS,
   type R2Config,
+  checkAccess,
   newObjectKey,
   presignDownload,
   r2ConfigFromEnv,
@@ -36,6 +37,7 @@ import {
   YOUTUBE_TARGET_BYTES,
   YouTubeDownloadError,
   WORKER_JOB_ID_REGEX,
+  WORKER_LINKS_HEADER,
   WORKER_ROUTE_PREFIX,
   type WorkerFailureReport,
   type WorkerProgress,
@@ -180,6 +182,8 @@ export type WorkerOptions = {
   base: string;
   token: string;
   handle: JobHandler;
+  // Tell the bot that `handle` can answer with download links.
+  links?: boolean;
   concurrency?: number;
   signal?: AbortSignal;
   pollTimeoutMs?: number;
@@ -188,6 +192,7 @@ export type WorkerOptions = {
 type Context = {
   base: string;
   auth: Record<string, string>;
+  pollHeaders: Record<string, string>;
   handle: JobHandler;
   signal: AbortSignal;
   pollTimeoutMs: number;
@@ -331,7 +336,7 @@ async function pollLoop(ctx: Context, slot: number): Promise<void> {
   while (!ctx.signal.aborted) {
     try {
       const res = await fetch(`${ctx.base}/next`, {
-        headers: ctx.auth,
+        headers: ctx.pollHeaders,
         signal: AbortSignal.any([
           ctx.signal,
           AbortSignal.timeout(ctx.pollTimeoutMs),
@@ -372,6 +377,10 @@ export async function runWorker(options: WorkerOptions): Promise<void> {
   const ctx: Context = {
     base: options.base,
     auth: { Authorization: `Bearer ${options.token}` },
+    pollHeaders: {
+      Authorization: `Bearer ${options.token}`,
+      ...(options.links ? { [WORKER_LINKS_HEADER]: 'r2' } : {}),
+    },
     handle: options.handle,
     signal: options.signal ?? new AbortController().signal,
     pollTimeoutMs: options.pollTimeoutMs ?? POLL_TIMEOUT_MS,
@@ -399,7 +408,18 @@ async function main(): Promise<void> {
   }
   const binaries = ytDlpBinaries();
   if (!binaries) throw new Error('yt-dlp and ffmpeg must be on PATH');
-  const r2 = r2ConfigFromEnv();
+  // Misconfigured R2 turns download links off; videos within the Telegram
+  // limit keep working.
+  let r2: R2Config | null = null;
+  try {
+    r2 = r2ConfigFromEnv();
+    if (r2) await checkAccess(r2);
+  } catch (err) {
+    log.error('Download links are off: R2 is misconfigured', {
+      err: String(err),
+    });
+    r2 = null;
+  }
 
   const controller = new AbortController();
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
@@ -421,6 +441,7 @@ async function main(): Promise<void> {
     concurrency,
     signal: controller.signal,
     handle: createYouTubeJobHandler(binaries, r2),
+    links: r2 !== null,
   });
 }
 

@@ -42,9 +42,12 @@ as the job goes (queued, downloading, uploading %) and finally shows a
 - The R2 keys live only in `.env.worker` at home. The bot never sees them, and
   it forwards a link only if it is an `https://<account>.r2.cloudflarestorage.com`
   URL with a signature.
-- Unlike the view-only copy free users get in the chat, the link hands out a
-  savable file. `DOWNLOAD_LINKS_PASS_HOLDERS_ONLY` in `download_handlers.ts`
-  limits links to pass holders.
+- Links are for pass holders only (`DOWNLOAD_LINKS_PASS_HOLDERS_ONLY` in
+  `download_handlers.ts`): unlike the view-only copy free users get in the
+  chat, a link hands out a savable file. A free user who hits the limit is told
+  that a pass gets such videos as a link — only while the connected worker
+  can make links (it says so with an `X-Worker-Links: r2` header on each poll;
+  `/health` shows `youtube_worker.links`).
 - R2 has no egress fees; storage is free up to 10 GB-month, and the lifecycle
   rule keeps a day's worth at most.
 
@@ -59,7 +62,11 @@ as the job goes (queued, downloading, uploading %) and finally shows a
 4. R2 → **Manage API tokens** → **Create API token**: permission *Object Read &
    Write*, applied to that bucket only. Copy the Access Key ID, the Secret
    Access Key and the account id from the S3 endpoint
-   (`https://<account id>.r2.cloudflarestorage.com`).
+   (`https://<account id>.r2.cloudflarestorage.com`). `R2_ACCOUNT_ID` also
+   takes the whole endpoint URL; use the `.eu.` one only for a bucket created
+   in the EU jurisdiction. If the token's *Token value* lands in
+   `R2_SECRET_ACCESS_KEY`, the worker derives the secret from it (its SHA-256,
+   as Cloudflare does).
 5. Add to `.env.worker`, then `docker compose -f compose.worker.yaml up -d`:
 
    ```
@@ -69,7 +76,11 @@ as the job goes (queued, downloading, uploading %) and finally shows a
    R2_BUCKET=yt-links
    ```
 
-   The worker log then says `"downloadLinks":"R2 bucket yt-links"`.
+   At start the worker lists one object to check the keys and the bucket. The
+   log then says `"downloadLinks":"R2 bucket yt-links"`; on a problem it says
+   `Download links are off: R2 is misconfigured` with R2's error code
+   (`NoSuchBucket` usually means the endpoint of another jurisdiction), and
+   the worker keeps serving videos within the Telegram limit.
 - Jobs live in the bot's memory. A bot restart drops them, and those users get
   the same "try later" message.
 - `/health` reports `youtube_worker`: `configured`, `online`,

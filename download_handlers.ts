@@ -39,7 +39,7 @@ const recentDownloads = new Map<number, number[]>();
 // A YouTube video over the Telegram limit comes back as a download link (home
 // worker with R2). The link hands out a savable file, unlike the view-only
 // copy free users get in the chat; set this to keep links for pass holders.
-const DOWNLOAD_LINKS_PASS_HOLDERS_ONLY = false;
+const DOWNLOAD_LINKS_PASS_HOLDERS_ONLY = true;
 
 // Datacenter IPs get YouTube's bot check, so videos go through the home
 // worker whenever it is polling, and through the local yt-dlp otherwise
@@ -121,11 +121,15 @@ async function sendDownloadLink(
 
 function youTubeErrorMessage(
   L: ReturnType<typeof strings>,
-  error: YouTubeDownloadError
+  error: YouTubeDownloadError,
+  // A link was withheld only for lack of a pass: say a pass gets one.
+  offerPass: boolean
 ): string {
   switch (error.code) {
     case 'too_big':
-      return L.downloadErrYouTubeTooLong;
+      return offerPass
+        ? L.downloadErrYouTubeTooLongPass
+        : L.downloadErrYouTubeTooLong;
     case 'live':
       return L.downloadErrYouTubeLive;
     case 'blocked':
@@ -239,11 +243,9 @@ export async function handleDownloadCallback(
 
   try {
     await bot.answerCallbackQuery(query.id, { text: L.downloadStarting });
-    loadingMsg = await bot.sendMessage(
-      chatId,
-      L.downloadLoading,
-      { reply_parameters: { message_id: sourceMessage.message_id } }
-    );
+    loadingMsg = await bot.sendMessage(chatId, L.downloadLoading, {
+      reply_parameters: { message_id: sourceMessage.message_id },
+    });
 
     log.info('Starting media download', {
       chatId,
@@ -269,7 +271,12 @@ export async function handleDownloadCallback(
       // save flow (deliverInstaMedia), not here.
       await downloadInstaVideoFile(shortcode, tempFilePath);
     } else if (isYouTube) {
-      const progress = linkProgressEditor(bot, chatId, loadingMsg.message_id, L);
+      const progress = linkProgressEditor(
+        bot,
+        chatId,
+        loadingMsg.message_id,
+        L
+      );
       let result: RelayResult;
       try {
         result = await downloadYouTube(originalUrl, tempFilePath, {
@@ -280,7 +287,13 @@ export async function handleDownloadCallback(
         await progress.close();
       }
       if (result.kind === 'link') {
-        await sendDownloadLink(bot, chatId, loadingMsg.message_id, L, result.link);
+        await sendDownloadLink(
+          bot,
+          chatId,
+          loadingMsg.message_id,
+          L,
+          result.link
+        );
         log.info('Media download link sent', {
           chatId,
           telegramId,
@@ -357,7 +370,13 @@ export async function handleDownloadCallback(
     const errStr = (error?.message || '').toLowerCase();
 
     if (error instanceof YouTubeDownloadError) {
-      errorMsg = youTubeErrorMessage(L, error);
+      errorMsg = youTubeErrorMessage(
+        L,
+        error,
+        DOWNLOAD_LINKS_PASS_HOLDERS_ONLY &&
+          !isPassHolder &&
+          youtubeWorkerRelay.linksAvailable()
+      );
     } else if (
       errStr.includes('file is larger than') ||
       errStr.includes('too big')
@@ -391,4 +410,3 @@ export async function handleDownloadCallback(
     }
   }
 }
-
