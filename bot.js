@@ -9,6 +9,7 @@ const callback_handlers_1 = require("./callback_handlers");
 const message_handlers_1 = require("./message_handlers");
 const platform_resolvers_1 = require("./platform_resolvers");
 const http_server_1 = require("./http_server");
+const youtube_worker_relay_1 = require("./youtube_worker_relay");
 const media_runtime_1 = require("./media_runtime");
 const admin_alerts_1 = require("./admin_alerts");
 const app_env_1 = require("./app_env");
@@ -48,6 +49,7 @@ async function sendAdminAlert(message) {
 const resolvers = (0, platform_resolvers_1.createPlatformResolvers)(sendAdminAlert);
 (0, message_handlers_1.registerMessageHandlers)(bot, resolvers, {
     downloadsEnabled: mediaRuntime.downloadsEnabled,
+    youtubeAvailable: () => youtube_worker_relay_1.youtubeWorkerRelay.isOnline(),
 });
 (0, callback_handlers_1.registerCallbackHandlers)(bot, mediaRuntime.ytdlp);
 bot.on('polling_error', error => {

@@ -11,7 +11,7 @@ The project is intentionally small and pragmatic. `bot.ts` is now a very thin ru
 - **TypeScript** runtime split into small modules and compiled into committed `.js` artifacts
 - **node-telegram-bot-api** for Telegram polling, commands, callbacks, inline mode, payments
 - **PostgreSQL** via `pg` for users, premium state, link events, error logs, chat settings
-- **yt-dlp + ffmpeg** for TikTok and YouTube Shorts downloads (yt-dlp pinned in `requirements-ytdlp.txt`, with `yt-dlp-ejs` for YouTube)
+- **yt-dlp + ffmpeg** for TikTok and YouTube downloads (yt-dlp pinned in `requirements-ytdlp.txt`, with `yt-dlp-ejs` for YouTube)
 - **Sentry** for exception capture
 - **Railway + Dockerfile** for deployment
 - **Built-in `http` server** for `/health` and Reddit embed proxy
@@ -40,8 +40,8 @@ The repo is very small:
 - `platform_resolvers.ts` — Instagram/TikTok/Twitter fixer resolution and fallback selection
 - `message_handlers.ts` — inline query and main message rewrite registration
 - `callback_handlers.ts` — callback-query routing: settings menu, delete button, downloads, invoices
-- `download_handlers.ts` — TikTok/Shorts download callback flow and error persistence
-- `youtube_shorts.ts` — Shorts yt-dlp arguments, the download itself and failure codes (shared with the worker)
+- `download_handlers.ts` — TikTok/YouTube download callback flow and error persistence
+- `youtube_download.ts` — YouTube download: format picking under the 50 MB limit, the two yt-dlp runs, failure codes (shared with the worker)
 - `youtube_worker_relay.ts` — bot side of the home YouTube worker: in-memory job queue and the `/internal/yt-worker/*` routes
 - `youtube_worker.ts` — the home worker entrypoint (runs off Railway, `compose.worker.yaml`)
 - `payment_handlers.ts` — Stars invoices (donation, paid download, lifetime pass), pre-checkout, payment fulfilment and refunds
@@ -218,19 +218,20 @@ Debian, and yt-dlp (+ `yt-dlp-ejs`) from PyPI in `/opt/ytdlp`, pinned in
 `requirements-ytdlp.txt` and updated by Dependabot. Distro/Nix yt-dlp packages
 lag months behind, and YouTube and TikTok break old releases.
 
-YouTube Shorts: a `youtube.com/shorts/<id>` link is not rewritten (Telegram
-previews YouTube itself); the bot answers it with the link (Telegram's YouTube
-card: cover, title, description; compact in groups) and a download button. Always in
-private chats, in groups only with the `🎬 Shorts` setting (`shorts_download`,
-off by default). The download enforces the Shorts length (≤ 180 s) because any
-video id opens under `/shorts/`, picks H.264 within 50 MB, and needs
-`--js-runtimes node` for YouTube's JS challenge.
+YouTube: a video link (`watch?v=`, `youtu.be/`, `shorts/`) is not rewritten
+(Telegram previews YouTube itself); the bot answers it with the canonical link
+(Telegram's YouTube card: cover, title, description; compact in groups) and a
+download button. Always in private chats, in groups only with the `🎬 YouTube`
+setting (DB column `shorts_download`, off by default).
 
 YouTube blocks Railway's egress (429 / "Sign in to confirm you're not a bot"),
-so Shorts are downloaded by the home worker (`youtube_worker.ts`) on a
-residential connection. It long-polls the bot over HTTPS and uploads the mp4;
-nothing listens at home. While it is offline, the bot falls back to its own
-yt-dlp. Setup, updates and safety: `docs/youtube-home-worker.md`.
+so videos are downloaded by the home worker (`youtube_worker.ts`) on a
+residential connection, and the button is offered only while it is connected.
+It long-polls the bot over HTTPS and uploads the mp4; nothing listens at home.
+The download reads the formats first and takes the best H.264 + AAC pair under
+47 MiB (Telegram's 50 MB bot upload limit), 240p–1080p measured on the short
+side; a longer video gets "too long", a live stream "cannot be downloaded".
+Setup, updates and safety: `docs/youtube-home-worker.md`.
 
 The bot runs through polling, not webhooks. Railway startup now runs migrations before starting `bot.js`.
 

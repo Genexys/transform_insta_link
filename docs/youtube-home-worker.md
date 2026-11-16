@@ -2,26 +2,32 @@
 
 YouTube refuses Railway's datacenter egress: yt-dlp gets `HTTP Error 429` and
 `Sign in to confirm you're not a bot`. A machine on a home (residential) connection
-downloads the same Shorts without trouble. The home worker downloads Shorts there
-and hands the file to the bot.
+downloads the same videos without trouble. The home worker downloads YouTube
+videos and Shorts there and hands the file to the bot.
 
 ## How it works
 
 ```
-user taps "Download Short"
+user taps "Download video" / "Download Short"
   → bot queues a job in memory (youtube_worker_relay.ts)
   ← home worker long-polls GET  /internal/yt-worker/next       (outbound HTTPS)
-    home worker runs yt-dlp from the residential IP
+    home worker reads the formats, picks the best quality under 47 MiB, downloads
   → home worker POSTs the mp4 to /internal/yt-worker/jobs/<id>
   → bot sends the video to the chat
 ```
 
 - The worker only makes outbound requests to the bot. It publishes no port, so
   nothing needs forwarding on the router and there is no tunnel.
-- The bot uses the worker while it is polling: a request within the last 90 s,
-  or a poll held open right now. Otherwise the bot falls back to its own yt-dlp,
-  which YouTube usually refuses; the user then sees "YouTube is not letting us
-  download this video right now".
+- The worker counts as connected while it is polling: a request within the
+  last 90 s, or a poll held open right now. The bot offers the YouTube button
+  only then. If the worker drops between the offer and the tap, the bot tries
+  its own yt-dlp, which YouTube usually refuses; the user then sees "YouTube is
+  not letting us download this video right now".
+- Telegram takes at most 50 MB from a bot, so the worker reads the formats
+  first and takes the best H.264 + AAC pair that fits: a Short at 1080p, about
+  10 minutes at 480p, about 25 minutes at 240p. A longer video is refused before
+  anything is downloaded. The mp4 is muxed with the index first, so Telegram
+  starts playing it before it finishes loading.
 - Jobs live in the bot's memory. A bot restart drops them, and those users get
   the same "try later" message.
 - `/health` reports `youtube_worker`: `configured`, `online`,
@@ -79,7 +85,7 @@ user taps "Download Short"
   characters, and the worker sends it only over `https://` (plain `http://`
   works only for localhost).
 - The worker never fetches a URL the bot sent as-is. It takes the video id and
-  rebuilds `https://www.youtube.com/shorts/<id>`, and yt-dlp runs with
+  rebuilds `https://www.youtube.com/watch?v=<id>` (or `/shorts/<id>`), and yt-dlp runs with
   `--use-extractors youtube`. Even a stolen token cannot make the worker open
   hosts on the home network.
 - The container runs as `node` (not root) on a read-only filesystem with every
@@ -88,6 +94,6 @@ user taps "Download Short"
 
 ## Traffic
 
-Each Short is downloaded from YouTube over the home connection and then uploaded
-to Railway: typically 5–40 MB in each direction. The bot's per-user limit (5
+Each video is downloaded from YouTube over the home connection and then uploaded
+to Railway: up to 50 MB in each direction (a Short is typically 5–20 MB). The bot's per-user limit (5
 downloads per 10 minutes, pass holders exempt) applies as before.

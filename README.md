@@ -7,7 +7,7 @@ Telegram bot that rewrites social links into preview-friendly fixer URLs so Tele
 - rewrites supported social links in group chats
 - replies with the fixed link and deletes the original message when it has permission
 - supports inline mode
-- supports TikTok and YouTube Shorts download through `yt-dlp` (Shorts: always in private chats, in groups when enabled in `/settings`; downloaded by a [home worker](docs/youtube-home-worker.md) because YouTube blocks Railway's IPs)
+- supports TikTok and YouTube (videos and Shorts) download through `yt-dlp`. YouTube is offered only while the [home worker](docs/youtube-home-worker.md) is connected, because YouTube blocks Railway's IPs: always in private chats, in groups when enabled in `/settings`. The quality is the best that fits Telegram's 50 MB bot upload limit (about 10 min at 480p, 25 min at 240p)
 - supports Telegram Stars donations and premium chat features
 - exposes `/healthz` (liveness), `/health` (dependency report) and a Reddit embed proxy over HTTP
 
@@ -86,7 +86,7 @@ Optional:
 - `SENTRY_DSN`
 - `NODE_ENV`
 - `PORT`
-- `YT_WORKER_TOKEN` — shared secret of the home YouTube worker (≥ 32 characters); unset = Shorts download through the bot's own yt-dlp. See [docs/youtube-home-worker.md](docs/youtube-home-worker.md)
+- `YT_WORKER_TOKEN` — shared secret of the home YouTube worker (≥ 32 characters); unset = no YouTube download button. See [docs/youtube-home-worker.md](docs/youtube-home-worker.md)
 
 ## Local Development
 
@@ -142,4 +142,4 @@ npm start
 - Database schema is now managed through `node-pg-migrate` migrations.
 - Railway startup runs migrations before booting the bot.
 - The recommended local PostgreSQL instance is exposed at `localhost:54329` to avoid clashing with a system Postgres on `5432`.
-- If `yt-dlp` or `ffmpeg` are missing locally, the bot still starts, but the TikTok/Shorts download flow is disabled on that instance. YouTube additionally needs `yt-dlp-ejs` (`pip install -r requirements-ytdlp.txt`).
+- If `yt-dlp` or `ffmpeg` are missing locally, the bot still starts, but the TikTok/YouTube download flow is disabled on that instance. YouTube additionally needs `yt-dlp-ejs` (`pip install -r requirements-ytdlp.txt`).

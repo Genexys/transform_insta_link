@@ -10,7 +10,7 @@ delete process.env.YT_WORKER_TOKEN;
 
 const { createYoutubeWorkerRelay } = require('../youtube_worker_relay.js');
 const { parseJob, runWorker, workerBaseUrl } = require('../youtube_worker.js');
-const { ShortsDownloadError } = require('../youtube_shorts.js');
+const { YouTubeDownloadError } = require('../youtube_download.js');
 
 const TOKEN = 'test-token-0123456789abcdef0123456789';
 const JOB_ID = '0b5e8a9c-3f1d-4c2a-9e7b-1a2b3c4d5e6f';
@@ -53,15 +53,19 @@ async function waitFor(predicate, timeoutMs = 2000) {
 
 const auth = { Authorization: `Bearer ${TOKEN}` };
 const isCode = code => err =>
-  err instanceof ShortsDownloadError && err.code === code;
+  err instanceof YouTubeDownloadError && err.code === code;
 
-test('parseJob rebuilds the Shorts URL from the id and refuses anything else', () => {
+test('parseJob rebuilds the YouTube URL from the id and refuses anything else', () => {
   assert.deepEqual(
     parseJob({
       id: JOB_ID,
       url: 'https://m.youtube.com/shorts/WIUL4V6smoo?feature=share',
     }),
     { id: JOB_ID, url: 'https://www.youtube.com/shorts/WIUL4V6smoo' }
+  );
+  assert.deepEqual(
+    parseJob({ id: JOB_ID, url: 'https://youtu.be/aqz-KE-bpKQ?t=5' }),
+    { id: JOB_ID, url: 'https://www.youtube.com/watch?v=aqz-KE-bpKQ' }
   );
   assert.deepEqual(parseJob({ id: JOB_ID, url: 'http://192.168.1.1/' }), {
     id: JOB_ID,
@@ -197,7 +201,7 @@ test('the home worker downloads a queued Short and the bot gets the file', async
     async download(url, output) {
       downloads.push(url);
       if (url.endsWith('blockedVid1')) {
-        throw new ShortsDownloadError(
+        throw new YouTubeDownloadError(
           'blocked',
           "Sign in to confirm you're not a bot"
         );
@@ -218,6 +222,7 @@ test('the home worker downloads a queued Short and the bot gets the file', async
     output
   );
   assert.equal(fs.readFileSync(output, 'utf8'), 'fake-mp4');
+  await server.relay.download('https://youtu.be/aqz-KE-bpKQ', tempOutput(t));
 
   await assert.rejects(
     server.relay.download(
@@ -227,7 +232,7 @@ test('the home worker downloads a queued Short and the bot gets the file', async
     err => isCode('blocked')(err) && /Sign in to confirm/.test(err.message)
   );
 
-  // Not a Shorts URL: the worker reports a failure without running yt-dlp.
+  // Not a YouTube video: the worker reports a failure without running yt-dlp.
   await assert.rejects(
     server.relay.download('http://192.168.1.1/admin', tempOutput(t)),
     isCode('failed')
@@ -235,6 +240,7 @@ test('the home worker downloads a queued Short and the bot gets the file', async
 
   assert.deepEqual(downloads, [
     'https://www.youtube.com/shorts/WIUL4V6smoo',
+    'https://www.youtube.com/watch?v=aqz-KE-bpKQ',
     'https://www.youtube.com/shorts/blockedVid1',
   ]);
   assert.equal(server.relay.status().in_progress, 0);

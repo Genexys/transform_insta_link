@@ -234,32 +234,63 @@ export function findsocialLinks(text: string): string[] {
   return socialLinks;
 }
 
-// YouTube Shorts. Telegram already previews YouTube links, so these are never
-// rewritten; the bot only offers a download button for them. Only the
-// /shorts/ path counts: a youtu.be or /watch link can't be told apart from a
-// long video without fetching it. Any video id also opens under /shorts/, so
-// the download itself still enforces the Shorts duration limit.
-const YOUTUBE_SHORTS_REGEX =
-  /^(?:https?:\/\/)?(?:(?:www|m)\.)?youtube\.com\/shorts\/([A-Za-z0-9_-]{11})(?=$|[/?#])/i;
+// YouTube videos. Telegram already previews YouTube links, so these are never
+// rewritten; the bot only offers a download button for them. Recognised:
+// youtube.com/watch?v=<id>, youtu.be/<id> and youtube.com/shorts/<id>
+// (www./m.). Live, music, playlist and channel links are not videos to save.
+export type YouTubeVideo = { id: string; isShorts: boolean };
 
-export function youTubeShortsId(url: string): string | null {
-  return url.match(YOUTUBE_SHORTS_REGEX)?.[1] ?? null;
+const YOUTUBE_ID_REGEX = /^[A-Za-z0-9_-]{11}$/;
+const YOUTUBE_HOSTS = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com']);
+
+export function youTubeVideo(url: string): YouTubeVideo | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(/^[a-z][a-z0-9+.-]*:/i.test(url) ? url : `https://${url}`);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
+  const host = parsed.hostname.toLowerCase();
+  if (host === 'youtu.be') {
+    const id = parsed.pathname.split('/')[1] ?? '';
+    return YOUTUBE_ID_REGEX.test(id) ? { id, isShorts: false } : null;
+  }
+  if (!YOUTUBE_HOSTS.has(host)) return null;
+  const shorts = parsed.pathname.match(/^\/shorts\/([^/]+)\/?$/);
+  if (shorts) {
+    return YOUTUBE_ID_REGEX.test(shorts[1])
+      ? { id: shorts[1], isShorts: true }
+      : null;
+  }
+  if (parsed.pathname === '/watch' || parsed.pathname === '/watch/') {
+    const id = parsed.searchParams.get('v') ?? '';
+    return YOUTUBE_ID_REGEX.test(id) ? { id, isShorts: false } : null;
+  }
+  return null;
 }
 
-export function isYouTubeShortsUrl(url: string): boolean {
-  return youTubeShortsId(url) !== null;
+export function isYouTubeVideoUrl(url: string): boolean {
+  return youTubeVideo(url) !== null;
 }
 
-// The first Shorts link in a message, normalised to a canonical URL (tracking
-// parameters such as ?si= dropped).
-export function findYouTubeShortsUrl(text: string): string | null {
+// The form the bot posts and downloads: tracking parameters (?si=, &t=)
+// dropped, Shorts kept as Shorts so Telegram shows the vertical card.
+export function canonicalYouTubeUrl(video: YouTubeVideo): string {
+  return video.isShorts
+    ? `https://www.youtube.com/shorts/${video.id}`
+    : `https://www.youtube.com/watch?v=${video.id}`;
+}
+
+// The first YouTube video link in a message.
+export function findYouTubeVideo(text: string): YouTubeVideo | null {
   for (const word of text.split(/\s+/)) {
     const candidate = word.match(URL_CANDIDATE_REGEX);
     if (!candidate) continue;
-    const id = youTubeShortsId(
+    const video = youTubeVideo(
       candidate[0].replace(TRAILING_PUNCTUATION_REGEX, '')
     );
-    if (id) return `https://www.youtube.com/shorts/${id}`;
+    if (video) return video;
   }
   return null;
 }

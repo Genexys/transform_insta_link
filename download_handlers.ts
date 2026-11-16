@@ -10,7 +10,7 @@ import { extractShortcodeFromUrl } from './insta_preview_client';
 import {
   INSTA_FIX_DOMAIN,
   TIKTOK_FIXERS,
-  isYouTubeShortsUrl,
+  isYouTubeVideoUrl,
   revertUrlForDownload,
 } from './link_utils';
 import { downloadInstaVideoFile, probeVideoMeta } from './video_delivery';
@@ -19,10 +19,9 @@ import { strings } from './i18n';
 import { log } from './runtime';
 import { ytDlpBinaries } from './media_runtime';
 import {
-  SHORTS_MAX_SECONDS,
-  ShortsDownloadError,
-  downloadShortWithYtDlp,
-} from './youtube_shorts';
+  YouTubeDownloadError,
+  downloadYouTubeWithYtDlp,
+} from './youtube_download';
 import { youtubeWorkerRelay } from './youtube_worker_relay';
 
 // The free in-chat download costs real CPU/bandwidth (yt-dlp + upload) and was
@@ -32,29 +31,29 @@ const FREE_DOWNLOAD_LIMIT = 5;
 const FREE_DOWNLOAD_WINDOW_MS = 10 * 60 * 1000;
 const recentDownloads = new Map<number, number[]>();
 
-// Datacenter IPs get YouTube's bot check, so Shorts go through the home
+// Datacenter IPs get YouTube's bot check, so videos go through the home
 // worker whenever it is polling, and through the local yt-dlp otherwise.
-async function downloadShort(url: string, outPath: string): Promise<void> {
+async function downloadYouTube(url: string, outPath: string): Promise<void> {
   if (youtubeWorkerRelay.isOnline()) {
     await youtubeWorkerRelay.download(url, outPath);
     return;
   }
   const binaries = ytDlpBinaries();
   if (!binaries) {
-    throw new ShortsDownloadError('failed', 'yt-dlp or ffmpeg is missing');
+    throw new YouTubeDownloadError('failed', 'yt-dlp or ffmpeg is missing');
   }
-  await downloadShortWithYtDlp(binaries, url, outPath);
+  await downloadYouTubeWithYtDlp(binaries, url, outPath);
 }
 
-function shortsErrorMessage(
+function youTubeErrorMessage(
   L: ReturnType<typeof strings>,
-  error: ShortsDownloadError
+  error: YouTubeDownloadError
 ): string {
   switch (error.code) {
-    case 'not_short':
-      return L.downloadErrNotShort(SHORTS_MAX_SECONDS);
     case 'too_big':
-      return L.downloadErrTooBig;
+      return L.downloadErrYouTubeTooLong;
+    case 'live':
+      return L.downloadErrYouTubeLive;
     case 'blocked':
     case 'unavailable':
       return L.downloadErrYouTubeUnavailable;
@@ -125,7 +124,7 @@ export async function handleDownloadCallback(
   const fixedUrl =
     urlMatches.find(u => u.includes(INSTA_FIX_DOMAIN)) ||
     urlMatches.find(u => TIKTOK_FIXERS.some(f => u.includes(f))) ||
-    urlMatches.find(u => isYouTubeShortsUrl(u)) ||
+    urlMatches.find(u => isYouTubeVideoUrl(u)) ||
     urlMatches[0];
   if (!fixedUrl) {
     await bot.answerCallbackQuery(query.id, {
@@ -137,7 +136,7 @@ export async function handleDownloadCallback(
 
   const originalUrl = revertUrlForDownload(fixedUrl);
   const isInstagram = fixedUrl.includes(INSTA_FIX_DOMAIN);
-  const isShorts = isYouTubeShortsUrl(originalUrl);
+  const isYouTube = isYouTubeVideoUrl(originalUrl);
 
   if (activeDownloads.has(telegramId)) {
     await bot.answerCallbackQuery(query.id, {
@@ -179,10 +178,10 @@ export async function handleDownloadCallback(
       tempFilePath,
       via: isInstagram
         ? 'preview-service'
-        : isShorts
+        : isYouTube
           ? youtubeWorkerRelay.isOnline()
             ? 'home-worker'
-            : 'yt-dlp:shorts'
+            : 'yt-dlp:youtube'
           : 'yt-dlp',
     });
 
@@ -195,8 +194,8 @@ export async function handleDownloadCallback(
       // oversized Instagram video). Image-only posts are handled by the paid
       // save flow (deliverInstaMedia), not here.
       await downloadInstaVideoFile(shortcode, tempFilePath);
-    } else if (isShorts) {
-      await downloadShort(originalUrl, tempFilePath);
+    } else if (isYouTube) {
+      await downloadYouTube(originalUrl, tempFilePath);
     } else {
       await ytdlp.downloadAsync(originalUrl, {
         output: tempFilePath,
@@ -230,6 +229,9 @@ export async function handleDownloadCallback(
       reply_parameters: { message_id: sourceMessage.message_id },
       // The free copy is view-only; pass holders get a savable one.
       protect_content: !isPassHolder,
+      // Long YouTube videos are muxed with the moov atom first, so they can
+      // start playing before they finish loading.
+      supports_streaming: true,
       ...(meta.width && meta.height
         ? { width: meta.width, height: meta.height }
         : {}),
@@ -258,8 +260,8 @@ export async function handleDownloadCallback(
     let errorMsg: string;
     const errStr = (error?.message || '').toLowerCase();
 
-    if (error instanceof ShortsDownloadError) {
-      errorMsg = shortsErrorMessage(L, error);
+    if (error instanceof YouTubeDownloadError) {
+      errorMsg = youTubeErrorMessage(L, error);
     } else if (
       errStr.includes('file is larger than') ||
       errStr.includes('too big')

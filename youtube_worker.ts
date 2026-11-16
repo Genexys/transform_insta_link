@@ -1,4 +1,4 @@
-// Home YouTube worker: downloads Shorts for the bot from a residential IP.
+// Home YouTube worker: downloads YouTube videos for the bot from a residential IP.
 //
 // YouTube answers Railway's datacenter egress with "Sign in to confirm you're
 // not a bot" / HTTP 429. This process runs on a home machine and only makes
@@ -12,38 +12,35 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { setTimeout as sleep } from 'timers/promises';
-import { youTubeShortsId } from './link_utils';
+import { canonicalYouTubeUrl, youTubeVideo } from './link_utils';
 import { ytDlpBinaries } from './media_runtime';
 import { log, requireEnv } from './runtime';
 import {
   MIN_WORKER_TOKEN_LENGTH,
-  SHORTS_DOWNLOAD_TIMEOUT_MS,
-  ShortsDownloadError,
+  YOUTUBE_DOWNLOAD_TIMEOUT_MS,
+  YouTubeDownloadError,
   WORKER_JOB_ID_REGEX,
   WORKER_ROUTE_PREFIX,
-  downloadShortWithYtDlp,
+  downloadYouTubeWithYtDlp,
   type WorkerFailureReport,
-} from './youtube_shorts';
+} from './youtube_download';
 
 // The bot holds an idle poll for 25 s.
 const POLL_TIMEOUT_MS = 40_000;
-const UPLOAD_TIMEOUT_MS = 60_000;
+const UPLOAD_TIMEOUT_MS = 120_000;
 const REPORT_TIMEOUT_MS = 15_000;
 const MAX_BACKOFF_MS = 60_000;
 
 export type WorkerJob = { id: string; url: string | null };
 
 // The worker never fetches a URL the bot sent verbatim: it takes the video id
-// and rebuilds the canonical Shorts URL. `url` is null for anything else.
+// and rebuilds the canonical YouTube URL. `url` is null for anything else.
 export function parseJob(value: unknown): WorkerJob | null {
   if (!value || typeof value !== 'object') return null;
   const { id, url } = value as Record<string, unknown>;
   if (typeof id !== 'string' || !WORKER_JOB_ID_REGEX.test(id)) return null;
-  const videoId = typeof url === 'string' ? youTubeShortsId(url) : null;
-  return {
-    id,
-    url: videoId ? `https://www.youtube.com/shorts/${videoId}` : null,
-  };
+  const video = typeof url === 'string' ? youTubeVideo(url) : null;
+  return { id, url: video ? canonicalYouTubeUrl(video) : null };
 }
 
 // The token travels in a header, so plain HTTP is allowed only to localhost.
@@ -100,7 +97,7 @@ async function report(
     });
     await res.text().catch(() => '');
   } catch (err) {
-    log.warn('Failed to report a Shorts failure', {
+    log.warn('Failed to report a download failure', {
       jobId: id,
       err: String(err),
     });
@@ -112,7 +109,7 @@ async function runJob(ctx: Context, job: WorkerJob): Promise<void> {
   if (!job.url) {
     await report(ctx, job.id, {
       code: 'failed',
-      message: 'not a YouTube Shorts URL',
+      message: 'not a YouTube video URL',
     });
     return;
   }
@@ -123,10 +120,10 @@ async function runJob(ctx: Context, job: WorkerJob): Promise<void> {
       await ctx.download(job.url, output);
     } catch (err) {
       const failure: WorkerFailureReport =
-        err instanceof ShortsDownloadError
+        err instanceof YouTubeDownloadError
           ? { code: err.code, message: err.message }
           : { code: 'failed', message: String(err) };
-      log.warn('Shorts download failed', {
+      log.warn('YouTube download failed', {
         jobId: job.id,
         url: job.url,
         code: failure.code,
@@ -143,7 +140,7 @@ async function runJob(ctx: Context, job: WorkerJob): Promise<void> {
       signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
     });
     await res.text().catch(() => '');
-    log.info('Shorts job delivered', {
+    log.info('YouTube job delivered', {
       jobId: job.id,
       url: job.url,
       sizeBytes: body.length,
@@ -151,7 +148,7 @@ async function runJob(ctx: Context, job: WorkerJob): Promise<void> {
       durationMs: Date.now() - startedAt,
     });
   } catch (err) {
-    log.warn('Shorts upload failed', { jobId: job.id, err: String(err) });
+    log.warn('YouTube upload failed', { jobId: job.id, err: String(err) });
   } finally {
     await fs.promises.rm(dir, { recursive: true, force: true });
   }
@@ -249,7 +246,12 @@ async function main(): Promise<void> {
     concurrency,
     signal: controller.signal,
     download: (url, output) =>
-      downloadShortWithYtDlp(binaries, url, output, SHORTS_DOWNLOAD_TIMEOUT_MS),
+      downloadYouTubeWithYtDlp(
+        binaries,
+        url,
+        output,
+        YOUTUBE_DOWNLOAD_TIMEOUT_MS
+      ).then(() => undefined),
   });
 }
 
