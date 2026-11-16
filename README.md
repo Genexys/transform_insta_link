@@ -86,6 +86,7 @@ Optional:
 - `SENTRY_DSN`
 - `NODE_ENV`
 - `PORT`
+- `BOT_DONATE_DETAILS` — donation details (card, IBAN, crypto) at the bottom of the bot description; `\n` starts a new line. The description texts themselves live in `i18n.ts` and are set at startup (`bot_profile.ts`)
 - `YT_WORKER_TOKEN` — shared secret of the home YouTube worker (≥ 32 characters); unset = no YouTube download button. See [docs/youtube-home-worker.md](docs/youtube-home-worker.md)
 
 ## Local Development

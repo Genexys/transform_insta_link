@@ -69,6 +69,11 @@ const ru = {
     downloadErrGeneric: '❌ Произошла ошибка на сервере. Попробуйте позже или используйте другую ссылку.',
     downloadErrYouTubeTooLong: '❌ Видео слишком длинное: даже в 240p оно больше 50 МБ — это предел Telegram для файлов от ботов.',
     downloadErrYouTubeLive: '❌ Прямую трансляцию скачать нельзя.',
+    botDescription: 'Исправляю ссылки из соцсетей, чтобы в Telegram было нормальное превью: Instagram, TikTok, X/Twitter, Reddit, Bluesky, Pixiv, DeviantArt.\n\n' +
+        '📥 Скачиваю видео прямо в чат — из TikTok, Instagram и YouTube (вместе с Shorts).\n\n' +
+        '👥 Добавьте меня в группу, и ссылки будут исправляться сами. Или пришлите ссылку сюда.',
+    botDescriptionDonate: '❤️ Поддержать бота — /donate или:',
+    botShortDescription: 'Чиню превью ссылок Instagram, TikTok, X и других соцсетей и скачиваю видео — даже с YouTube',
     downloadErrYouTubeTooLongPass: '❌ Видео больше 50 МБ — столько Telegram не даёт отправить боту. С пассом бот присылает такие видео ссылкой на скачивание в 720p: /premium',
     downloadLinkProgress: (stage, percent) => stage === 'link_queued'
         ? '⏳ Видео больше 50 МБ — столько Telegram не даёт отправить боту, поэтому будет ссылка на скачивание. Сейчас готовится другая ссылка, ваша следующая…'
@@ -279,6 +284,11 @@ const en = {
     downloadErrGeneric: '❌ Server error. Try again later or use another link.',
     downloadErrYouTubeTooLong: '❌ The video is too long: even at 240p it is over 50 MB, the Telegram limit for files from bots.',
     downloadErrYouTubeLive: '❌ Live streams cannot be downloaded.',
+    botDescription: 'I fix social media links so Telegram shows a proper preview: Instagram, TikTok, X/Twitter, Reddit, Bluesky, Pixiv, DeviantArt.\n\n' +
+        '📥 I download videos right into the chat — from TikTok, Instagram and YouTube (Shorts too).\n\n' +
+        '👥 Add me to a group and links get fixed automatically. Or send a link here.',
+    botDescriptionDonate: '❤️ Support the bot — /donate or:',
+    botShortDescription: 'Fixes previews of Instagram, TikTok, X and other links, and downloads videos — YouTube too',
     downloadErrYouTubeTooLongPass: '❌ The video is over 50 MB, more than Telegram lets a bot send. With a pass, the bot sends such videos as a 720p download link: /premium',
     downloadLinkProgress: (stage, percent) => stage === 'link_queued'
         ? '⏳ The video is over 50 MB, more than Telegram lets a bot send, so you will get a download link. Another link is being prepared; yours is next…'
