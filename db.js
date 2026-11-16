@@ -17,6 +17,7 @@ exports.setBillingEventStatus = setBillingEventStatus;
 exports.setChatSetting = setChatSetting;
 exports.setChatLanguageIfUnset = setChatLanguageIfUnset;
 exports.getBillingHistory = getBillingHistory;
+exports.listBroadcastRecipients = listBroadcastRecipients;
 exports.getAdminStats = getAdminStats;
 exports.pruneOldRows = pruneOldRows;
 const pg_1 = require("pg");
@@ -269,6 +270,14 @@ async function getBillingHistory(telegramId, limit = 10) {
         runtime_1.log.error('getBillingHistory failed', { telegramId, err: String(err) });
         return null;
     }
+}
+async function listBroadcastRecipients(excludeId) {
+    if (!app_env_1.DATABASE_URL)
+        return [];
+    const { rows } = await exports.dbClient.query('SELECT telegram_id FROM users WHERE telegram_id > 0 ORDER BY id');
+    return rows
+        .map(row => Number(row.telegram_id))
+        .filter(id => Number.isSafeInteger(id) && id !== excludeId);
 }
 async function getAdminStats() {
     if (!app_env_1.DATABASE_URL)

@@ -9,6 +9,10 @@ import {
   TOGGLEABLE_PLATFORMS,
 } from './chat_settings_ui';
 import { getChatSettings, setChatSetting } from './db';
+import {
+  BROADCAST_CALLBACK_PREFIX,
+  handleBroadcastCallback,
+} from './broadcast';
 import { handleDownloadCallback } from './download_handlers';
 import { strings } from './i18n';
 import { DELETE_CALLBACK_PREFIX } from './message_handlers';
@@ -131,6 +135,11 @@ export function registerCallbackHandlers(
     const data = query.data;
 
     if (!query.message || !chatId || !data) return;
+
+    if (data.startsWith(BROADCAST_CALLBACK_PREFIX)) {
+      await handleBroadcastCallback(bot, query);
+      return;
+    }
 
     if (data === 'download_video') {
       if (!ytdlp) {

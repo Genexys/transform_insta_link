@@ -416,6 +416,21 @@ export type AdminStats = {
   refunds: { count: number; stars: number; failed: number };
 };
 
+// Everyone the bot knows by user id, oldest first, for an owner announcement
+// in private chats. Users who never opened the bot in private are included;
+// Telegram refuses those, and the broadcast counts them as unreachable.
+export async function listBroadcastRecipients(
+  excludeId?: number
+): Promise<number[]> {
+  if (!DATABASE_URL) return [];
+  const { rows } = await dbClient.query(
+    'SELECT telegram_id FROM users WHERE telegram_id > 0 ORDER BY id'
+  );
+  return rows
+    .map(row => Number(row.telegram_id))
+    .filter(id => Number.isSafeInteger(id) && id !== excludeId);
+}
+
 export async function getAdminStats(): Promise<AdminStats | null> {
   if (!DATABASE_URL) return null;
   try {

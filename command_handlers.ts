@@ -3,6 +3,7 @@ import TelegramBot, {
   type SendMessageParams,
 } from 'node-telegram-bot-api';
 import { ADMIN_CHAT_ID, DATABASE_URL } from './app_env';
+import { handleBroadcastCommand } from './broadcast';
 import {
   DONATE_AMOUNTS_STARS,
   PERSONAL_PRO_PRICE_STARS,
@@ -530,6 +531,15 @@ export function registerCommandHandlers(bot: TelegramBot) {
           : '');
 
       await bot.sendMessage(chatId, text);
+    })
+  );
+
+  // Owner-only announcement to all users in private (broadcast.ts). Silent for
+  // everyone else, like /admin.
+  bot.onText(
+    /^\/broadcast(?:@\w+)?(?:\s|$)/,
+    command('broadcast', async msg => {
+      await handleBroadcastCommand(bot, msg);
     })
   );
 
