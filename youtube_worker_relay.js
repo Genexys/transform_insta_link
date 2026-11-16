@@ -12,7 +12,7 @@ const promises_1 = require("stream/promises");
 const app_env_1 = require("./app_env");
 const runtime_1 = require("./runtime");
 const youtube_download_1 = require("./youtube_download");
-const MAX_REPORT_BYTES = 4096;
+const MAX_REPORT_BYTES = 8192;
 function sha256(value) {
     return (0, crypto_1.createHash)('sha256').update(value).digest();
 }
@@ -51,11 +51,12 @@ function createYoutubeWorkerRelay(options) {
     const onlineWindowMs = options.onlineWindowMs ?? 90_000;
     const maxQueued = options.maxQueued ?? 10;
     const now = options.now ?? Date.now;
+    const isAllowedLinkUrl = options.isAllowedLinkUrl ?? youtube_download_1.isR2DownloadUrl;
     const queue = [];
     const claimed = new Map();
     const waiters = [];
     let lastSeenAt = 0;
-    function finish(job, err) {
+    function finish(job, outcome) {
         if (job.state === 'done')
             return;
         job.state = 'done';
@@ -64,18 +65,71 @@ function createYoutubeWorkerRelay(options) {
         const queuedAt = queue.indexOf(job);
         if (queuedAt !== -1)
             queue.splice(queuedAt, 1);
-        if (err)
-            job.reject(err);
+        if (outcome instanceof Error)
+            job.reject(outcome);
         else
-            job.resolve();
+            job.resolve(outcome);
+    }
+    function armJobTimer(job) {
+        clearTimeout(job.timer);
+        job.timer = setTimeout(() => finish(job, new youtube_download_1.YouTubeDownloadError('unavailable', 'home worker did not answer in time')), jobTimeoutMs);
     }
     function claim(job, res) {
-        clearTimeout(job.timer);
         job.state = 'claimed';
         claimed.set(job.id, job);
-        job.timer = setTimeout(() => finish(job, new youtube_download_1.YouTubeDownloadError('unavailable', 'home worker did not answer in time')), jobTimeoutMs);
+        armJobTimer(job);
+        const payload = {
+            id: job.id,
+            url: job.url,
+            allowLink: job.allowLink,
+        };
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ id: job.id, url: job.url }));
+        res.end(JSON.stringify(payload));
+    }
+    async function handleProgress(id, req, res) {
+        lastSeenAt = now();
+        const job = claimed.get(id);
+        let report = null;
+        try {
+            report = JSON.parse(await readSmallBody(req, MAX_REPORT_BYTES));
+        }
+        catch {
+            report = null;
+        }
+        if (!job || job.state !== 'claimed') {
+            respond(res, 404);
+            return;
+        }
+        if (!(0, youtube_download_1.isWorkerStage)(report?.stage)) {
+            respond(res, 400);
+            return;
+        }
+        armJobTimer(job);
+        respond(res, 204);
+        const percent = typeof report.percent === 'number' && Number.isFinite(report.percent)
+            ? Math.min(Math.max(Math.round(report.percent), 0), 100)
+            : undefined;
+        try {
+            job.onProgress?.(report.stage, percent);
+        }
+        catch (err) {
+            runtime_1.log.warn('YouTube progress callback failed', { err: String(err) });
+        }
+    }
+    function parseLink(value) {
+        if (!value || typeof value !== 'object')
+            return null;
+        const { url, bytes, quality, expiresAt } = value;
+        if (!isAllowedLinkUrl(url))
+            return null;
+        if (typeof bytes !== 'number' || !(bytes > 0))
+            return null;
+        if (typeof quality !== 'number' || !(quality > 0))
+            return null;
+        if (typeof expiresAt !== 'string' || Number.isNaN(Date.parse(expiresAt))) {
+            return null;
+        }
+        return { url: url, bytes, quality, expiresAt };
     }
     function dispatch() {
         while (waiters.length > 0 && queue.length > 0) {
@@ -129,6 +183,14 @@ function createYoutubeWorkerRelay(options) {
             catch {
                 report = null;
             }
+            if (report?.link !== undefined) {
+                const link = job.allowLink ? parseLink(report.link) : null;
+                respond(res, link ? 204 : 400);
+                finish(job, link
+                    ? { kind: 'link', link }
+                    : new youtube_download_1.YouTubeDownloadError('failed', 'home worker sent a bad link'));
+                return;
+            }
             const code = (0, youtube_download_1.isYouTubeFailure)(report?.code) ? report.code : 'failed';
             const detail = typeof report?.message === 'string' ? report.message.slice(0, 500) : '';
             respond(res, 204);
@@ -177,7 +239,7 @@ function createYoutubeWorkerRelay(options) {
             return;
         }
         respond(res, 204);
-        finish(job);
+        finish(job, { kind: 'file' });
     }
     function authorized(req) {
         const match = /^Bearer (\S+)$/.exec(String(req.headers.authorization ?? ''));
@@ -202,11 +264,14 @@ function createYoutubeWorkerRelay(options) {
             handlePoll(res);
             return true;
         }
-        const jobMatch = /^\/jobs\/([^/]+)$/.exec(route);
+        const jobMatch = /^\/jobs\/([^/]+)(\/progress)?$/.exec(route);
         if (req.method === 'POST' &&
             jobMatch &&
             youtube_download_1.WORKER_JOB_ID_REGEX.test(jobMatch[1])) {
-            await handleResult(jobMatch[1], req, res);
+            if (jobMatch[2])
+                await handleProgress(jobMatch[1], req, res);
+            else
+                await handleResult(jobMatch[1], req, res);
             return true;
         }
         req.resume();
@@ -218,7 +283,7 @@ function createYoutubeWorkerRelay(options) {
             return false;
         return waiters.length > 0 || now() - lastSeenAt < onlineWindowMs;
     }
-    function download(url, outPath) {
+    function download(url, outPath, { allowLink = false, onProgress } = {}) {
         if (!tokenDigest) {
             return Promise.reject(new youtube_download_1.YouTubeDownloadError('unavailable', 'home worker not configured'));
         }
@@ -230,6 +295,8 @@ function createYoutubeWorkerRelay(options) {
                 id: (0, crypto_1.randomUUID)(),
                 url,
                 outPath,
+                allowLink,
+                onProgress,
                 state: 'queued',
                 resolve,
                 reject,

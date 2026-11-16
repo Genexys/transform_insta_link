@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.parseJob = parseJob;
 exports.workerBaseUrl = workerBaseUrl;
+exports.createYouTubeJobHandler = createYouTubeJobHandler;
 exports.runWorker = runWorker;
 const fs_1 = __importDefault(require("fs"));
 const os_1 = __importDefault(require("os"));
@@ -12,20 +13,28 @@ const path_1 = __importDefault(require("path"));
 const promises_1 = require("timers/promises");
 const link_utils_1 = require("./link_utils");
 const media_runtime_1 = require("./media_runtime");
+const r2_storage_1 = require("./r2_storage");
 const runtime_1 = require("./runtime");
 const youtube_download_1 = require("./youtube_download");
 const POLL_TIMEOUT_MS = 40_000;
 const UPLOAD_TIMEOUT_MS = 120_000;
+const R2_UPLOAD_TIMEOUT_MS = 10 * 60_000;
 const REPORT_TIMEOUT_MS = 15_000;
 const MAX_BACKOFF_MS = 60_000;
+const HEARTBEAT_MS = 30_000;
+const PROGRESS_MIN_INTERVAL_MS = 5_000;
 function parseJob(value) {
     if (!value || typeof value !== 'object')
         return null;
-    const { id, url } = value;
+    const { id, url, allowLink } = value;
     if (typeof id !== 'string' || !youtube_download_1.WORKER_JOB_ID_REGEX.test(id))
         return null;
     const video = typeof url === 'string' ? (0, link_utils_1.youTubeVideo)(url) : null;
-    return { id, url: video ? (0, link_utils_1.canonicalYouTubeUrl)(video) : null };
+    return {
+        id,
+        url: video ? (0, link_utils_1.canonicalYouTubeUrl)(video) : null,
+        allowLink: allowLink === true,
+    };
 }
 function workerBaseUrl(botUrl) {
     const url = new URL(botUrl);
@@ -34,6 +43,63 @@ function workerBaseUrl(botUrl) {
         throw new Error('YT_WORKER_BOT_URL must be an https:// URL');
     }
     return `${url.origin}${youtube_download_1.WORKER_ROUTE_PREFIX}`;
+}
+function createLock() {
+    let tail = Promise.resolve();
+    let holders = 0;
+    return async function run(fn, onWait) {
+        const previous = tail;
+        let release;
+        tail = new Promise(resolve => (release = resolve));
+        if (holders++ > 0)
+            onWait?.();
+        try {
+            await previous;
+            return await fn();
+        }
+        finally {
+            holders--;
+            release();
+        }
+    };
+}
+function createYouTubeJobHandler(binaries, r2, { telegramBudgetBytes = youtube_download_1.YOUTUBE_TARGET_BYTES } = {}) {
+    const withLinkLock = createLock();
+    return async (job, output, progress) => {
+        const meta = await (0, youtube_download_1.fetchYouTubeInfo)(binaries, job.url, youtube_download_1.YOUTUBE_DOWNLOAD_TIMEOUT_MS);
+        const forTelegram = (0, youtube_download_1.pickYouTubeFormats)(meta.info, telegramBudgetBytes);
+        if (forTelegram) {
+            await (0, youtube_download_1.downloadChosenFormats)(binaries, meta, forTelegram, output, {
+                maxBytes: youtube_download_1.TELEGRAM_UPLOAD_MAX_BYTES,
+                timeoutMs: youtube_download_1.YOUTUBE_DOWNLOAD_TIMEOUT_MS,
+            });
+            return { kind: 'file' };
+        }
+        if (!job.allowLink || !r2)
+            throw (0, youtube_download_1.tooLongError)(meta.info, telegramBudgetBytes);
+        const forLink = (0, youtube_download_1.pickYouTubeFormats)(meta.info, youtube_download_1.LINK_MAX_BYTES, youtube_download_1.LINK_MAX_QUALITY);
+        if (!forLink)
+            throw (0, youtube_download_1.tooLongError)(meta.info, youtube_download_1.LINK_MAX_BYTES);
+        return withLinkLock(async () => {
+            progress('link_downloading');
+            await (0, youtube_download_1.downloadChosenFormats)(binaries, meta, forLink, output, {
+                maxBytes: youtube_download_1.LINK_MAX_BYTES,
+                timeoutMs: youtube_download_1.LINK_DOWNLOAD_TIMEOUT_MS,
+            });
+            const key = (0, r2_storage_1.newObjectKey)();
+            progress('link_uploading', 0);
+            const bytes = await (0, r2_storage_1.uploadFile)(r2, key, output, {
+                signal: AbortSignal.timeout(R2_UPLOAD_TIMEOUT_MS),
+                onProgress: (sent, total) => progress('link_uploading', (sent / total) * 100),
+            });
+            const expiresAt = new Date(Date.now() + r2_storage_1.LINK_TTL_SECONDS * 1000).toISOString();
+            const url = await (0, r2_storage_1.presignDownload)(r2, key, meta.info.title ?? 'video');
+            return {
+                kind: 'link',
+                link: { url, bytes, quality: forLink.quality, expiresAt },
+            };
+        }, () => progress('link_queued'));
+    };
 }
 function pollError(status) {
     if (status === 401) {
@@ -44,22 +110,45 @@ function pollError(status) {
     }
     return new Error(`poll answered HTTP ${status}`);
 }
-async function report(ctx, id, failure) {
+async function postJson(ctx, path, body) {
+    const res = await fetch(`${ctx.base}${path}`, {
+        method: 'POST',
+        headers: { ...ctx.auth, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(REPORT_TIMEOUT_MS),
+    });
+    await res.text().catch(() => '');
+    return res.status;
+}
+async function report(ctx, id, body) {
     try {
-        const res = await fetch(`${ctx.base}/jobs/${id}`, {
-            method: 'POST',
-            headers: { ...ctx.auth, 'Content-Type': 'application/json' },
-            body: JSON.stringify(failure),
-            signal: AbortSignal.timeout(REPORT_TIMEOUT_MS),
-        });
-        await res.text().catch(() => '');
+        await postJson(ctx, `/jobs/${id}`, body);
     }
     catch (err) {
-        runtime_1.log.warn('Failed to report a download failure', {
-            jobId: id,
-            err: String(err),
-        });
+        runtime_1.log.warn('Failed to report a job result', { jobId: id, err: String(err) });
     }
+}
+function startProgress(ctx, id) {
+    let last = null;
+    let lastSentAt = 0;
+    const send = () => {
+        if (!last)
+            return;
+        lastSentAt = Date.now();
+        postJson(ctx, `/jobs/${id}/progress`, last).catch(err => runtime_1.log.warn('Failed to send progress', { jobId: id, err: String(err) }));
+    };
+    const timer = setInterval(send, HEARTBEAT_MS);
+    const update = (stage, percent) => {
+        const stageChanged = last?.stage !== stage;
+        last = {
+            stage,
+            ...(percent === undefined ? {} : { percent: Math.round(percent) }),
+        };
+        if (stageChanged || Date.now() - lastSentAt >= PROGRESS_MIN_INTERVAL_MS) {
+            send();
+        }
+    };
+    return { update, stop: () => clearInterval(timer) };
 }
 async function runJob(ctx, job) {
     const startedAt = Date.now();
@@ -72,9 +161,11 @@ async function runJob(ctx, job) {
     }
     const dir = await fs_1.default.promises.mkdtemp(path_1.default.join(os_1.default.tmpdir(), 'yt-'));
     const output = path_1.default.join(dir, 'video.mp4');
+    const progress = startProgress(ctx, job.id);
     try {
+        let outcome;
         try {
-            await ctx.download(job.url, output);
+            outcome = await ctx.handle({ url: job.url, allowLink: job.allowLink }, output, progress.update);
         }
         catch (err) {
             const failure = err instanceof youtube_download_1.YouTubeDownloadError
@@ -87,6 +178,18 @@ async function runJob(ctx, job) {
                 err: failure.message,
             });
             await report(ctx, job.id, failure);
+            return;
+        }
+        progress.stop();
+        if (outcome.kind === 'link') {
+            await report(ctx, job.id, { link: outcome.link });
+            runtime_1.log.info('YouTube link delivered', {
+                jobId: job.id,
+                url: job.url,
+                sizeBytes: outcome.link.bytes,
+                quality: outcome.link.quality,
+                durationMs: Date.now() - startedAt,
+            });
             return;
         }
         const body = await fs_1.default.promises.readFile(output);
@@ -109,6 +212,7 @@ async function runJob(ctx, job) {
         runtime_1.log.warn('YouTube upload failed', { jobId: job.id, err: String(err) });
     }
     finally {
+        progress.stop();
         await fs_1.default.promises.rm(dir, { recursive: true, force: true });
     }
 }
@@ -159,7 +263,7 @@ async function runWorker(options) {
     const ctx = {
         base: options.base,
         auth: { Authorization: `Bearer ${options.token}` },
-        download: options.download,
+        handle: options.handle,
         signal: options.signal ?? new AbortController().signal,
         pollTimeoutMs: options.pollTimeoutMs ?? POLL_TIMEOUT_MS,
         connected: false,
@@ -169,7 +273,7 @@ async function runWorker(options) {
 }
 function concurrencyFromEnv() {
     const value = Number.parseInt(process.env.YT_WORKER_CONCURRENCY ?? '', 10);
-    return Number.isFinite(value) ? Math.min(Math.max(value, 1), 4) : 2;
+    return Number.isFinite(value) ? Math.min(Math.max(value, 1), 4) : 3;
 }
 async function main() {
     const base = workerBaseUrl((0, runtime_1.requireEnv)('YT_WORKER_BOT_URL'));
@@ -180,6 +284,7 @@ async function main() {
     const binaries = (0, media_runtime_1.ytDlpBinaries)();
     if (!binaries)
         throw new Error('yt-dlp and ffmpeg must be on PATH');
+    const r2 = (0, r2_storage_1.r2ConfigFromEnv)();
     const controller = new AbortController();
     for (const signal of ['SIGTERM', 'SIGINT']) {
         process.once(signal, () => {
@@ -191,13 +296,14 @@ async function main() {
     runtime_1.log.info('YouTube worker started', {
         bot: new URL(base).host,
         concurrency,
+        downloadLinks: r2 ? `R2 bucket ${r2.bucket}` : 'off',
     });
     await runWorker({
         base,
         token,
         concurrency,
         signal: controller.signal,
-        download: (url, output) => (0, youtube_download_1.downloadYouTubeWithYtDlp)(binaries, url, output, youtube_download_1.YOUTUBE_DOWNLOAD_TIMEOUT_MS).then(() => undefined),
+        handle: createYouTubeJobHandler(binaries, r2),
     });
 }
 if (require.main === module) {

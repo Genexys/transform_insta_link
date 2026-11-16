@@ -24,16 +24,57 @@ const youtube_worker_relay_1 = require("./youtube_worker_relay");
 const FREE_DOWNLOAD_LIMIT = 5;
 const FREE_DOWNLOAD_WINDOW_MS = 10 * 60 * 1000;
 const recentDownloads = new Map();
-async function downloadYouTube(url, outPath) {
+const DOWNLOAD_LINKS_PASS_HOLDERS_ONLY = false;
+async function downloadYouTube(url, outPath, options) {
     if (youtube_worker_relay_1.youtubeWorkerRelay.isOnline()) {
-        await youtube_worker_relay_1.youtubeWorkerRelay.download(url, outPath);
-        return;
+        return youtube_worker_relay_1.youtubeWorkerRelay.download(url, outPath, options);
     }
     const binaries = (0, media_runtime_1.ytDlpBinaries)();
     if (!binaries) {
         throw new youtube_download_1.YouTubeDownloadError('failed', 'yt-dlp or ffmpeg is missing');
     }
     await (0, youtube_download_1.downloadYouTubeWithYtDlp)(binaries, url, outPath);
+    return { kind: 'file' };
+}
+function linkProgressEditor(bot, chatId, messageId, L) {
+    let lastStage = null;
+    let lastText = '';
+    let lastAt = 0;
+    let closed = false;
+    let chain = Promise.resolve();
+    const update = (stage, percent) => {
+        if (closed)
+            return;
+        const text = L.downloadLinkProgress(stage, percent);
+        if (text === lastText)
+            return;
+        if (stage === lastStage && Date.now() - lastAt < 4000)
+            return;
+        lastStage = stage;
+        lastText = text;
+        lastAt = Date.now();
+        chain = chain.then(() => bot
+            .editMessageText(text, { chat_id: chatId, message_id: messageId })
+            .catch(() => { }));
+    };
+    const close = async () => {
+        closed = true;
+        await chain;
+    };
+    return { update, close };
+}
+async function sendDownloadLink(bot, chatId, messageId, L, link) {
+    const hours = Math.max(1, Math.round((Date.parse(link.expiresAt) - Date.now()) / 3_600_000));
+    const size = L.sizeLabel(link.bytes);
+    await bot.editMessageText(L.downloadLinkReady(link.quality, size, hours), {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: L.downloadLinkButton(link.quality, size), url: link.url }],
+            ],
+        },
+    });
 }
 function youTubeErrorMessage(L, error) {
     switch (error.code) {
@@ -140,7 +181,30 @@ async function handleDownloadCallback(bot, query, ytdlp) {
             await (0, video_delivery_1.downloadInstaVideoFile)(shortcode, tempFilePath);
         }
         else if (isYouTube) {
-            await downloadYouTube(originalUrl, tempFilePath);
+            const progress = linkProgressEditor(bot, chatId, loadingMsg.message_id, L);
+            let result;
+            try {
+                result = await downloadYouTube(originalUrl, tempFilePath, {
+                    allowLink: !DOWNLOAD_LINKS_PASS_HOLDERS_ONLY || isPassHolder,
+                    onProgress: progress.update,
+                });
+            }
+            finally {
+                await progress.close();
+            }
+            if (result.kind === 'link') {
+                await sendDownloadLink(bot, chatId, loadingMsg.message_id, L, result.link);
+                runtime_1.log.info('Media download link sent', {
+                    chatId,
+                    telegramId,
+                    sizeBytes: result.link.bytes,
+                    quality: result.link.quality,
+                });
+                if (app_env_1.DATABASE_URL) {
+                    await (0, db_1.incrementDownloads)(telegramId);
+                }
+                return;
+            }
         }
         else {
             await ytdlp.downloadAsync(originalUrl, {

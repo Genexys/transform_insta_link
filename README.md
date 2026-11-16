@@ -7,7 +7,7 @@ Telegram bot that rewrites social links into preview-friendly fixer URLs so Tele
 - rewrites supported social links in group chats
 - replies with the fixed link and deletes the original message when it has permission
 - supports inline mode
-- supports TikTok and YouTube (videos and Shorts) download through `yt-dlp`. YouTube is offered only while the [home worker](docs/youtube-home-worker.md) is connected, because YouTube blocks Railway's IPs: always in private chats, in groups when enabled in `/settings`. The quality is the best that fits Telegram's 50 MB bot upload limit (about 10 min at 480p, 25 min at 240p)
+- supports TikTok and YouTube (videos and Shorts) download through `yt-dlp`. YouTube is offered only while the [home worker](docs/youtube-home-worker.md) is connected, because YouTube blocks Railway's IPs: always in private chats, in groups when enabled in `/settings`. The quality is the best that fits Telegram's 50 MB bot upload limit (about 10 min at 480p, 25 min at 240p); a longer video comes as a 24-hour download link (720p, Cloudflare R2) when the worker has R2 keys
 - supports Telegram Stars donations and premium chat features
 - exposes `/healthz` (liveness), `/health` (dependency report) and a Reddit embed proxy over HTTP
 

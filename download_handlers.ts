@@ -22,7 +22,12 @@ import {
   YouTubeDownloadError,
   downloadYouTubeWithYtDlp,
 } from './youtube_download';
-import { youtubeWorkerRelay } from './youtube_worker_relay';
+import {
+  type DownloadOptions,
+  type RelayResult,
+  youtubeWorkerRelay,
+} from './youtube_worker_relay';
+import type { DownloadLink, WorkerStage } from './youtube_download';
 
 // The free in-chat download costs real CPU/bandwidth (yt-dlp + upload) and was
 // unbounded: anyone could hammer the button. Per-user, in-memory limits — a
@@ -31,18 +36,87 @@ const FREE_DOWNLOAD_LIMIT = 5;
 const FREE_DOWNLOAD_WINDOW_MS = 10 * 60 * 1000;
 const recentDownloads = new Map<number, number[]>();
 
+// A YouTube video over the Telegram limit comes back as a download link (home
+// worker with R2). The link hands out a savable file, unlike the view-only
+// copy free users get in the chat; set this to keep links for pass holders.
+const DOWNLOAD_LINKS_PASS_HOLDERS_ONLY = false;
+
 // Datacenter IPs get YouTube's bot check, so videos go through the home
-// worker whenever it is polling, and through the local yt-dlp otherwise.
-async function downloadYouTube(url: string, outPath: string): Promise<void> {
+// worker whenever it is polling, and through the local yt-dlp otherwise
+// (Telegram-sized only).
+async function downloadYouTube(
+  url: string,
+  outPath: string,
+  options: DownloadOptions
+): Promise<RelayResult> {
   if (youtubeWorkerRelay.isOnline()) {
-    await youtubeWorkerRelay.download(url, outPath);
-    return;
+    return youtubeWorkerRelay.download(url, outPath, options);
   }
   const binaries = ytDlpBinaries();
   if (!binaries) {
     throw new YouTubeDownloadError('failed', 'yt-dlp or ffmpeg is missing');
   }
   await downloadYouTubeWithYtDlp(binaries, url, outPath);
+  return { kind: 'file' };
+}
+
+// Rewrites the "downloading…" message as a long link job progresses: on each
+// stage change, and every few seconds for the upload percentage. Edits run
+// one at a time; `close` waits for them so a late one cannot overwrite the
+// final text.
+function linkProgressEditor(
+  bot: TelegramBot,
+  chatId: number,
+  messageId: number,
+  L: ReturnType<typeof strings>
+) {
+  let lastStage: WorkerStage | null = null;
+  let lastText = '';
+  let lastAt = 0;
+  let closed = false;
+  let chain: Promise<unknown> = Promise.resolve();
+  const update = (stage: WorkerStage, percent?: number) => {
+    if (closed) return;
+    const text = L.downloadLinkProgress(stage, percent);
+    if (text === lastText) return;
+    if (stage === lastStage && Date.now() - lastAt < 4000) return;
+    lastStage = stage;
+    lastText = text;
+    lastAt = Date.now();
+    chain = chain.then(() =>
+      bot
+        .editMessageText(text, { chat_id: chatId, message_id: messageId })
+        .catch(() => {})
+    );
+  };
+  const close = async () => {
+    closed = true;
+    await chain;
+  };
+  return { update, close };
+}
+
+async function sendDownloadLink(
+  bot: TelegramBot,
+  chatId: number,
+  messageId: number,
+  L: ReturnType<typeof strings>,
+  link: DownloadLink
+): Promise<void> {
+  const hours = Math.max(
+    1,
+    Math.round((Date.parse(link.expiresAt) - Date.now()) / 3_600_000)
+  );
+  const size = L.sizeLabel(link.bytes);
+  await bot.editMessageText(L.downloadLinkReady(link.quality, size, hours), {
+    chat_id: chatId,
+    message_id: messageId,
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: L.downloadLinkButton(link.quality, size), url: link.url }],
+      ],
+    },
+  });
 }
 
 function youTubeErrorMessage(
@@ -195,7 +269,29 @@ export async function handleDownloadCallback(
       // save flow (deliverInstaMedia), not here.
       await downloadInstaVideoFile(shortcode, tempFilePath);
     } else if (isYouTube) {
-      await downloadYouTube(originalUrl, tempFilePath);
+      const progress = linkProgressEditor(bot, chatId, loadingMsg.message_id, L);
+      let result: RelayResult;
+      try {
+        result = await downloadYouTube(originalUrl, tempFilePath, {
+          allowLink: !DOWNLOAD_LINKS_PASS_HOLDERS_ONLY || isPassHolder,
+          onProgress: progress.update,
+        });
+      } finally {
+        await progress.close();
+      }
+      if (result.kind === 'link') {
+        await sendDownloadLink(bot, chatId, loadingMsg.message_id, L, result.link);
+        log.info('Media download link sent', {
+          chatId,
+          telegramId,
+          sizeBytes: result.link.bytes,
+          quality: result.link.quality,
+        });
+        if (DATABASE_URL) {
+          await incrementDownloads(telegramId);
+        }
+        return;
+      }
     } else {
       await ytdlp.downloadAsync(originalUrl, {
         output: tempFilePath,

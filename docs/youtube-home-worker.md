@@ -26,8 +26,50 @@ user taps "Download video" / "Download Short"
 - Telegram takes at most 50 MB from a bot, so the worker reads the formats
   first and takes the best H.264 + AAC pair that fits: a Short at 1080p, about
   10 minutes at 480p, about 25 minutes at 240p. A longer video is refused before
-  anything is downloaded. The mp4 is muxed with the index first, so Telegram
-  starts playing it before it finishes loading.
+  anything is downloaded, unless download links are on (below). The mp4 is
+  muxed with the index first, so Telegram starts playing it before it finishes
+  loading.
+
+## Download links (Cloudflare R2)
+
+A video over the Telegram limit can come back as a link instead. The worker
+downloads it at up to 720p (at most 2 GiB, about three and a half hours),
+uploads it to a private R2 bucket under a random key and hands the bot a
+presigned URL that works for 24 hours. The bot edits its "downloading" message
+as the job goes (queued, downloading, uploading %) and finally shows a
+«📥 Скачать · 720p · 1,2 ГБ» button. One link job runs at a time; others wait.
+
+- The R2 keys live only in `.env.worker` at home. The bot never sees them, and
+  it forwards a link only if it is an `https://<account>.r2.cloudflarestorage.com`
+  URL with a signature.
+- Unlike the view-only copy free users get in the chat, the link hands out a
+  savable file. `DOWNLOAD_LINKS_PASS_HOLDERS_ONLY` in `download_handlers.ts`
+  limits links to pass holders.
+- R2 has no egress fees; storage is free up to 10 GB-month, and the lifecycle
+  rule keeps a day's worth at most.
+
+### R2 setup
+
+1. Cloudflare dashboard → **R2 Object Storage** → enable R2 (free plan; it asks
+   for a payment method).
+2. **Create bucket**, e.g. `yt-links`, location hint *Eastern Europe*. Keep
+   public access off.
+3. Bucket → **Settings** → **Object lifecycle rules** → add a rule that deletes
+   objects **1 day** after upload.
+4. R2 → **Manage API tokens** → **Create API token**: permission *Object Read &
+   Write*, applied to that bucket only. Copy the Access Key ID, the Secret
+   Access Key and the account id from the S3 endpoint
+   (`https://<account id>.r2.cloudflarestorage.com`).
+5. Add to `.env.worker`, then `docker compose -f compose.worker.yaml up -d`:
+
+   ```
+   R2_ACCOUNT_ID=<32-character account id>
+   R2_ACCESS_KEY_ID=<access key id>
+   R2_SECRET_ACCESS_KEY=<secret access key>
+   R2_BUCKET=yt-links
+   ```
+
+   The worker log then says `"downloadLinks":"R2 bucket yt-links"`.
 - Jobs live in the bot's memory. A bot restart drops them, and those users get
   the same "try later" message.
 - `/health` reports `youtube_worker`: `configured`, `online`,
@@ -91,9 +133,13 @@ user taps "Download video" / "Download Short"
 - The container runs as `node` (not root) on a read-only filesystem with every
   Linux capability dropped; downloads go to a 512 MB tmpfs `/tmp`.
 - The bot accepts at most 50 MiB per upload, and only for a job it handed out.
+- Download links point at a private bucket: random keys, a 24-hour signature,
+  and the lifecycle rule deletes the objects after a day.
 
 ## Traffic
 
 Each video is downloaded from YouTube over the home connection and then uploaded
-to Railway: up to 50 MB in each direction (a Short is typically 5–20 MB). The bot's per-user limit (5
+to Railway: up to 50 MB in each direction (a Short is typically 5–20 MB). A
+download link moves up to 2 GiB down from YouTube and up to R2 instead; the
+user then downloads it from R2, not from home or Railway. The bot's per-user limit (5
 downloads per 10 minutes, pass holders exempt) applies as before.

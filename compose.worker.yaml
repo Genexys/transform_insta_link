@@ -13,15 +13,18 @@ services:
     command: ['node', 'youtube_worker.js']
     restart: unless-stopped
     init: true
-    # YT_WORKER_BOT_URL and YT_WORKER_TOKEN; .env.* files are gitignored.
+    # YT_WORKER_BOT_URL, YT_WORKER_TOKEN and, for download links, the R2_*
+    # variables; .env.* files are gitignored.
     env_file: .env.worker
     environment:
       # yt-dlp caches YouTube player data; the root filesystem is read-only.
       XDG_CACHE_HOME: /tmp/cache
     user: node
     read_only: true
+    # Downloads land here. A download-link job holds up to 2 GiB of parts plus
+    # the merged file; tmpfs takes memory only while files exist.
     tmpfs:
-      - /tmp:size=512m
+      - /tmp:size=5g
     cap_drop: [ALL]
     security_opt: ['no-new-privileges:true']
     logging:
