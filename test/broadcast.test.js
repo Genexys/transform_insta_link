@@ -12,11 +12,11 @@ const {
 } = require('../broadcast.js');
 
 // The shape node-telegram-bot-api's TelegramError carries.
-const telegramError = (code, parameters) =>
+const telegramError = (code, parameters, description = `Error ${code}`) =>
   Object.assign(new Error(`ETELEGRAM ${code}`), {
     response: {
       status: code,
-      body: { ok: false, error_code: code, parameters },
+      body: { ok: false, error_code: code, description, parameters },
     },
   });
 
@@ -27,6 +27,19 @@ test('send errors are sorted into unreachable, retry and failed', () => {
     'retry'
   );
   assert.equal(classifySendError(telegramError(400)), 'failed');
+  // A user who never opened the bot in private (only pressed a group button).
+  assert.equal(
+    classifySendError(
+      telegramError(400, undefined, 'Bad Request: chat not found')
+    ),
+    'unreachable'
+  );
+  assert.equal(
+    classifySendError(
+      telegramError(403, undefined, 'Forbidden: user is deactivated')
+    ),
+    'unreachable'
+  );
   assert.equal(classifySendError(new Error('socket hang up')), 'failed');
 });
 
@@ -59,6 +72,7 @@ test('runBroadcast delivers, counts refusals and waits out 429s', async () => {
     unreachable: 1,
     failed: 1,
     stopped: false,
+    reasons: { 'Error 403': 1, 'Error 400': 1 },
   });
   // 50 ms between users, plus retry_after (2 s) + 250 ms before the retry.
   assert.deepEqual(waits, [50, 50, 2250, 50, 50]);
@@ -80,6 +94,7 @@ test('a broadcast stops between users and gives up on endless 429s', async () =>
     unreachable: 0,
     failed: 0,
     stopped: true,
+    reasons: {},
   });
 
   let calls = 0;
@@ -109,6 +124,7 @@ test('the status message reads naturally', () => {
     unreachable: 2,
     failed: 0,
     stopped: false,
+    reasons: {},
   };
   assert.equal(
     statusText(stats, false),
@@ -121,5 +137,19 @@ test('the status message reads naturally', () => {
   assert.match(
     statusText({ ...stats, stopped: true }, true),
     /^⏹ Рассылка остановлена/
+  );
+  // The final status lists Telegram's reasons, most frequent first.
+  assert.match(
+    statusText(
+      {
+        ...stats,
+        reasons: {
+          'Forbidden: bot was blocked by the user': 2,
+          'Bad Request: chat not found': 9,
+        },
+      },
+      true
+    ),
+    /Ответы Telegram:\n• Bad Request: chat not found — 9\n• Forbidden: bot was blocked by the user — 2$/
   );
 });

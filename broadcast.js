@@ -21,14 +21,22 @@ function errorCode(err) {
     const body = response?.body;
     return body?.error_code ?? response?.status;
 }
+function errorDescription(err) {
+    const body = err?.response?.body;
+    return (body?.description ?? (err instanceof Error ? err.message : String(err))).slice(0, 120);
+}
 function retryAfterSeconds(err) {
     const body = err?.response?.body;
     return body?.parameters?.retry_after;
 }
+const UNREACHABLE_400 = /chat not found|user is deactivated|PEER_ID_INVALID|user not found/i;
 function classifySendError(err) {
     const code = errorCode(err);
     if (code === 403)
         return 'unreachable';
+    if (code === 400 && UNREACHABLE_400.test(errorDescription(err))) {
+        return 'unreachable';
+    }
     if (code === 429)
         return 'retry';
     return 'failed';
@@ -40,6 +48,7 @@ async function runBroadcast(recipients, send, { intervalMs = SEND_INTERVAL_MS, s
         unreachable: 0,
         failed: 0,
         stopped: false,
+        reasons: {},
     };
     for (const userId of recipients) {
         if (shouldStop()) {
@@ -62,6 +71,8 @@ async function runBroadcast(recipients, send, { intervalMs = SEND_INTERVAL_MS, s
                     stats.unreachable++;
                 else
                     stats.failed++;
+                const reason = errorDescription(err);
+                stats.reasons[reason] = (stats.reasons[reason] ?? 0) + 1;
                 break;
             }
         }
@@ -92,6 +103,16 @@ function statusText(stats, done) {
         `✉️ Доставлено: ${stats.sent}`,
         `🚫 Недоступны (заблокировали бота или не открывали его): ${stats.unreachable}`,
         ...(stats.failed ? [`⚠️ Ошибки: ${stats.failed}`] : []),
+        ...(done && Object.keys(stats.reasons).length
+            ? [
+                '',
+                'Ответы Telegram:',
+                ...Object.entries(stats.reasons)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 5)
+                    .map(([reason, count]) => `• ${reason} — ${count}`),
+            ]
+            : []),
     ].join('\n');
 }
 let running = null;
