@@ -44,9 +44,11 @@ The repo is very small:
 - `youtube_download.ts` — YouTube download: format picking under the 50 MB limit, the two yt-dlp runs, failure codes (shared with the worker)
 - `youtube_worker_relay.ts` — bot side of the home YouTube worker: in-memory job queue and the `/internal/yt-worker/*` routes
 - `youtube_worker.ts` — the home worker entrypoint (runs off Railway, `compose.worker.yaml`)
+- `bot_profile.ts` — sets the bot description and short description (texts in `i18n.ts`, donation details from `BOT_DONATE_DETAILS`) at startup, only when they differ
+- `broadcast.ts` — owner-only `/broadcast`: reply to a message with it, confirm, and the bot copies it to every user in private at 20/s (groups never get it)
 - `r2_storage.ts` — the worker's R2 upload and presigned download links (keys only at home)
 - `payment_handlers.ts` — Stars invoices (donation, paid download, lifetime pass), pre-checkout, payment fulfilment and refunds
-- `command_handlers.ts` — text commands (`/start`, `/help`, `/premium`, `/purchases`, `/paysupport`, `/terms`, `/settings`, `/chatstats`, `/invite`, `/donate`, `/feedback`, owner-only `/admin`) and onboarding
+- `command_handlers.ts` — text commands (`/start`, `/help`, `/premium`, `/purchases`, `/paysupport`, `/terms`, `/settings`, `/chatstats`, `/invite`, `/donate`, `/feedback`, owner-only `/admin` and `/broadcast`) and onboarding
 - `http_server.ts` — `/healthz` liveness, `/health` dependency report, Reddit embed proxy, and HTTP server startup
 - `compose.yaml` — recommended local PostgreSQL service for DB-backed development
 - `migrations/*` — explicit PostgreSQL schema history managed by `node-pg-migrate`

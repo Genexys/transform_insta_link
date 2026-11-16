@@ -99,6 +99,16 @@ const ru = {
   downloadErrYouTubeTooLong:
     '❌ Видео слишком длинное: даже в 240p оно больше 50 МБ — это предел Telegram для файлов от ботов.',
   downloadErrYouTubeLive: '❌ Прямую трансляцию скачать нельзя.',
+  // Bot profile (bot_profile.ts): the description shows in an empty chat with
+  // the bot (max 512 characters with the donation block), the short one in
+  // the profile and link previews (max 120).
+  botDescription:
+    'Исправляю ссылки из соцсетей, чтобы в Telegram было нормальное превью: Instagram, TikTok, X/Twitter, Reddit, Bluesky, Pixiv, DeviantArt.\n\n' +
+    '📥 Скачиваю видео прямо в чат — из TikTok, Instagram и YouTube (вместе с Shorts).\n\n' +
+    '👥 Добавьте меня в группу, и ссылки будут исправляться сами. Или пришлите ссылку сюда.',
+  botDescriptionDonate: '❤️ Поддержать бота — /donate или:',
+  botShortDescription:
+    'Чиню превью ссылок Instagram, TikTok, X и других соцсетей и скачиваю видео — даже с YouTube',
   downloadErrYouTubeTooLongPass:
     '❌ Видео больше 50 МБ — столько Telegram не даёт отправить боту. С пассом бот присылает такие видео ссылкой на скачивание в 720p: /premium',
   downloadLinkProgress: (
@@ -181,7 +191,7 @@ const ru = {
   help: (botMention: string) =>
     '🔧 Как использовать:\n\n' +
     '1. Добавьте бота в групповой чат\n' +
-    '2. Дайте боту аминистраторские права для управления сообщениями (удаление и редактирование)\n' +
+    '2. Дайте боту администраторские права для управления сообщениями (удаление и редактирование)\n' +
     '3. Когда кто-то отправит ссылку, бот автоматически отправит исправленную версию\n' +
     '4. Исправленные ссылки будут показывать нормальный предпросмотр\n' +
     `5. Вы также можете использовать меня в личных сообщениях или в режиме инлайн, вводя ${botMention} в любом чате и отправляя ссылку\n` +
@@ -192,7 +202,8 @@ const ru = {
     '   • Reddit\n' +
     '   • Bluesky\n' +
     '   • DeviantArt\n' +
-    '   • Pixiv\n\n' +
+    '   • Pixiv\n' +
+    '   • YouTube — скачивание видео и Shorts в чат (кнопка под ссылкой)\n\n' +
     'Команды:\n' +
     '/settings — настройки чата (для админов)\n' +
     '/chatstats — статистика чата (для админов)\n' +
@@ -218,7 +229,8 @@ const ru = {
   premiumOffer: (stars: number) =>
     `♾️ *Безлимит на скачивание*\n\n` +
     `Разовая покупка — навсегда сохраняй любые видео без оплаты за каждое.\n` +
-    `Работает в любом чате, где есть бот, и в личке.\n\n` +
+    `Работает в любом чате, где есть бот, и в личке.\n` +
+    `Длинные видео с YouTube (больше 50 МБ) — ссылкой на скачивание в 720p.\n\n` +
     `Цена: ${stars} ⭐`,
   premiumBuy: (stars: number) => `Купить за ⭐${stars}`,
   inviteLink: (url: string) => `🔗 Твоя реферальная ссылка:\n${url}\n\n`,
@@ -386,6 +398,13 @@ const en: Strings = {
   downloadErrYouTubeTooLong:
     '❌ The video is too long: even at 240p it is over 50 MB, the Telegram limit for files from bots.',
   downloadErrYouTubeLive: '❌ Live streams cannot be downloaded.',
+  botDescription:
+    'I fix social media links so Telegram shows a proper preview: Instagram, TikTok, X/Twitter, Reddit, Bluesky, Pixiv, DeviantArt.\n\n' +
+    '📥 I download videos right into the chat — from TikTok, Instagram and YouTube (Shorts too).\n\n' +
+    '👥 Add me to a group and links get fixed automatically. Or send a link here.',
+  botDescriptionDonate: '❤️ Support the bot — /donate or:',
+  botShortDescription:
+    'Fixes previews of Instagram, TikTok, X and other links, and downloads videos — YouTube too',
   downloadErrYouTubeTooLongPass:
     '❌ The video is over 50 MB, more than Telegram lets a bot send. With a pass, the bot sends such videos as a 720p download link: /premium',
   downloadLinkProgress: (stage, percent) =>
@@ -470,7 +489,8 @@ const en: Strings = {
     '   • Reddit\n' +
     '   • Bluesky\n' +
     '   • DeviantArt\n' +
-    '   • Pixiv\n\n' +
+    '   • Pixiv\n' +
+    '   • YouTube — download videos and Shorts to the chat (button under the link)\n\n' +
     'Commands:\n' +
     '/settings — chat settings (admins)\n' +
     '/chatstats — chat statistics (admins)\n' +
@@ -495,7 +515,8 @@ const en: Strings = {
   premiumOffer: stars =>
     `♾️ *Unlimited downloads*\n\n` +
     `One-time purchase — save any video forever without paying for each one.\n` +
-    `Works in any chat with the bot and in private.\n\n` +
+    `Works in any chat with the bot and in private.\n` +
+    `Long YouTube videos (over 50 MB) come as a 720p download link.\n\n` +
     `Price: ${stars} ⭐`,
   premiumBuy: stars => `Buy for ⭐${stars}`,
   inviteLink: url => `🔗 Your referral link:\n${url}\n\n`,

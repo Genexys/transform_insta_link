@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerCommandHandlers = registerCommandHandlers;
 const app_env_1 = require("./app_env");
+const broadcast_1 = require("./broadcast");
 const billing_1 = require("./billing");
 const bot_identity_1 = require("./bot_identity");
 const chat_lang_1 = require("./chat_lang");
@@ -381,6 +382,9 @@ function registerCommandHandlers(bot) {
                 ? `\n\n${L.chatstatsTop}\n${topUserLines.join('\n')}`
                 : '');
         await bot.sendMessage(chatId, text);
+    }));
+    bot.onText(/^\/broadcast(?:@\w+)?(?:\s|$)/, command('broadcast', async (msg) => {
+        await (0, broadcast_1.handleBroadcastCommand)(bot, msg);
     }));
     bot.onText(/^\/admin(?:@\w+)?(?:\s|$)/, command('admin', async (msg) => {
         if (!isOwner(msg))

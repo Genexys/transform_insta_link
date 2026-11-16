@@ -4,6 +4,7 @@ exports.registerCallbackHandlers = registerCallbackHandlers;
 const chat_lang_1 = require("./chat_lang");
 const chat_settings_ui_1 = require("./chat_settings_ui");
 const db_1 = require("./db");
+const broadcast_1 = require("./broadcast");
 const download_handlers_1 = require("./download_handlers");
 const i18n_1 = require("./i18n");
 const message_handlers_1 = require("./message_handlers");
@@ -98,6 +99,10 @@ function registerCallbackHandlers(bot, ytdlp) {
         const data = query.data;
         if (!query.message || !chatId || !data)
             return;
+        if (data.startsWith(broadcast_1.BROADCAST_CALLBACK_PREFIX)) {
+            await (0, broadcast_1.handleBroadcastCallback)(bot, query);
+            return;
+        }
         if (data === 'download_video') {
             if (!ytdlp) {
                 const L = (0, i18n_1.strings)(await (0, chat_lang_1.resolveLang)(query.message.chat, query.from.language_code));
