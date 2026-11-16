@@ -1,6 +1,9 @@
 export type BillingKind = 'donate' | 'personal_pro' | 'download';
 
-export const PERSONAL_PRO_PRICE_STARS = 100;
+// Raised from 100 when the pass started to include download links for long
+// YouTube videos. Pre-checkout does not compare amounts, so an invoice issued
+// at the old price still activates the pass.
+export const PERSONAL_PRO_PRICE_STARS = 200;
 export const DONATE_AMOUNTS_STARS = [50, 100, 250, 500] as const;
 export const DOWNLOAD_PRICE_STARS = 10;
 export const PHOTO_DOWNLOAD_PRICE_STARS = 5;

@@ -4,7 +4,7 @@ exports.REFERRAL_PASS_THRESHOLD = exports.PHOTO_DOWNLOAD_PRICE_STARS = exports.D
 exports.downloadPricing = downloadPricing;
 exports.buildBillingPayload = buildBillingPayload;
 exports.parseBillingPayload = parseBillingPayload;
-exports.PERSONAL_PRO_PRICE_STARS = 100;
+exports.PERSONAL_PRO_PRICE_STARS = 200;
 exports.DONATE_AMOUNTS_STARS = [50, 100, 250, 500];
 exports.DOWNLOAD_PRICE_STARS = 10;
 exports.PHOTO_DOWNLOAD_PRICE_STARS = 5;
