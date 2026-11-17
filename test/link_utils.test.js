@@ -13,6 +13,8 @@ const {
   INSTA_FIX_DOMAIN,
   INSTA_FIX_FALLBACK,
   REDDIT_EMBED_DOMAIN,
+  REDDIT_FIXER,
+  legacyRedditRedirect,
   revertUrlForDownload,
   TIKTOK_FIXERS,
   TWITTER_FIXERS,
@@ -67,6 +69,7 @@ test('findsocialLinks skips disabled or already-fixed platforms', () => {
     `https://${INSTA_FIX_DOMAIN}/p/abc123`,
     `https://${TWITTER_FIXERS[0]}/openai/status/12345`,
     `https://${REDDIT_EMBED_DOMAIN}/r/test/comments/abc123/title`,
+    `https://${REDDIT_FIXER}/r/test/comments/abc123/title`,
   ].join(' ');
 
   assert.deepEqual(findsocialLinks(text), []);
@@ -91,7 +94,7 @@ test('convertToInstaFix rewrites supported pass-through platforms', () => {
   );
   assert.equal(
     convertToInstaFix('https://reddit.com/r/test/comments/abc123/title'),
-    `https://${REDDIT_EMBED_DOMAIN}/r/test/comments/abc123/title`
+    'https://vxreddit.com/r/test/comments/abc123/title'
   );
   assert.equal(
     convertToInstaFix('https://bsky.app/profile/example.com/post/3kxyz'),
@@ -110,7 +113,7 @@ test('convertToInstaFix rewrites supported pass-through platforms', () => {
 test('convertToInstaFix annotates reddit short links', () => {
   assert.equal(
     convertToInstaFix('https://reddit.com/r/test/s/abc123'),
-    `https://${REDDIT_EMBED_DOMAIN}/r/test/s/abc123 ⚠️ (кросспост - видео может быть в оригинальном посте)`
+    `https://${REDDIT_FIXER}/r/test/s/abc123 ⚠️ (кросспост - видео может быть в оригинальном посте)`
   );
 });
 
@@ -227,11 +230,20 @@ test('classifySocialLink covers tiktok /t/ and reddit short/old links', () => {
 test('converters handle subdomains without leaving a broken host', () => {
   assert.equal(
     convertToInstaFix('https://old.reddit.com/r/a/comments/b/c'),
-    `https://${REDDIT_EMBED_DOMAIN}/r/a/comments/b/c`
+    `https://${REDDIT_FIXER}/r/a/comments/b/c`
+  );
+  assert.equal(
+    convertToInstaFix('https://sh.reddit.com/r/a/comments/b/c'),
+    `https://${REDDIT_FIXER}/r/a/comments/b/c`
+  );
+  // Only the host changes, never a "reddit.com" further along the URL.
+  assert.equal(
+    convertToInstaFix('https://www.reddit.com/r/a/comments/b/reddit.com'),
+    `https://${REDDIT_FIXER}/r/a/comments/b/reddit.com`
   );
   assert.equal(
     convertToInstaFix('https://redd.it/abc123'),
-    `https://${REDDIT_EMBED_DOMAIN}/comments/abc123`
+    `https://${REDDIT_FIXER}/comments/abc123`
   );
   assert.equal(
     convertToInlineFix('https://www.tiktok.com/t/ZTabc/'),
@@ -281,4 +293,28 @@ test('findYouTubeVideo finds video and Shorts links and normalises them', () => 
   assert.equal(isYouTubeVideoUrl(watch), true);
   // YouTube links are not rewritten, so they are not "social links".
   assert.deepEqual(findsocialLinks(`${shorts} ${watch}`), []);
+});
+
+test('Reddit links round-trip and old embed links redirect to vxreddit', () => {
+  assert.equal(
+    revertUrlForDownload(`https://${REDDIT_FIXER}/r/a/comments/b1/c`),
+    'https://reddit.com/r/a/comments/b1/c'
+  );
+  assert.equal(
+    revertUrlForDownload(`https://${REDDIT_EMBED_DOMAIN}/r/a/comments/b1/c`),
+    'https://reddit.com/r/a/comments/b1/c'
+  );
+  assert.equal(
+    legacyRedditRedirect('/r/videos/comments/1xspys1/some_title'),
+    'https://vxreddit.com/r/videos/comments/1xspys1'
+  );
+  assert.equal(
+    legacyRedditRedirect('/comments/1xunt8b'),
+    'https://vxreddit.com/comments/1xunt8b'
+  );
+  // Not a post (a share link, a subreddit): to Reddit itself.
+  assert.equal(
+    legacyRedditRedirect('/r/videos/s/AbC123'),
+    'https://www.reddit.com/r/videos/s/AbC123'
+  );
 });

@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.twitterRegex = exports.tiktokRegex = exports.instaReelRegex = exports.instaRegex = exports.REDDIT_EMBED_DOMAIN = exports.TWITTER_FIXERS = exports.TIKTOK_FIXERS = exports.INSTA_FIX_FALLBACK = exports.INSTA_FIX_DOMAIN_LEGACY = exports.INSTA_FIX_DOMAIN = void 0;
+exports.twitterRegex = exports.tiktokRegex = exports.instaReelRegex = exports.instaRegex = exports.REDDIT_EMBED_DOMAIN = exports.REDDIT_FIXER = exports.TWITTER_FIXERS = exports.TIKTOK_FIXERS = exports.INSTA_FIX_FALLBACK = exports.INSTA_FIX_DOMAIN_LEGACY = exports.INSTA_FIX_DOMAIN = void 0;
+exports.legacyRedditRedirect = legacyRedditRedirect;
 exports.rewriteInstagramReelToPreview = rewriteInstagramReelToPreview;
 exports.revertUrlForDownload = revertUrlForDownload;
 exports.convertToInstaFix = convertToInstaFix;
@@ -16,7 +17,19 @@ exports.INSTA_FIX_DOMAIN_LEGACY = 'instapreviewservice-production.up.railway.app
 exports.INSTA_FIX_FALLBACK = 'kkinstagram.com';
 exports.TIKTOK_FIXERS = ['tnktok.com'];
 exports.TWITTER_FIXERS = ['fxtwitter.com', 'fixupx.com'];
+exports.REDDIT_FIXER = 'vxreddit.com';
 exports.REDDIT_EMBED_DOMAIN = 'transforminstalink-production.up.railway.app';
+const REDDIT_POST_PATH_REGEX = /^\/r\/([A-Za-z0-9_]+)\/comments\/([A-Za-z0-9]+)/;
+const REDDIT_SHORT_PATH_REGEX = /^\/comments\/([A-Za-z0-9]+)/;
+function legacyRedditRedirect(path) {
+    const post = path.match(REDDIT_POST_PATH_REGEX);
+    if (post)
+        return `https://${exports.REDDIT_FIXER}/r/${post[1]}/comments/${post[2]}`;
+    const short = path.match(REDDIT_SHORT_PATH_REGEX);
+    if (short)
+        return `https://${exports.REDDIT_FIXER}/comments/${short[1]}`;
+    return `https://www.reddit.com${path.startsWith('/') ? path : `/${path}`}`;
+}
 exports.instaRegex = /(?:(?:www|m)\.)?(?:instagram\.com|instagr\.am)/;
 exports.instaReelRegex = /(?:www\.)?(?:instagram\.com|instagr\.am)\/reels?\/([A-Za-z0-9_-]+)/;
 exports.tiktokRegex = /(?:(?:www|vm|vt|m)\.)?tiktok\.com/;
@@ -33,6 +46,7 @@ function revertUrlForDownload(url) {
         .replace(exports.INSTA_FIX_DOMAIN_LEGACY, 'instagram.com')
         .replace(exports.INSTA_FIX_FALLBACK, 'instagram.com')
         .replace(exports.REDDIT_EMBED_DOMAIN, 'reddit.com')
+        .replace(exports.REDDIT_FIXER, 'reddit.com')
         .replace('vxthreads.net', 'threads.net')
         .replace('bskx.app', 'bsky.app')
         .replace('fixdeviantart.com', 'deviantart.com')
@@ -57,8 +71,8 @@ function convertToInstaFix(url) {
     let convertedUrl = url
         .replace(/(?:(?:www|m)\.)?instagram\.com/g, exports.INSTA_FIX_DOMAIN)
         .replace(/(?:(?:www|m)\.)?instagr\.am/g, exports.INSTA_FIX_DOMAIN)
-        .replace(/^(https?:\/\/)?redd\.it\//, `$1${exports.REDDIT_EMBED_DOMAIN}/comments/`)
-        .replace(/(?:(?:www|old|new|np|m)\.)?reddit\.com/g, exports.REDDIT_EMBED_DOMAIN)
+        .replace(/^(https?:\/\/)?(?:[A-Za-z0-9-]+\.)*reddit\.com/, `$1${exports.REDDIT_FIXER}`)
+        .replace(/^(https?:\/\/)?redd\.it\//, `$1${exports.REDDIT_FIXER}/comments/`)
         .replace(/bsky\.app/g, 'bskx.app')
         .replace(/deviantart\.com/g, 'fixdeviantart.com')
         .replace(/pixiv\.net/g, 'phixiv.net');

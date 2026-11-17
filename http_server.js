@@ -11,80 +11,6 @@ const health_1 = require("./health");
 const link_utils_1 = require("./link_utils");
 const runtime_1 = require("./runtime");
 const youtube_worker_relay_1 = require("./youtube_worker_relay");
-function escapeHtml(str) {
-    return str
-        .replace(/&/g, '&amp;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-}
-const REDDIT_POST_PATH_REGEX = /^\/r\/([A-Za-z0-9_]+)\/comments\/([A-Za-z0-9]+)/;
-const REDDIT_SHORT_PATH_REGEX = /^\/comments\/([A-Za-z0-9]+)/;
-async function handleRedditEmbed(path, res) {
-    const redditUrl = `https://www.reddit.com${path}`;
-    const match = path.match(REDDIT_POST_PATH_REGEX);
-    const shortMatch = match ? null : path.match(REDDIT_SHORT_PATH_REGEX);
-    if (!match && !shortMatch) {
-        res.writeHead(302, { Location: redditUrl });
-        res.end();
-        return;
-    }
-    const safeRedditUrl = escapeHtml(redditUrl);
-    const subreddit = match ? match[1] : '';
-    const postId = match ? match[2] : shortMatch[1];
-    try {
-        const apiUrl = match
-            ? `https://www.reddit.com/r/${subreddit}/comments/${postId}/.json`
-            : `https://www.reddit.com/comments/${postId}/.json`;
-        const apiRes = await fetch(apiUrl, {
-            headers: { 'User-Agent': 'TelegramBot:transform_insta_link:v1.0' },
-            signal: AbortSignal.timeout(5000),
-        });
-        if (!apiRes.ok)
-            throw new Error(`Reddit API ${apiRes.status}`);
-        const data = (await apiRes.json());
-        const post = data[0]?.data?.children?.[0]?.data;
-        if (!post)
-            throw new Error('No post data');
-        const title = post.title || 'Reddit post';
-        const author = post.author || '';
-        const subredditPrefixed = post.subreddit_name_prefixed || `r/${subreddit}`;
-        const score = post.score ?? 0;
-        const numComments = post.num_comments ?? 0;
-        const selftext = (post.selftext || '').substring(0, 200);
-        const description = selftext ||
-            `by u/${author} in ${subredditPrefixed} · ${score} pts · ${numComments} comments`;
-        let ogImage = '';
-        if (post.preview?.images?.[0]?.source?.url) {
-            ogImage = post.preview.images[0].source.url.replace(/&amp;/g, '&');
-        }
-        else if (post.thumbnail?.startsWith('http')) {
-            ogImage = post.thumbnail;
-        }
-        let ogVideo = '';
-        if (post.is_video && post.media?.reddit_video?.fallback_url) {
-            ogVideo = post.media.reddit_video.fallback_url;
-        }
-        const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
-<meta property="og:site_name" content="Reddit">
-<meta property="og:title" content="${escapeHtml(title)}">
-<meta property="og:description" content="${escapeHtml(description)}">
-<meta property="og:url" content="${safeRedditUrl}">
-${ogImage ? `<meta property="og:image" content="${escapeHtml(ogImage)}">` : ''}
-${ogVideo ? `<meta property="og:video" content="${escapeHtml(ogVideo)}"><meta property="og:video:type" content="video/mp4">` : ''}
-<meta http-equiv="refresh" content="0; url=${safeRedditUrl}">
-</head><body>Redirecting to <a href="${safeRedditUrl}">Reddit post</a></body></html>`;
-        (0, db_1.logLinkEvent)('reddit', link_utils_1.REDDIT_EMBED_DOMAIN, false);
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end(html);
-    }
-    catch (err) {
-        runtime_1.log.error('Reddit embed failed', { path, err: String(err) });
-        res.writeHead(302, { Location: redditUrl });
-        res.end();
-    }
-}
 async function getHealthStats() {
     if (!app_env_1.DATABASE_URL)
         return null;
@@ -132,7 +58,8 @@ function startHttpServer() {
         if (await youtube_worker_relay_1.youtubeWorkerRelay.handle(req, res))
             return;
         if (urlPath.startsWith('/r/') || urlPath.startsWith('/comments/')) {
-            await handleRedditEmbed(urlPath, res);
+            res.writeHead(301, { Location: (0, link_utils_1.legacyRedditRedirect)(urlPath) });
+            res.end();
             return;
         }
         if (urlPath === '/healthz') {
@@ -143,7 +70,9 @@ function startHttpServer() {
         if (urlPath === '/health' || urlPath.startsWith('/health?')) {
             const dependencyHealth = await getCachedDependencyHealth();
             const stats = await getHealthStats();
-            res.writeHead(dependencyHealth.status === 'down' ? 503 : 200, { 'Content-Type': 'application/json' });
+            res.writeHead(dependencyHealth.status === 'down' ? 503 : 200, {
+                'Content-Type': 'application/json',
+            });
             res.end(JSON.stringify({
                 status: dependencyHealth.status,
                 instagram: dependencyHealth.instagram,

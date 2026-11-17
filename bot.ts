@@ -20,6 +20,7 @@ import { getDependencyHealth, getInstaAuthHealth } from './health';
 import {
   INSTA_FIX_DOMAIN,
   INSTA_FIX_FALLBACK,
+  REDDIT_FIXER,
   TIKTOK_FIXERS,
   TWITTER_FIXERS,
 } from './link_utils';
@@ -117,13 +118,14 @@ async function runHourlyHealthCheck() {
   const bluesky = health.other['bskx.app'];
   const deviantart = health.other['fixdeviantart.com'];
   const pixiv = health.other['phixiv.net'];
+  const reddit = health.other[REDDIT_FIXER];
 
   await sendAdminAlert(
     `📊 Статус сервисов: ${health.status}\n\n` +
       `Instagram:\n${e(instaMain)} ${INSTA_FIX_DOMAIN}\n${e(instaFallback)} ${INSTA_FIX_FALLBACK}\n${instaSession}\n\n` +
       `TikTok:\n${tiktokLines}\n\n` +
       `Twitter:\n${twitterLines}\n\n` +
-      `Другие:\n${e(bluesky)} bskx.app\n${e(deviantart)} fixdeviantart.com\n${e(pixiv)} phixiv.net`
+      `Другие:\n${e(bluesky)} bskx.app\n${e(deviantart)} fixdeviantart.com\n${e(pixiv)} phixiv.net\n${e(reddit)} ${REDDIT_FIXER}`
   );
 }
 
