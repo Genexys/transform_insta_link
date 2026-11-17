@@ -45,7 +45,8 @@ The repo is very small:
 - `youtube_worker_relay.ts` — bot side of the home YouTube worker: in-memory job queue and the `/internal/yt-worker/*` routes
 - `youtube_worker.ts` — the home worker entrypoint (runs off Railway, `compose.worker.yaml`)
 - `bot_profile.ts` — sets the bot description and short description (texts in `i18n.ts`, donation details from `BOT_DONATE_DETAILS`) at startup, only when they differ
-- `usage_stats.ts` — words the owner-only `/stats` usage report (numbers from `db.getUsageStats`) and holds the platform labels
+- `usage_stats.ts` — words the owner-only `/stats` usage report (numbers from `db.getUsageStats`, with the week before for comparison) and holds the platform labels
+- `weekly_report.ts` — sends that report with the week's Stars to `ADMIN_CHAT_ID` every Monday 06:00 UTC (or at the first run after); `report_runs` (migration 007) makes it once per week across restarts and overlapping deploys
 - `broadcast.ts` — owner-only `/broadcast`: reply to a message with it, confirm, and the bot copies it to every user in private at 20/s (groups never get it)
 - `r2_storage.ts` — the worker's R2 upload and presigned download links (keys only at home)
 - `payment_handlers.ts` — Stars invoices (donation, paid download, lifetime pass), pre-checkout, payment fulfilment and refunds
@@ -97,6 +98,8 @@ Current tables:
   - runtime download errors and server-side failures
 - `link_events`
   - platform, service, fallback flag, optional chat/user ids (chat id only for groups)
+- `report_runs` (migration 007)
+  - the last slot each scheduled report was sent for (`weekly_usage`)
 - `download_events` (migration 006)
   - one row per download attempt: platform, kind (`button` or Instagram `save`), via (`preview-service`, `home-worker`, `yt-dlp`), outcome (`ok`, `link`, `rate_limited` or the failure code), pass holder, chat/user ids, bytes, duration
 - `chat_settings`
@@ -142,7 +145,7 @@ The bot currently contains several distinct feature areas:
 - lifetime download pass via `/premium`
 - group settings via `/settings` (chat admins, not premium-gated): quiet mode, keep original, Instagram albums, delete button, per-platform switches, language
 - `/purchases`, `/paysupport`, `/terms` (the last two are required by Telegram for bots that take Stars)
-- owner-only `/admin` summary (users, chats, links, Stars revenue, refunds) and `/stats` usage report (active people and groups, link sources, downloads by platform with failures, a 7-day UTC table, top groups)
+- owner-only `/admin` summary (users, chats, links, Stars revenue, refunds) and `/stats` usage report (active people and groups, link sources, downloads by platform with failures, a 7-day UTC table, top groups); the same report with the week's Stars arrives every Monday
 - group stats via `/chatstats` (chat admins, not premium-gated)
 - `/feedback` relay to the admin
 - referral link via `/invite`; inviting 5 new users (`REFERRAL_PASS_THRESHOLD`) grants the lifetime pass. Only users the bot has never seen count (`registerReferral`)

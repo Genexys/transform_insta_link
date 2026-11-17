@@ -5,6 +5,7 @@ import { registerMessageHandlers } from './message_handlers';
 import { createPlatformResolvers } from './platform_resolvers';
 import { startHttpServer } from './http_server';
 import { syncBotProfile } from './bot_profile';
+import { startWeeklyReport } from './weekly_report';
 import { youtubeWorkerRelay } from './youtube_worker_relay';
 import { initMediaRuntime } from './media_runtime';
 import { createAlertDeduper } from './admin_alerts';
@@ -67,6 +68,9 @@ registerCallbackHandlers(bot, mediaRuntime.ytdlp);
 
 // Description texts live in i18n.ts; failures only log.
 void syncBotProfile(bot);
+
+// The owner's usage report every Monday (weekly_report.ts).
+startWeeklyReport(bot);
 
 bot.on('polling_error', error => {
   log.error('Polling error', { err: String(error) });
