@@ -34,11 +34,14 @@ function platformLabel(platform) {
 function percent(part, whole) {
     return whole > 0 ? ` (${Math.round((100 * part) / whole)}%)` : '';
 }
+function previousWeek(count) {
+    return count > 0 ? ` (неделей раньше ${count})` : '';
+}
 function activitySection(stats) {
     const a = stats.active;
     const lines = [
-        `👥 Активные люди: ${a.users1d} за сутки · ${a.users7d} за 7 дн. · ${a.users30d} за 30 дн.`,
-        `💬 Активные группы: ${a.groups7d} за 7 дн. · ${a.groups30d} за 30 дн.`,
+        `👥 Активные люди: ${a.users1d} за сутки · ${a.users7d} за 7 дн.${previousWeek(a.users7dPrev)} · ${a.users30d} за 30 дн.`,
+        `💬 Активные группы: ${a.groups7d} за 7 дн.${previousWeek(a.groups7dPrev)} · ${a.groups30d} за 30 дн.`,
     ];
     if (a.newUsers7d || a.newGroups7d) {
         lines.push(`🆕 Впервые за 7 дн.: людей ${a.newUsers7d} · групп ${a.newGroups7d}`);
@@ -54,7 +57,7 @@ function linksSection(stats) {
         l.embeds && `reddit-превью ${l.embeds}`,
     ].filter(Boolean);
     return [
-        `🔗 Ссылки за 7 дн.: ${l.total}`,
+        `🔗 Ссылки за 7 дн.: ${l.total}${previousWeek(l.totalPrev)}`,
         ...(parts.length ? [`• ${parts.join(' · ')}`] : []),
     ];
 }
@@ -64,12 +67,13 @@ function downloadsSection(stats) {
     const ok = sum('ok');
     const failed = sum('failed');
     const rateLimited = sum('rateLimited');
+    const before = previousWeek(stats.downloadsPrev7d);
     if (ok + failed + rateLimited === 0) {
-        return ['📥 Скачиваний за 7 дн. не было'];
+        return [`📥 Скачиваний за 7 дн. не было${before}`];
     }
     const passHolders = sum('passHolders');
     const lines = [
-        `📥 Скачивания за 7 дн.: ${ok}` +
+        `📥 Скачивания за 7 дн.: ${ok}${before}` +
             (passHolders ? ` · из них с пассом ${passHolders}` : ''),
     ];
     for (const r of rows) {
@@ -131,9 +135,9 @@ function groupsSection(stats, titles) {
         }),
     ];
 }
-function usageStatsText(stats, titles = new Map()) {
+function usageStatsText(stats, titles = new Map(), { title = '📊 <b>Использование бота</b>', intro = [], } = {}) {
     const sections = [
-        ['📊 <b>Использование бота</b>'],
+        [title, ...intro],
         activitySection(stats),
         linksSection(stats),
         downloadsSection(stats),

@@ -41,11 +41,16 @@ function percent(part: number, whole: number): string {
   return whole > 0 ? ` (${Math.round((100 * part) / whole)}%)` : '';
 }
 
+// The same count for the 7 days before, once there is one to compare with.
+function previousWeek(count: number): string {
+  return count > 0 ? ` (неделей раньше ${count})` : '';
+}
+
 function activitySection(stats: UsageStats): string[] {
   const a = stats.active;
   const lines = [
-    `👥 Активные люди: ${a.users1d} за сутки · ${a.users7d} за 7 дн. · ${a.users30d} за 30 дн.`,
-    `💬 Активные группы: ${a.groups7d} за 7 дн. · ${a.groups30d} за 30 дн.`,
+    `👥 Активные люди: ${a.users1d} за сутки · ${a.users7d} за 7 дн.${previousWeek(a.users7dPrev)} · ${a.users30d} за 30 дн.`,
+    `💬 Активные группы: ${a.groups7d} за 7 дн.${previousWeek(a.groups7dPrev)} · ${a.groups30d} за 30 дн.`,
   ];
   if (a.newUsers7d || a.newGroups7d) {
     lines.push(
@@ -64,7 +69,7 @@ function linksSection(stats: UsageStats): string[] {
     l.embeds && `reddit-превью ${l.embeds}`,
   ].filter(Boolean);
   return [
-    `🔗 Ссылки за 7 дн.: ${l.total}`,
+    `🔗 Ссылки за 7 дн.: ${l.total}${previousWeek(l.totalPrev)}`,
     ...(parts.length ? [`• ${parts.join(' · ')}`] : []),
   ];
 }
@@ -76,13 +81,14 @@ function downloadsSection(stats: UsageStats): string[] {
   const ok = sum('ok');
   const failed = sum('failed');
   const rateLimited = sum('rateLimited');
+  const before = previousWeek(stats.downloadsPrev7d);
   if (ok + failed + rateLimited === 0) {
-    return ['📥 Скачиваний за 7 дн. не было'];
+    return [`📥 Скачиваний за 7 дн. не было${before}`];
   }
 
   const passHolders = sum('passHolders');
   const lines = [
-    `📥 Скачивания за 7 дн.: ${ok}` +
+    `📥 Скачивания за 7 дн.: ${ok}${before}` +
       (passHolders ? ` · из них с пассом ${passHolders}` : ''),
   ];
   for (const r of rows) {
@@ -159,12 +165,17 @@ function groupsSection(
 }
 
 // HTML for parse_mode 'HTML'. Group titles come from Telegram and are escaped.
+// The weekly report (weekly_report.ts) swaps the title and adds lines under it.
 export function usageStatsText(
   stats: UsageStats,
-  titles: ReadonlyMap<number, string> = new Map()
+  titles: ReadonlyMap<number, string> = new Map(),
+  {
+    title = '📊 <b>Использование бота</b>',
+    intro = [],
+  }: { title?: string; intro?: string[] } = {}
 ): string {
   const sections = [
-    ['📊 <b>Использование бота</b>'],
+    [title, ...intro],
     activitySection(stats),
     linksSection(stats),
     downloadsSection(stats),

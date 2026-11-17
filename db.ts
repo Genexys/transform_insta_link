@@ -569,6 +569,9 @@ export type UsageStats = {
     // (LINK_EVENTS_RETENTION_DAYS); groups by link_events alone.
     newUsers7d: number;
     newGroups7d: number;
+    // The 7 days before those, for a week-over-week comparison.
+    users7dPrev: number;
+    groups7dPrev: number;
   };
   links7d: {
     total: number;
@@ -578,6 +581,7 @@ export type UsageStats = {
     // Hits on the bot's own Reddit embed page (no chat or user behind them).
     embeds: number;
     youtubeOffers: number;
+    totalPrev: number;
   };
   // The last 7 days in UTC, oldest first; downloads counts successful ones.
   daily: { day: string; links: number; downloads: number; users: number }[];
@@ -593,6 +597,8 @@ export type UsageStats = {
     bytes: number;
   }[];
   failures7d: { outcome: string; count: number }[];
+  // Delivered downloads in the 7 days before the last 7.
+  downloadsPrev7d: number;
   topGroups7d: { chatId: number; links: number; users: number }[];
 };
 
@@ -622,7 +628,12 @@ export async function getUsageStats(): Promise<UsageStats | null> {
             COUNT(DISTINCT user_id) FILTER (WHERE at > NOW() - INTERVAL '7 days')::int AS users7d,
             COUNT(DISTINCT user_id)::int AS users30d,
             COUNT(DISTINCT chat_id) FILTER (WHERE chat_id < 0 AND at > NOW() - INTERVAL '7 days')::int AS groups7d,
-            COUNT(DISTINCT chat_id) FILTER (WHERE chat_id < 0)::int AS groups30d
+            COUNT(DISTINCT chat_id) FILTER (WHERE chat_id < 0)::int AS groups30d,
+            COUNT(DISTINCT user_id) FILTER (WHERE at > NOW() - INTERVAL '14 days'
+                                            AND at <= NOW() - INTERVAL '7 days')::int AS users7d_prev,
+            COUNT(DISTINCT chat_id) FILTER (WHERE chat_id < 0
+                                            AND at > NOW() - INTERVAL '14 days'
+                                            AND at <= NOW() - INTERVAL '7 days')::int AS groups7d_prev
           FROM acts`),
         dbClient.query(`
           SELECT
@@ -637,7 +648,14 @@ export async function getUsageStats(): Promise<UsageStats | null> {
             (SELECT COUNT(*)::int FROM (
                SELECT MIN(created_at) AS first FROM link_events
                WHERE chat_id IS NOT NULL GROUP BY chat_id
-             ) c WHERE first > NOW() - INTERVAL '7 days') AS new_groups`),
+             ) c WHERE first > NOW() - INTERVAL '7 days') AS new_groups,
+            (SELECT COUNT(*)::int FROM link_events
+             WHERE created_at > NOW() - INTERVAL '14 days'
+               AND created_at <= NOW() - INTERVAL '7 days') AS links_prev,
+            (SELECT COUNT(*)::int FROM download_events
+             WHERE ${DELIVERED}
+               AND created_at > NOW() - INTERVAL '14 days'
+               AND created_at <= NOW() - INTERVAL '7 days') AS downloads_prev`),
         dbClient.query(`
           SELECT
             COUNT(*)::int AS total,
@@ -714,6 +732,8 @@ export async function getUsageStats(): Promise<UsageStats | null> {
         groups30d: a.groups30d,
         newUsers7d: newcomers.rows[0].new_users,
         newGroups7d: newcomers.rows[0].new_groups,
+        users7dPrev: a.users7d_prev,
+        groups7dPrev: a.groups7d_prev,
       },
       links7d: {
         total: l.total,
@@ -722,6 +742,7 @@ export async function getUsageStats(): Promise<UsageStats | null> {
         inline: l.inline,
         embeds: l.embeds,
         youtubeOffers: l.youtube_offers,
+        totalPrev: newcomers.rows[0].links_prev,
       },
       daily: daily.rows,
       downloads7d: downloads.rows.map(r => ({
@@ -739,6 +760,7 @@ export async function getUsageStats(): Promise<UsageStats | null> {
         outcome: r.outcome,
         count: r.cnt,
       })),
+      downloadsPrev7d: newcomers.rows[0].downloads_prev,
       // BIGINT comes back as a string.
       topGroups7d: groups.rows.map(r => ({
         chatId: Number(r.chat_id),
@@ -748,6 +770,30 @@ export async function getUsageStats(): Promise<UsageStats | null> {
     };
   } catch (err) {
     log.error('getUsageStats failed', { err: String(err) });
+    return null;
+  }
+}
+
+// Claims a scheduled report's slot. True for the one caller that moves the
+// slot forward, false when it was already sent for it, null when the database
+// could not say.
+export async function claimReportSlot(
+  name: string,
+  slot: Date
+): Promise<boolean | null> {
+  if (!DATABASE_URL) return null;
+  try {
+    const res = await dbClient.query(
+      `INSERT INTO report_runs (name, last_slot) VALUES ($1, $2)
+       ON CONFLICT (name) DO UPDATE
+         SET last_slot = EXCLUDED.last_slot, sent_at = NOW()
+         WHERE report_runs.last_slot < EXCLUDED.last_slot
+       RETURNING name`,
+      [name, slot]
+    );
+    return (res.rowCount ?? 0) > 0;
+  } catch (err) {
+    log.error('claimReportSlot failed', { name, err: String(err) });
     return null;
   }
 }

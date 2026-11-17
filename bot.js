@@ -10,6 +10,7 @@ const message_handlers_1 = require("./message_handlers");
 const platform_resolvers_1 = require("./platform_resolvers");
 const http_server_1 = require("./http_server");
 const bot_profile_1 = require("./bot_profile");
+const weekly_report_1 = require("./weekly_report");
 const youtube_worker_relay_1 = require("./youtube_worker_relay");
 const media_runtime_1 = require("./media_runtime");
 const admin_alerts_1 = require("./admin_alerts");
@@ -54,6 +55,7 @@ const resolvers = (0, platform_resolvers_1.createPlatformResolvers)(sendAdminAle
 });
 (0, callback_handlers_1.registerCallbackHandlers)(bot, mediaRuntime.ytdlp);
 void (0, bot_profile_1.syncBotProfile)(bot);
+(0, weekly_report_1.startWeeklyReport)(bot);
 bot.on('polling_error', error => {
     runtime_1.log.error('Polling error', { err: String(error) });
 });

@@ -14,6 +14,8 @@ const baseStats = () => ({
     groups30d: 9,
     newUsers7d: 7,
     newGroups7d: 1,
+    users7dPrev: 35,
+    groups7dPrev: 0,
   },
   links7d: {
     total: 300,
@@ -22,6 +24,7 @@ const baseStats = () => ({
     inline: 15,
     embeds: 5,
     youtubeOffers: 20,
+    totalPrev: 280,
   },
   daily: [
     { day: '11.11', links: 120, downloads: 8, users: 25 },
@@ -55,6 +58,7 @@ const baseStats = () => ({
     { outcome: 'too_big', count: 2 },
     { outcome: 'failed', count: 1 },
   ],
+  downloadsPrev7d: 0,
   topGroups7d: [
     { chatId: -1001, links: 120, users: 8 },
     { chatId: -1002, links: 30, users: 2 },
@@ -68,8 +72,11 @@ test('the usage report covers activity, links, downloads, days and groups', () =
   );
   assert.match(
     text,
-    /👥 Активные люди: 12 за сутки · 40 за 7 дн\. · 95 за 30 дн\./
+    /👥 Активные люди: 12 за сутки · 40 за 7 дн\. \(неделей раньше 35\) · 95 за 30 дн\./
   );
+  // No comparison against an empty week.
+  assert.match(text, /💬 Активные группы: 5 за 7 дн\. · 9 за 30 дн\./);
+  assert.match(text, /🔗 Ссылки за 7 дн\.: 300 \(неделей раньше 280\)/);
   assert.match(text, /🆕 Впервые за 7 дн\.: людей 7 · групп 1/);
   assert.match(
     text,
@@ -106,6 +113,8 @@ test('an empty week reads as such, without empty sections', () => {
     groups30d: 0,
     newUsers7d: 0,
     newGroups7d: 0,
+    users7dPrev: 0,
+    groups7dPrev: 0,
   };
   stats.links7d = {
     total: 0,
@@ -114,12 +123,14 @@ test('an empty week reads as such, without empty sections', () => {
     inline: 0,
     embeds: 0,
     youtubeOffers: 0,
+    totalPrev: 0,
   };
   stats.downloads7d = [];
   stats.failures7d = [];
+  stats.downloadsPrev7d = 4;
   stats.topGroups7d = [];
   const text = usageStatsText(stats);
   assert.match(text, /🔗 Ссылки за 7 дн\.: 0\n\n/);
-  assert.match(text, /📥 Скачиваний за 7 дн\. не было/);
+  assert.match(text, /📥 Скачиваний за 7 дн\. не было \(неделей раньше 4\)/);
   assert.doesNotMatch(text, /Впервые|🏆|🎬|📦/);
 });
