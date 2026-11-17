@@ -20,24 +20,20 @@ import {
   getBillingHistory,
   getChatSettings,
   getReferralCount,
+  getUsageStats,
   getUser,
   registerReferral,
   setChatLanguageIfUnset,
 } from './db';
 import { langFromCode, type Strings, strings } from './i18n';
 import { sendDownloadInvoice } from './payment_handlers';
+import {
+  PLATFORM_LABELS,
+  fetchChatTitles,
+  usageStatsText,
+} from './usage_stats';
 import { deliverInstaMedia } from './video_delivery';
 import { log } from './runtime';
-
-const PLATFORM_LABELS: Record<string, string> = {
-  instagram: '📸 Instagram',
-  tiktok: '🎵 TikTok',
-  twitter: '🐦 Twitter',
-  reddit: '🟠 Reddit',
-  bluesky: '🦋 Bluesky',
-  deviantart: '🎨 DeviantArt',
-  pixiv: '🅿️ Pixiv',
-};
 
 function isGroupChat(msg: Message): boolean {
   return msg.chat.type === 'group' || msg.chat.type === 'supergroup';
@@ -174,6 +170,8 @@ export function registerCommandHandlers(bot: TelegramBot) {
                 protect: false,
                 premium: true,
                 lang,
+                userId: telegramId,
+                passHolder: true,
               });
             } catch (err) {
               log.error('Premium download delivery failed', {
@@ -590,8 +588,30 @@ export function registerCommandHandlers(bot: TelegramBot) {
           '',
           '🌐 Платформы за 7 дн.:',
           ...platformLines,
+          '',
+          '📈 Активность и скачивания: /stats',
         ].join('\n')
       );
+    })
+  );
+
+  // Owner-only usage report (usage_stats.ts). Silent for everyone else.
+  bot.onText(
+    /^\/stats(?:@\w+)?(?:\s|$)/,
+    command('stats', async msg => {
+      if (!isOwner(msg)) return;
+      const stats = await getUsageStats();
+      if (!stats) {
+        await bot.sendMessage(msg.chat.id, '📊 База данных недоступна.');
+        return;
+      }
+      const titles = await fetchChatTitles(
+        bot,
+        stats.topGroups7d.map(g => g.chatId)
+      );
+      await bot.sendMessage(msg.chat.id, usageStatsText(stats, titles), {
+        parse_mode: 'HTML',
+      });
     })
   );
 

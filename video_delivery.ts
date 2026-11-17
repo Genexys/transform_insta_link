@@ -8,6 +8,7 @@ import { promisify } from 'util';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { INSTA_PREVIEW_HOST, INSTA_PREVIEW_TOKEN } from './app_env';
+import { recordDownloadEvent } from './db';
 import {
   fetchInstaPreview,
   isSavablePhoto,
@@ -175,17 +176,50 @@ export async function deliverInstaVideo(
 // served via /v/<sc>.mp4, so we download the image bytes and send a photo;
 // everything else goes through the existing video path. `premium` only tweaks
 // the caption wording. This is the single entry point for all paid/premium/pass
-// deliveries so both media types behave identically.
+// deliveries so both media types behave identically. Each call is recorded in
+// download_events (kind "save"), for /stats.
+type DeliverInstaMediaOptions = {
+  protect: boolean;
+  premium?: boolean;
+  replyToMessageId?: number;
+  lang?: Lang;
+  // For download_events only.
+  userId?: number;
+  passHolder?: boolean;
+};
+
 export async function deliverInstaMedia(
   bot: TelegramBot,
   chatId: number,
   shortcode: string,
-  opts: {
-    protect: boolean;
-    premium?: boolean;
-    replyToMessageId?: number;
-    lang?: Lang;
+  opts: DeliverInstaMediaOptions
+): Promise<void> {
+  const startedAt = Date.now();
+  const record = (outcome: 'ok' | 'failed') =>
+    void recordDownloadEvent({
+      platform: 'instagram',
+      kind: 'save',
+      via: 'preview-service',
+      outcome,
+      passHolder: Boolean(opts.passHolder),
+      chatId,
+      userId: opts.userId,
+      durationMs: Date.now() - startedAt,
+    });
+  try {
+    await sendInstaMedia(bot, chatId, shortcode, opts);
+  } catch (err) {
+    record('failed');
+    throw err;
   }
+  record('ok');
+}
+
+async function sendInstaMedia(
+  bot: TelegramBot,
+  chatId: number,
+  shortcode: string,
+  opts: DeliverInstaMediaOptions
 ): Promise<void> {
   const L = strings(opts.lang ?? 'ru');
   const preview = await fetchInstaPreview(shortcode);

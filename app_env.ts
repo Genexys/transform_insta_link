@@ -28,8 +28,10 @@ function parseDays(value: string | undefined, fallback: number): number {
   return Number.isFinite(days) && days > 0 ? days : 0;
 }
 
-// Days to keep rows in the append-only tables. The bot itself only reads the
-// last 7 days of link_events (/chatstats, /health) and never reads error_logs.
+// Days to keep rows in the append-only tables. The bot itself reads up to 30
+// days of link_events and download_events (/admin, /stats, /chatstats,
+// /health; /stats counts first-seen users over the whole kept range) and never
+// reads error_logs. LINK_EVENTS_RETENTION_DAYS covers both event tables.
 export const LINK_EVENTS_RETENTION_DAYS = parseDays(
   process.env.LINK_EVENTS_RETENTION_DAYS,
   90

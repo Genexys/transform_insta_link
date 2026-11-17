@@ -17,6 +17,7 @@ const util_1 = require("util");
 const stream_1 = require("stream");
 const promises_1 = require("stream/promises");
 const app_env_1 = require("./app_env");
+const db_1 = require("./db");
 const insta_preview_client_1 = require("./insta_preview_client");
 const i18n_1 = require("./i18n");
 const runtime_1 = require("./runtime");
@@ -121,6 +122,27 @@ async function deliverInstaVideo(bot, chatId, shortcode, opts) {
     }
 }
 async function deliverInstaMedia(bot, chatId, shortcode, opts) {
+    const startedAt = Date.now();
+    const record = (outcome) => void (0, db_1.recordDownloadEvent)({
+        platform: 'instagram',
+        kind: 'save',
+        via: 'preview-service',
+        outcome,
+        passHolder: Boolean(opts.passHolder),
+        chatId,
+        userId: opts.userId,
+        durationMs: Date.now() - startedAt,
+    });
+    try {
+        await sendInstaMedia(bot, chatId, shortcode, opts);
+    }
+    catch (err) {
+        record('failed');
+        throw err;
+    }
+    record('ok');
+}
+async function sendInstaMedia(bot, chatId, shortcode, opts) {
     const L = (0, i18n_1.strings)(opts.lang ?? 'ru');
     const preview = await (0, insta_preview_client_1.fetchInstaPreview)(shortcode);
     const photo = preview.ok ? (0, insta_preview_client_1.pickDownloadablePhoto)(preview.data) : null;

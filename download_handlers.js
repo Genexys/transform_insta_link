@@ -91,6 +91,22 @@ function youTubeErrorMessage(L, error, offerPass) {
             return L.downloadErrGeneric;
     }
 }
+function downloadPlatform(url, isInstagram) {
+    if (isInstagram)
+        return 'instagram';
+    const video = (0, link_utils_1.youTubeVideo)(url);
+    if (video)
+        return video.isShorts ? 'youtube_shorts' : 'youtube';
+    return (0, link_utils_1.classifySocialLink)(url) ?? 'other';
+}
+function failureOutcome(error) {
+    if (error instanceof youtube_download_1.YouTubeDownloadError)
+        return error.code;
+    const message = String(error?.message ?? '').toLowerCase();
+    return message.includes('file is larger than') || message.includes('too big')
+        ? 'too_big'
+        : 'failed';
+}
 const activeDownloads = new Set();
 function freeDownloadWaitSeconds(telegramId, now = Date.now()) {
     const recent = (recentDownloads.get(telegramId) ?? []).filter(ts => now - ts < FREE_DOWNLOAD_WINDOW_MS);
@@ -137,6 +153,11 @@ async function handleDownloadCallback(bot, query, ytdlp) {
     const originalUrl = (0, link_utils_1.revertUrlForDownload)(fixedUrl);
     const isInstagram = fixedUrl.includes(link_utils_1.INSTA_FIX_DOMAIN);
     const isYouTube = (0, link_utils_1.isYouTubeVideoUrl)(originalUrl);
+    const via = isInstagram
+        ? 'preview-service'
+        : isYouTube && youtube_worker_relay_1.youtubeWorkerRelay.isOnline()
+            ? 'home-worker'
+            : 'yt-dlp';
     if (activeDownloads.has(telegramId)) {
         await bot.answerCallbackQuery(query.id, {
             text: L.downloadBusy,
@@ -145,9 +166,22 @@ async function handleDownloadCallback(bot, query, ytdlp) {
         return;
     }
     const isPassHolder = Boolean((await (0, db_1.getUser)(telegramId))?.is_premium);
+    const startedAt = Date.now();
+    const record = (outcome, bytes) => void (0, db_1.recordDownloadEvent)({
+        platform: downloadPlatform(originalUrl, isInstagram),
+        kind: 'button',
+        via,
+        outcome,
+        passHolder: isPassHolder,
+        chatId,
+        userId: telegramId,
+        bytes,
+        durationMs: outcome === 'rate_limited' ? undefined : Date.now() - startedAt,
+    });
     if (!isPassHolder) {
         const waitSeconds = freeDownloadWaitSeconds(telegramId);
         if (waitSeconds > 0) {
+            record('rate_limited');
             await bot.answerCallbackQuery(query.id, {
                 text: L.downloadRateLimited(Math.ceil(waitSeconds / 60)),
                 show_alert: true,
@@ -169,13 +203,7 @@ async function handleDownloadCallback(bot, query, ytdlp) {
             telegramId,
             urlHost: new URL(originalUrl).hostname,
             tempFilePath,
-            via: isInstagram
-                ? 'preview-service'
-                : isYouTube
-                    ? youtube_worker_relay_1.youtubeWorkerRelay.isOnline()
-                        ? 'home-worker'
-                        : 'yt-dlp:youtube'
-                    : 'yt-dlp',
+            via,
         });
         if (isInstagram) {
             const shortcode = (0, insta_preview_client_1.extractShortcodeFromUrl)(originalUrl);
@@ -204,6 +232,7 @@ async function handleDownloadCallback(bot, query, ytdlp) {
                     sizeBytes: result.link.bytes,
                     quality: result.link.quality,
                 });
+                record('link', result.link.bytes);
                 if (app_env_1.DATABASE_URL) {
                     await (0, db_1.incrementDownloads)(telegramId);
                 }
@@ -238,12 +267,14 @@ async function handleDownloadCallback(bot, query, ytdlp) {
                 : {}),
             ...(meta.duration ? { duration: meta.duration } : {}),
         });
+        record('ok', stats.size);
         if (app_env_1.DATABASE_URL) {
             await (0, db_1.incrementDownloads)(telegramId);
         }
         await bot.deleteMessage(chatId, loadingMsg.message_id).catch(() => { });
     }
     catch (error) {
+        record(failureOutcome(error));
         runtime_1.log.error('Media download failed', {
             chatId,
             telegramId,

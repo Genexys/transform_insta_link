@@ -5,13 +5,23 @@ import os from 'os';
 import path from 'path';
 import { YtDlp } from 'ytdlp-nodejs';
 import { DATABASE_URL } from './app_env';
-import { createUser, getUser, incrementDownloads, saveErrorLog } from './db';
+import {
+  type DownloadEvent,
+  type DownloadOutcome,
+  createUser,
+  getUser,
+  incrementDownloads,
+  recordDownloadEvent,
+  saveErrorLog,
+} from './db';
 import { extractShortcodeFromUrl } from './insta_preview_client';
 import {
   INSTA_FIX_DOMAIN,
   TIKTOK_FIXERS,
+  classifySocialLink,
   isYouTubeVideoUrl,
   revertUrlForDownload,
+  youTubeVideo,
 } from './link_utils';
 import { downloadInstaVideoFile, probeVideoMeta } from './video_delivery';
 import { resolveLang } from './chat_lang';
@@ -140,6 +150,22 @@ function youTubeErrorMessage(
   }
 }
 
+// For download_events: what the button downloads and through what.
+function downloadPlatform(url: string, isInstagram: boolean): string {
+  if (isInstagram) return 'instagram';
+  const video = youTubeVideo(url);
+  if (video) return video.isShorts ? 'youtube_shorts' : 'youtube';
+  return classifySocialLink(url) ?? 'other';
+}
+
+function failureOutcome(error: unknown): DownloadOutcome {
+  if (error instanceof YouTubeDownloadError) return error.code;
+  const message = String((error as Error)?.message ?? '').toLowerCase();
+  return message.includes('file is larger than') || message.includes('too big')
+    ? 'too_big'
+    : 'failed';
+}
+
 const activeDownloads = new Set<number>();
 
 // Returns how many seconds the user must wait, or 0 if a download may start.
@@ -215,6 +241,11 @@ export async function handleDownloadCallback(
   const originalUrl = revertUrlForDownload(fixedUrl);
   const isInstagram = fixedUrl.includes(INSTA_FIX_DOMAIN);
   const isYouTube = isYouTubeVideoUrl(originalUrl);
+  const via: DownloadEvent['via'] = isInstagram
+    ? 'preview-service'
+    : isYouTube && youtubeWorkerRelay.isOnline()
+      ? 'home-worker'
+      : 'yt-dlp';
 
   if (activeDownloads.has(telegramId)) {
     await bot.answerCallbackQuery(query.id, {
@@ -225,9 +256,24 @@ export async function handleDownloadCallback(
   }
 
   const isPassHolder = Boolean((await getUser(telegramId))?.is_premium);
+  const startedAt = Date.now();
+  const record = (outcome: DownloadOutcome, bytes?: number) =>
+    void recordDownloadEvent({
+      platform: downloadPlatform(originalUrl, isInstagram),
+      kind: 'button',
+      via,
+      outcome,
+      passHolder: isPassHolder,
+      chatId,
+      userId: telegramId,
+      bytes,
+      durationMs:
+        outcome === 'rate_limited' ? undefined : Date.now() - startedAt,
+    });
   if (!isPassHolder) {
     const waitSeconds = freeDownloadWaitSeconds(telegramId);
     if (waitSeconds > 0) {
+      record('rate_limited');
       await bot.answerCallbackQuery(query.id, {
         text: L.downloadRateLimited(Math.ceil(waitSeconds / 60)),
         show_alert: true,
@@ -252,13 +298,7 @@ export async function handleDownloadCallback(
       telegramId,
       urlHost: new URL(originalUrl).hostname,
       tempFilePath,
-      via: isInstagram
-        ? 'preview-service'
-        : isYouTube
-          ? youtubeWorkerRelay.isOnline()
-            ? 'home-worker'
-            : 'yt-dlp:youtube'
-          : 'yt-dlp',
+      via,
     });
 
     if (isInstagram) {
@@ -300,6 +340,7 @@ export async function handleDownloadCallback(
           sizeBytes: result.link.bytes,
           quality: result.link.quality,
         });
+        record('link', result.link.bytes);
         if (DATABASE_URL) {
           await incrementDownloads(telegramId);
         }
@@ -346,6 +387,7 @@ export async function handleDownloadCallback(
         : {}),
       ...(meta.duration ? { duration: meta.duration } : {}),
     });
+    record('ok', stats.size);
 
     if (DATABASE_URL) {
       await incrementDownloads(telegramId);
@@ -353,6 +395,7 @@ export async function handleDownloadCallback(
 
     await bot.deleteMessage(chatId, loadingMsg.message_id).catch(() => {});
   } catch (error: any) {
+    record(failureOutcome(error));
     log.error('Media download failed', {
       chatId,
       telegramId,

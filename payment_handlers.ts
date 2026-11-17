@@ -319,6 +319,8 @@ export function registerPaymentHandlers(bot: TelegramBot) {
           await deliverInstaMedia(bot, chatId, parsedPayload.shortcode, {
             protect: false,
             lang,
+            userId: telegramId,
+            passHolder: true,
           });
         } catch (err) {
           log.error('Pass-flow media delivery failed', {
@@ -342,6 +344,7 @@ export function registerPaymentHandlers(bot: TelegramBot) {
         await deliverInstaMedia(bot, chatId, parsedPayload.shortcode, {
           protect: false,
           lang,
+          userId: telegramId,
         });
       } catch (err) {
         log.error('Paid download delivery failed', {

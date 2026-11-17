@@ -10,17 +10,9 @@ const chat_settings_ui_1 = require("./chat_settings_ui");
 const db_1 = require("./db");
 const i18n_1 = require("./i18n");
 const payment_handlers_1 = require("./payment_handlers");
+const usage_stats_1 = require("./usage_stats");
 const video_delivery_1 = require("./video_delivery");
 const runtime_1 = require("./runtime");
-const PLATFORM_LABELS = {
-    instagram: '📸 Instagram',
-    tiktok: '🎵 TikTok',
-    twitter: '🐦 Twitter',
-    reddit: '🟠 Reddit',
-    bluesky: '🦋 Bluesky',
-    deviantart: '🎨 DeviantArt',
-    pixiv: '🅿️ Pixiv',
-};
 function isGroupChat(msg) {
     return msg.chat.type === 'group' || msg.chat.type === 'supergroup';
 }
@@ -118,6 +110,8 @@ function registerCommandHandlers(bot) {
                             protect: false,
                             premium: true,
                             lang,
+                            userId: telegramId,
+                            passHolder: true,
                         });
                     }
                     catch (err) {
@@ -360,7 +354,7 @@ function registerCommandHandlers(bot) {
         const platformLines = platformRes.rows
             .map((r) => {
             const pct = Math.round((parseInt(r.cnt) / total) * 100);
-            const label = PLATFORM_LABELS[r.platform] ??
+            const label = usage_stats_1.PLATFORM_LABELS[r.platform] ??
                 (r.platform === 'other' ? L.platformOther : r.platform);
             return `${label}: ${r.cnt} (${pct}%)`;
         })
@@ -400,7 +394,7 @@ function registerCommandHandlers(bot) {
             : ['• платежей пока нет'];
         const sum = (key) => stats.revenue.reduce((total, r) => total + r[key], 0);
         const platformLines = stats.platforms7d.length
-            ? stats.platforms7d.map(p => `• ${PLATFORM_LABELS[p.platform] ?? p.platform}: ${p.cnt}`)
+            ? stats.platforms7d.map(p => `• ${usage_stats_1.PLATFORM_LABELS[p.platform] ?? p.platform}: ${p.cnt}`)
             : ['• нет данных'];
         await bot.sendMessage(msg.chat.id, [
             '📊 Сводка',
@@ -420,7 +414,22 @@ function registerCommandHandlers(bot) {
             '',
             '🌐 Платформы за 7 дн.:',
             ...platformLines,
+            '',
+            '📈 Активность и скачивания: /stats',
         ].join('\n'));
+    }));
+    bot.onText(/^\/stats(?:@\w+)?(?:\s|$)/, command('stats', async (msg) => {
+        if (!isOwner(msg))
+            return;
+        const stats = await (0, db_1.getUsageStats)();
+        if (!stats) {
+            await bot.sendMessage(msg.chat.id, '📊 База данных недоступна.');
+            return;
+        }
+        const titles = await (0, usage_stats_1.fetchChatTitles)(bot, stats.topGroups7d.map(g => g.chatId));
+        await bot.sendMessage(msg.chat.id, (0, usage_stats_1.usageStatsText)(stats, titles), {
+            parse_mode: 'HTML',
+        });
     }));
     const FEEDBACK_REGEX = /^\/feedback(?:@\w+)?(?:\s+([\s\S]+))?$/i;
     const FEEDBACK_MAX_LEN = 2000;

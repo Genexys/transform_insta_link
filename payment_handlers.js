@@ -210,6 +210,8 @@ function registerPaymentHandlers(bot) {
                     await (0, video_delivery_1.deliverInstaMedia)(bot, chatId, parsedPayload.shortcode, {
                         protect: false,
                         lang,
+                        userId: telegramId,
+                        passHolder: true,
                     });
                 }
                 catch (err) {
@@ -233,6 +235,7 @@ function registerPaymentHandlers(bot) {
                 await (0, video_delivery_1.deliverInstaMedia)(bot, chatId, parsedPayload.shortcode, {
                     protect: false,
                     lang,
+                    userId: telegramId,
                 });
             }
             catch (err) {
