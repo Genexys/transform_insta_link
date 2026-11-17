@@ -92,11 +92,17 @@ export function convertToInstaFix(url: string): string {
     // redd.it/<id> short links are /comments/<id> on vxreddit.
     .replace(/^(https?:\/\/)?redd\.it\//, `$1${REDDIT_FIXER}/comments/`)
     // vxthreads.net down (2026), threads.net передаём без изменений
-    .replace(/bsky\.app/g, 'bskx.app')
-    .replace(/deviantart\.com/g, 'fixdeviantart.com')
+    // Host only, subdomain kept (www.fixdeviantart.com and www.phixiv.net
+    // serve posts too): a global replace also renamed the Bluesky account
+    // bsky.app in /profile/bsky.app/post/… to one that does not exist.
+    .replace(/^(https?:\/\/)?((?:[A-Za-z0-9-]+\.)*)bsky\.app\b/, '$1$2bskx.app')
+    .replace(
+      /^(https?:\/\/)?((?:[A-Za-z0-9-]+\.)*)deviantart\.com\b/,
+      '$1$2fixdeviantart.com'
+    )
     // .replace(/vk\.com/g, 'vxvk.com')
     // .replace(/m\.vk\.com/g, 'vxvk.com')
-    .replace(/pixiv\.net/g, 'phixiv.net');
+    .replace(/^(https?:\/\/)?((?:[A-Za-z0-9-]+\.)*)pixiv\.net\b/, '$1$2phixiv.net');
 
   if (url.includes('reddit.com') && url.includes('/s/')) {
     convertedUrl += ' ⚠️ (кросспост - видео может быть в оригинальном посте)';

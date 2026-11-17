@@ -73,9 +73,9 @@ function convertToInstaFix(url) {
         .replace(/(?:(?:www|m)\.)?instagr\.am/g, exports.INSTA_FIX_DOMAIN)
         .replace(/^(https?:\/\/)?(?:[A-Za-z0-9-]+\.)*reddit\.com/, `$1${exports.REDDIT_FIXER}`)
         .replace(/^(https?:\/\/)?redd\.it\//, `$1${exports.REDDIT_FIXER}/comments/`)
-        .replace(/bsky\.app/g, 'bskx.app')
-        .replace(/deviantart\.com/g, 'fixdeviantart.com')
-        .replace(/pixiv\.net/g, 'phixiv.net');
+        .replace(/^(https?:\/\/)?((?:[A-Za-z0-9-]+\.)*)bsky\.app\b/, '$1$2bskx.app')
+        .replace(/^(https?:\/\/)?((?:[A-Za-z0-9-]+\.)*)deviantart\.com\b/, '$1$2fixdeviantart.com')
+        .replace(/^(https?:\/\/)?((?:[A-Za-z0-9-]+\.)*)pixiv\.net\b/, '$1$2phixiv.net');
     if (url.includes('reddit.com') && url.includes('/s/')) {
         convertedUrl += ' ⚠️ (кросспост - видео может быть в оригинальном посте)';
     }

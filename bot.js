@@ -11,6 +11,7 @@ const platform_resolvers_1 = require("./platform_resolvers");
 const http_server_1 = require("./http_server");
 const bot_profile_1 = require("./bot_profile");
 const weekly_report_1 = require("./weekly_report");
+const preview_probes_1 = require("./preview_probes");
 const youtube_worker_relay_1 = require("./youtube_worker_relay");
 const media_runtime_1 = require("./media_runtime");
 const admin_alerts_1 = require("./admin_alerts");
@@ -56,6 +57,7 @@ const resolvers = (0, platform_resolvers_1.createPlatformResolvers)(sendAdminAle
 (0, callback_handlers_1.registerCallbackHandlers)(bot, mediaRuntime.ytdlp);
 void (0, bot_profile_1.syncBotProfile)(bot);
 (0, weekly_report_1.startWeeklyReport)(bot);
+preview_probes_1.previewMonitor.start(sendAdminAlert);
 bot.on('polling_error', error => {
     runtime_1.log.error('Polling error', { err: String(error) });
 });
@@ -89,11 +91,16 @@ async function runHourlyHealthCheck() {
     const deviantart = health.other['fixdeviantart.com'];
     const pixiv = health.other['phixiv.net'];
     const reddit = health.other[link_utils_1.REDDIT_FIXER];
+    const previewLines = preview_probes_1.previewMonitor.statusLines();
+    const previewSection = previewLines.length
+        ? `\n\nПревью на реальных постах:\n${previewLines.join('\n')}`
+        : '';
     await sendAdminAlert(`📊 Статус сервисов: ${health.status}\n\n` +
         `Instagram:\n${e(instaMain)} ${link_utils_1.INSTA_FIX_DOMAIN}\n${e(instaFallback)} ${link_utils_1.INSTA_FIX_FALLBACK}\n${instaSession}\n\n` +
         `TikTok:\n${tiktokLines}\n\n` +
         `Twitter:\n${twitterLines}\n\n` +
-        `Другие:\n${e(bluesky)} bskx.app\n${e(deviantart)} fixdeviantart.com\n${e(pixiv)} phixiv.net\n${e(reddit)} ${link_utils_1.REDDIT_FIXER}`);
+        `Другие:\n${e(bluesky)} bskx.app\n${e(deviantart)} fixdeviantart.com\n${e(pixiv)} phixiv.net\n${e(reddit)} ${link_utils_1.REDDIT_FIXER}` +
+        previewSection);
 }
 const INSTA_DEGRADED_ALERT_THRESHOLD = 3;
 let lastInstaPreviewBroken = null;

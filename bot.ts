@@ -6,6 +6,7 @@ import { createPlatformResolvers } from './platform_resolvers';
 import { startHttpServer } from './http_server';
 import { syncBotProfile } from './bot_profile';
 import { startWeeklyReport } from './weekly_report';
+import { previewMonitor } from './preview_probes';
 import { youtubeWorkerRelay } from './youtube_worker_relay';
 import { initMediaRuntime } from './media_runtime';
 import { createAlertDeduper } from './admin_alerts';
@@ -73,6 +74,10 @@ void syncBotProfile(bot);
 // The owner's usage report every Monday (weekly_report.ts).
 startWeeklyReport(bot);
 
+// Hourly check that converted links give a preview on real posts
+// (preview_probes.ts); alerts after two failed runs in a row.
+previewMonitor.start(sendAdminAlert);
+
 bot.on('polling_error', error => {
   log.error('Polling error', { err: String(error) });
 });
@@ -119,13 +124,18 @@ async function runHourlyHealthCheck() {
   const deviantart = health.other['fixdeviantart.com'];
   const pixiv = health.other['phixiv.net'];
   const reddit = health.other[REDDIT_FIXER];
+  const previewLines = previewMonitor.statusLines();
+  const previewSection = previewLines.length
+    ? `\n\nПревью на реальных постах:\n${previewLines.join('\n')}`
+    : '';
 
   await sendAdminAlert(
     `📊 Статус сервисов: ${health.status}\n\n` +
       `Instagram:\n${e(instaMain)} ${INSTA_FIX_DOMAIN}\n${e(instaFallback)} ${INSTA_FIX_FALLBACK}\n${instaSession}\n\n` +
       `TikTok:\n${tiktokLines}\n\n` +
       `Twitter:\n${twitterLines}\n\n` +
-      `Другие:\n${e(bluesky)} bskx.app\n${e(deviantart)} fixdeviantart.com\n${e(pixiv)} phixiv.net\n${e(reddit)} ${REDDIT_FIXER}`
+      `Другие:\n${e(bluesky)} bskx.app\n${e(deviantart)} fixdeviantart.com\n${e(pixiv)} phixiv.net\n${e(reddit)} ${REDDIT_FIXER}` +
+      previewSection
   );
 }
 

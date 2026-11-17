@@ -9,6 +9,7 @@ const app_env_1 = require("./app_env");
 const db_1 = require("./db");
 const health_1 = require("./health");
 const link_utils_1 = require("./link_utils");
+const preview_probes_1 = require("./preview_probes");
 const runtime_1 = require("./runtime");
 const youtube_worker_relay_1 = require("./youtube_worker_relay");
 async function getHealthStats() {
@@ -81,6 +82,7 @@ function startHttpServer() {
                 other: dependencyHealth.other,
                 checks: dependencyHealth.checks,
                 youtube_worker: youtube_worker_relay_1.youtubeWorkerRelay.status(),
+                previews: preview_probes_1.previewMonitor.status(),
                 ...(stats && { stats }),
             }, null, 2));
             return;

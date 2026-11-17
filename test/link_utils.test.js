@@ -108,6 +108,19 @@ test('convertToInstaFix rewrites supported pass-through platforms', () => {
     convertToInstaFix('https://pixiv.net/en/artworks/123456'),
     'https://phixiv.net/en/artworks/123456'
   );
+  // Only the host changes: the official account is also called bsky.app.
+  assert.equal(
+    convertToInstaFix('https://bsky.app/profile/bsky.app/post/3l4cilpvtr22w'),
+    'https://bskx.app/profile/bsky.app/post/3l4cilpvtr22w'
+  );
+  assert.equal(
+    convertToInstaFix('https://www.deviantart.com/loish/art/willows-913624674'),
+    'https://www.fixdeviantart.com/loish/art/willows-913624674'
+  );
+  assert.equal(
+    convertToInstaFix('https://www.pixiv.net/en/artworks/151053778'),
+    'https://www.phixiv.net/en/artworks/151053778'
+  );
 });
 
 test('convertToInstaFix annotates reddit short links', () => {
