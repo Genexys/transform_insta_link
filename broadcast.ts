@@ -32,6 +32,8 @@ export type BroadcastStats = {
   unreachable: number;
   failed: number;
   stopped: boolean;
+  // Telegram's description of each refusal and error, with a count.
+  reasons: Record<string, number>;
 };
 
 function errorCode(err: unknown): number | undefined {
@@ -41,19 +43,36 @@ function errorCode(err: unknown): number | undefined {
   return body?.error_code ?? response?.status;
 }
 
+function errorDescription(err: unknown): string {
+  const body = (err as { response?: { body?: unknown } })?.response?.body as
+    { description?: string } | undefined;
+  return (
+    body?.description ?? (err instanceof Error ? err.message : String(err))
+  ).slice(0, 120);
+}
+
 function retryAfterSeconds(err: unknown): number | undefined {
   const body = (err as { response?: { body?: unknown } })?.response?.body as
     { parameters?: { retry_after?: number } } | undefined;
   return body?.parameters?.retry_after;
 }
 
-// 403: the user blocked the bot, deleted the account, or never started it.
+// The user cannot be messaged: blocked the bot, deleted the account, or never
+// opened the bot in private. Telegram says so with 403, or with 400 "chat not
+// found" for an id the bot never had a private chat with (users who only
+// pressed a button in a group).
+const UNREACHABLE_400 =
+  /chat not found|user is deactivated|PEER_ID_INVALID|user not found/i;
+
 // 429: over the rate limit (the library already retried twice).
 export function classifySendError(
   err: unknown
 ): 'unreachable' | 'retry' | 'failed' {
   const code = errorCode(err);
   if (code === 403) return 'unreachable';
+  if (code === 400 && UNREACHABLE_400.test(errorDescription(err))) {
+    return 'unreachable';
+  }
   if (code === 429) return 'retry';
   return 'failed';
 }
@@ -79,6 +98,7 @@ export async function runBroadcast(
     unreachable: 0,
     failed: 0,
     stopped: false,
+    reasons: {},
   };
   for (const userId of recipients) {
     if (shouldStop()) {
@@ -98,6 +118,8 @@ export async function runBroadcast(
         }
         if (kind === 'unreachable') stats.unreachable++;
         else stats.failed++;
+        const reason = errorDescription(err);
+        stats.reasons[reason] = (stats.reasons[reason] ?? 0) + 1;
         break;
       }
     }
@@ -133,6 +155,16 @@ export function statusText(stats: BroadcastStats, done: boolean): string {
     `✉️ Доставлено: ${stats.sent}`,
     `🚫 Недоступны (заблокировали бота или не открывали его): ${stats.unreachable}`,
     ...(stats.failed ? [`⚠️ Ошибки: ${stats.failed}`] : []),
+    ...(done && Object.keys(stats.reasons).length
+      ? [
+          '',
+          'Ответы Telegram:',
+          ...Object.entries(stats.reasons)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 5)
+            .map(([reason, count]) => `• ${reason} — ${count}`),
+        ]
+      : []),
   ].join('\n');
 }
 
