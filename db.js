@@ -11,6 +11,7 @@ exports.activatePersonalPro = activatePersonalPro;
 exports.registerReferral = registerReferral;
 exports.getReferralCount = getReferralCount;
 exports.logLinkEvent = logLinkEvent;
+exports.recordDownloadEvent = recordDownloadEvent;
 exports.getChatSettings = getChatSettings;
 exports.recordBillingEvent = recordBillingEvent;
 exports.setBillingEventStatus = setBillingEventStatus;
@@ -19,6 +20,7 @@ exports.setChatLanguageIfUnset = setChatLanguageIfUnset;
 exports.getBillingHistory = getBillingHistory;
 exports.listBroadcastRecipients = listBroadcastRecipients;
 exports.getAdminStats = getAdminStats;
+exports.getUsageStats = getUsageStats;
 exports.pruneOldRows = pruneOldRows;
 const pg_1 = require("pg");
 const app_env_1 = require("./app_env");
@@ -155,6 +157,28 @@ async function logLinkEvent(platform, service, isFallback, chatId, userId) {
     }
     catch (err) {
         runtime_1.log.error('Failed to log link event', { err: String(err) });
+    }
+}
+async function recordDownloadEvent(event) {
+    if (!app_env_1.DATABASE_URL)
+        return;
+    try {
+        await exports.dbClient.query(`INSERT INTO download_events
+         (platform, kind, via, outcome, pass_holder, chat_id, user_id, bytes, duration_ms)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, [
+            event.platform,
+            event.kind,
+            event.via,
+            event.outcome,
+            event.passHolder,
+            event.chatId ?? null,
+            event.userId ?? null,
+            event.bytes ?? null,
+            event.durationMs === undefined ? null : Math.round(event.durationMs),
+        ]);
+    }
+    catch (err) {
+        runtime_1.log.error('Failed to record download event', { err: String(err) });
     }
 }
 async function getChatSettings(chatId) {
@@ -355,21 +379,175 @@ async function getAdminStats() {
         return null;
     }
 }
+const DELIVERED = `outcome IN ('ok', 'link')`;
+const FAILED = `outcome NOT IN ('ok', 'link', 'rate_limited')`;
+async function getUsageStats() {
+    if (!app_env_1.DATABASE_URL)
+        return null;
+    try {
+        const [active, newcomers, links, daily, downloads, failures, groups] = await Promise.all([
+            exports.dbClient.query(`
+          WITH acts AS (
+            SELECT user_id, chat_id, created_at::timestamptz AS at
+            FROM link_events
+            WHERE created_at > NOW() - INTERVAL '30 days'
+            UNION ALL
+            SELECT user_id, chat_id, created_at
+            FROM download_events
+            WHERE created_at > NOW() - INTERVAL '30 days'
+          )
+          SELECT
+            COUNT(DISTINCT user_id) FILTER (WHERE at > NOW() - INTERVAL '1 day')::int AS users1d,
+            COUNT(DISTINCT user_id) FILTER (WHERE at > NOW() - INTERVAL '7 days')::int AS users7d,
+            COUNT(DISTINCT user_id)::int AS users30d,
+            COUNT(DISTINCT chat_id) FILTER (WHERE chat_id < 0 AND at > NOW() - INTERVAL '7 days')::int AS groups7d,
+            COUNT(DISTINCT chat_id) FILTER (WHERE chat_id < 0)::int AS groups30d
+          FROM acts`),
+            exports.dbClient.query(`
+          SELECT
+            (SELECT COUNT(*)::int FROM (
+               SELECT MIN(at) AS first FROM (
+                 SELECT user_id, created_at::timestamptz AS at FROM link_events
+                 UNION ALL
+                 SELECT user_id, created_at FROM download_events
+               ) seen
+               WHERE user_id IS NOT NULL GROUP BY user_id
+             ) u WHERE first > NOW() - INTERVAL '7 days') AS new_users,
+            (SELECT COUNT(*)::int FROM (
+               SELECT MIN(created_at) AS first FROM link_events
+               WHERE chat_id IS NOT NULL GROUP BY chat_id
+             ) c WHERE first > NOW() - INTERVAL '7 days') AS new_groups`),
+            exports.dbClient.query(`
+          SELECT
+            COUNT(*)::int AS total,
+            COUNT(*) FILTER (WHERE chat_id IS NOT NULL)::int AS groups,
+            COUNT(*) FILTER (WHERE chat_id IS NULL AND user_id IS NOT NULL
+                             AND service IS DISTINCT FROM 'inline')::int AS private,
+            COUNT(*) FILTER (WHERE chat_id IS NULL AND service = 'inline')::int AS inline,
+            COUNT(*) FILTER (WHERE chat_id IS NULL AND user_id IS NULL)::int AS embeds,
+            COUNT(*) FILTER (WHERE service = 'download_offer')::int AS youtube_offers
+          FROM link_events
+          WHERE created_at > NOW() - INTERVAL '7 days'`),
+            exports.dbClient.query(`
+          WITH days AS (
+            SELECT generate_series(
+              date_trunc('day', NOW() AT TIME ZONE 'UTC') - INTERVAL '6 days',
+              date_trunc('day', NOW() AT TIME ZONE 'UTC'),
+              INTERVAL '1 day'
+            ) AS day
+          ),
+          acts AS (
+            SELECT created_at::timestamptz AT TIME ZONE 'UTC' AS at, user_id,
+                   TRUE AS is_link, FALSE AS delivered
+            FROM link_events
+            WHERE created_at > NOW() - INTERVAL '8 days'
+            UNION ALL
+            SELECT created_at AT TIME ZONE 'UTC', user_id, FALSE, ${DELIVERED}
+            FROM download_events
+            WHERE created_at > NOW() - INTERVAL '8 days'
+          )
+          SELECT to_char(d.day, 'DD.MM') AS day,
+                 COUNT(a.at) FILTER (WHERE a.is_link)::int AS links,
+                 COUNT(a.at) FILTER (WHERE a.delivered)::int AS downloads,
+                 COUNT(DISTINCT a.user_id)::int AS users
+          FROM days d
+          LEFT JOIN acts a ON a.at >= d.day AND a.at < d.day + INTERVAL '1 day'
+          GROUP BY d.day
+          ORDER BY d.day`),
+            exports.dbClient.query(`
+          SELECT platform,
+                 COUNT(*) FILTER (WHERE ${DELIVERED})::int AS ok,
+                 COUNT(*) FILTER (WHERE outcome = 'link')::int AS links,
+                 COUNT(*) FILTER (WHERE kind = 'save' AND ${DELIVERED})::int AS saves,
+                 COUNT(*) FILTER (WHERE pass_holder AND ${DELIVERED})::int AS pass_holders,
+                 COUNT(*) FILTER (WHERE via = 'home-worker' AND ${DELIVERED})::int AS home_worker,
+                 COUNT(*) FILTER (WHERE ${FAILED})::int AS failed,
+                 COUNT(*) FILTER (WHERE outcome = 'rate_limited')::int AS rate_limited,
+                 COALESCE(SUM(bytes) FILTER (WHERE outcome = 'ok'), 0)::float8 AS bytes
+          FROM download_events
+          WHERE created_at > NOW() - INTERVAL '7 days'
+          GROUP BY platform
+          ORDER BY ok DESC, failed DESC, platform`),
+            exports.dbClient.query(`
+          SELECT outcome, COUNT(*)::int AS cnt
+          FROM download_events
+          WHERE created_at > NOW() - INTERVAL '7 days' AND ${FAILED}
+          GROUP BY outcome
+          ORDER BY cnt DESC`),
+            exports.dbClient.query(`
+          SELECT chat_id, COUNT(*)::int AS links, COUNT(DISTINCT user_id)::int AS users
+          FROM link_events
+          WHERE chat_id IS NOT NULL AND created_at > NOW() - INTERVAL '7 days'
+          GROUP BY chat_id
+          ORDER BY links DESC, users DESC, chat_id
+          LIMIT 5`),
+        ]);
+        const a = active.rows[0];
+        const l = links.rows[0];
+        return {
+            active: {
+                users1d: a.users1d,
+                users7d: a.users7d,
+                users30d: a.users30d,
+                groups7d: a.groups7d,
+                groups30d: a.groups30d,
+                newUsers7d: newcomers.rows[0].new_users,
+                newGroups7d: newcomers.rows[0].new_groups,
+            },
+            links7d: {
+                total: l.total,
+                groups: l.groups,
+                private: l.private,
+                inline: l.inline,
+                embeds: l.embeds,
+                youtubeOffers: l.youtube_offers,
+            },
+            daily: daily.rows,
+            downloads7d: downloads.rows.map(r => ({
+                platform: r.platform,
+                ok: r.ok,
+                links: r.links,
+                saves: r.saves,
+                passHolders: r.pass_holders,
+                homeWorker: r.home_worker,
+                failed: r.failed,
+                rateLimited: r.rate_limited,
+                bytes: r.bytes,
+            })),
+            failures7d: failures.rows.map(r => ({
+                outcome: r.outcome,
+                count: r.cnt,
+            })),
+            topGroups7d: groups.rows.map(r => ({
+                chatId: Number(r.chat_id),
+                links: r.links,
+                users: r.users,
+            })),
+        };
+    }
+    catch (err) {
+        runtime_1.log.error('getUsageStats failed', { err: String(err) });
+        return null;
+    }
+}
 async function pruneOldRows(params) {
     if (!app_env_1.DATABASE_URL)
         return null;
     try {
         let linkEvents = 0;
+        let downloadEvents = 0;
         let errorLogs = 0;
         if (params.linkEventsDays > 0) {
             const res = await exports.dbClient.query(`DELETE FROM link_events WHERE created_at < NOW() - make_interval(days => $1)`, [params.linkEventsDays]);
             linkEvents = res.rowCount ?? 0;
+            const downloads = await exports.dbClient.query(`DELETE FROM download_events WHERE created_at < NOW() - make_interval(days => $1)`, [params.linkEventsDays]);
+            downloadEvents = downloads.rowCount ?? 0;
         }
         if (params.errorLogsDays > 0) {
             const res = await exports.dbClient.query(`DELETE FROM error_logs WHERE created_at < NOW() - make_interval(days => $1)`, [params.errorLogsDays]);
             errorLogs = res.rowCount ?? 0;
         }
-        return { linkEvents, errorLogs };
+        return { linkEvents, downloadEvents, errorLogs };
     }
     catch (err) {
         runtime_1.log.error('pruneOldRows failed', { err: String(err) });

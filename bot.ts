@@ -182,7 +182,8 @@ async function runInstaAuthMonitor() {
 }
 
 // Retention for the append-only analytics/error tables (defaults: 90 days of
-// link_events, 30 days of error_logs; set the env var to 0 to keep forever).
+// link_events and download_events, 30 days of error_logs; set the env var to 0
+// to keep forever).
 async function runRetentionCleanup() {
   if (LINK_EVENTS_RETENTION_DAYS <= 0 && ERROR_LOGS_RETENTION_DAYS <= 0) return;
   const removed = await pruneOldRows({

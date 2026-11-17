@@ -45,10 +45,11 @@ The repo is very small:
 - `youtube_worker_relay.ts` — bot side of the home YouTube worker: in-memory job queue and the `/internal/yt-worker/*` routes
 - `youtube_worker.ts` — the home worker entrypoint (runs off Railway, `compose.worker.yaml`)
 - `bot_profile.ts` — sets the bot description and short description (texts in `i18n.ts`, donation details from `BOT_DONATE_DETAILS`) at startup, only when they differ
+- `usage_stats.ts` — words the owner-only `/stats` usage report (numbers from `db.getUsageStats`) and holds the platform labels
 - `broadcast.ts` — owner-only `/broadcast`: reply to a message with it, confirm, and the bot copies it to every user in private at 20/s (groups never get it)
 - `r2_storage.ts` — the worker's R2 upload and presigned download links (keys only at home)
 - `payment_handlers.ts` — Stars invoices (donation, paid download, lifetime pass), pre-checkout, payment fulfilment and refunds
-- `command_handlers.ts` — text commands (`/start`, `/help`, `/premium`, `/purchases`, `/paysupport`, `/terms`, `/settings`, `/chatstats`, `/invite`, `/donate`, `/feedback`, owner-only `/admin` and `/broadcast`) and onboarding
+- `command_handlers.ts` — text commands (`/start`, `/help`, `/premium`, `/purchases`, `/paysupport`, `/terms`, `/settings`, `/chatstats`, `/invite`, `/donate`, `/feedback`, owner-only `/admin`, `/stats` and `/broadcast`) and onboarding
 - `http_server.ts` — `/healthz` liveness, `/health` dependency report, Reddit embed proxy, and HTTP server startup
 - `compose.yaml` — recommended local PostgreSQL service for DB-backed development
 - `migrations/*` — explicit PostgreSQL schema history managed by `node-pg-migrate`
@@ -95,7 +96,9 @@ Current tables:
 - `error_logs`
   - runtime download errors and server-side failures
 - `link_events`
-  - platform, service, fallback flag, optional chat/user ids
+  - platform, service, fallback flag, optional chat/user ids (chat id only for groups)
+- `download_events` (migration 006)
+  - one row per download attempt: platform, kind (`button` or Instagram `save`), via (`preview-service`, `home-worker`, `yt-dlp`), outcome (`ok`, `link`, `rate_limited` or the failure code), pass holder, chat/user ids, bytes, duration
 - `chat_settings`
   - legacy `is_premium` / `chat_pro*` columns — chat-level Pro was removed from the code; the columns are unused
   - per-chat settings: `quiet_mode`, `keep_original`, `albums_enabled`, `delete_button`, `disabled_platforms`, `language`
@@ -139,7 +142,7 @@ The bot currently contains several distinct feature areas:
 - lifetime download pass via `/premium`
 - group settings via `/settings` (chat admins, not premium-gated): quiet mode, keep original, Instagram albums, delete button, per-platform switches, language
 - `/purchases`, `/paysupport`, `/terms` (the last two are required by Telegram for bots that take Stars)
-- owner-only `/admin` summary (users, chats, links, Stars revenue, refunds)
+- owner-only `/admin` summary (users, chats, links, Stars revenue, refunds) and `/stats` usage report (active people and groups, link sources, downloads by platform with failures, a 7-day UTC table, top groups)
 - group stats via `/chatstats` (chat admins, not premium-gated)
 - `/feedback` relay to the admin
 - referral link via `/invite`; inviting 5 new users (`REFERRAL_PASS_THRESHOLD`) grants the lifetime pass. Only users the bot has never seen count (`registerReferral`)
@@ -341,7 +344,7 @@ npm start
 - `DATABASE_URL`
 - `DATABASE_SSL` (optional: `disable` | `require` | `verify`; unset = no TLS for localhost, unverified TLS elsewhere)
 - `ADMIN_CHAT_ID`
-- `LINK_EVENTS_RETENTION_DAYS` / `ERROR_LOGS_RETENTION_DAYS` (default 90 / 30; older rows are deleted daily; `0` keeps them forever)
+- `LINK_EVENTS_RETENTION_DAYS` / `ERROR_LOGS_RETENTION_DAYS` (default 90 / 30, the first also covers `download_events`; older rows are deleted daily; `0` keeps them forever)
 - `SENTRY_DSN`
 - `NODE_ENV`
 - `PORT`

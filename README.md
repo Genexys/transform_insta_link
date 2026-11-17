@@ -80,7 +80,7 @@ Required:
 Optional:
 
 - `DATABASE_URL`
-- `LINK_EVENTS_RETENTION_DAYS`, `ERROR_LOGS_RETENTION_DAYS` — delete rows older than N days once a day (default 90 / 30; `0` = keep forever)
+- `LINK_EVENTS_RETENTION_DAYS`, `ERROR_LOGS_RETENTION_DAYS` — delete rows older than N days once a day (default 90 / 30; `0` = keep forever). The first covers `link_events` and `download_events`
 - `DATABASE_SSL` — optional `disable` | `require` | `verify`; when unset, localhost connects without TLS and any other host uses unverified TLS
 - `ADMIN_CHAT_ID`
 - `SENTRY_DSN`
