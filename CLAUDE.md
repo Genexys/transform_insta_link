@@ -46,6 +46,7 @@ The repo is very small:
 - `youtube_worker.ts` — the home worker entrypoint (runs off Railway, `compose.worker.yaml`)
 - `bot_profile.ts` — sets the bot description and short description (texts in `i18n.ts`, donation details from `BOT_DONATE_DETAILS`) at startup, only when they differ
 - `usage_stats.ts` — words the owner-only `/stats` usage report (numbers from `db.getUsageStats`, with the week before for comparison) and holds the platform labels
+- `preview_probes.ts` — hourly check on real sample posts that each fixer's converted link gives Telegram an og:image/og:video that downloads; admin alert after two failed runs in a row and on recovery, results in `/health` (`previews`) and the 3-hourly status. Replace a sample here if its post is deleted
 - `weekly_report.ts` — sends that report with the week's Stars to `ADMIN_CHAT_ID` every Monday 06:00 UTC (or at the first run after); `report_runs` (migration 007) makes it once per week across restarts and overlapping deploys
 - `broadcast.ts` — owner-only `/broadcast`: reply to a message with it, confirm, and the bot copies it to every user in private at 20/s (groups never get it)
 - `r2_storage.ts` — the worker's R2 upload and presigned download links (keys only at home)
@@ -215,10 +216,11 @@ Most runtime logging now goes through the structured logger in `runtime.ts`. Rem
 - TikTok service state
 - Twitter/X service state
 - supplemental fixer state for Bluesky, DeviantArt, Pixiv and Reddit
+- `previews` — the last run of the real-post preview probes (informational, does not change `status`)
 - grouped critical/supplemental checks
 - 24h link stats summary
 
-The fixer probes are a HEAD of each fixer's home page: they catch a fixer that is down, not one that stopped returning previews.
+The fixer probes in `checks` are a HEAD of each fixer's home page: they catch a fixer that is down. Whether previews really work is `previews`, from `preview_probes.ts`: real posts converted by the bot's own code and fetched as Telegram's preview bot, every hour.
 
 ### Deployment
 

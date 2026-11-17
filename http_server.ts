@@ -3,6 +3,7 @@ import { DATABASE_URL, PORT } from './app_env';
 import { dbClient } from './db';
 import { getDependencyHealth } from './health';
 import { legacyRedditRedirect } from './link_utils';
+import { previewMonitor } from './preview_probes';
 import { log } from './runtime';
 import { youtubeWorkerRelay } from './youtube_worker_relay';
 
@@ -97,6 +98,8 @@ export function startHttpServer() {
             // Informational: does not change `status`. The bot works without
             // the worker; Shorts then download through the local yt-dlp.
             youtube_worker: youtubeWorkerRelay.status(),
+            // Informational: the last hourly run of preview_probes.ts.
+            previews: previewMonitor.status(),
             ...(stats && { stats }),
           },
           null,
