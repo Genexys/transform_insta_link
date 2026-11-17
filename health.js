@@ -62,12 +62,13 @@ async function getDependencyHealth() {
         checkService('https://bskx.app/'),
         checkService('https://fixdeviantart.com/'),
         checkService('https://phixiv.net/'),
+        checkService(`https://${link_utils_1.REDDIT_FIXER}/`),
     ]);
     const tiktokCount = link_utils_1.TIKTOK_FIXERS.length;
     const twitterCount = link_utils_1.TWITTER_FIXERS.length;
     const tiktokResults = rest.slice(0, tiktokCount);
     const twitterResults = rest.slice(tiktokCount, tiktokCount + twitterCount);
-    const [bluesky, deviantart, pixiv] = rest.slice(tiktokCount + twitterCount);
+    const [bluesky, deviantart, pixiv, reddit] = rest.slice(tiktokCount + twitterCount);
     const instagram = {
         [link_utils_1.INSTA_FIX_DOMAIN]: instaMain,
         [link_utils_1.INSTA_FIX_FALLBACK]: instaFallback,
@@ -78,6 +79,7 @@ async function getDependencyHealth() {
         'bskx.app': bluesky,
         'fixdeviantart.com': deviantart,
         'phixiv.net': pixiv,
+        [link_utils_1.REDDIT_FIXER]: reddit,
     };
     const instagramOk = Object.values(instagram).some(state => state === 'ok');
     const tiktokOk = Object.values(tiktok).some(state => state === 'ok');
@@ -85,8 +87,9 @@ async function getDependencyHealth() {
     const blueskyOk = other['bskx.app'] === 'ok';
     const deviantartOk = other['fixdeviantart.com'] === 'ok';
     const pixivOk = other['phixiv.net'] === 'ok';
+    const redditOk = other[link_utils_1.REDDIT_FIXER] === 'ok';
     const criticalOk = instagramOk && tiktokOk && twitterOk;
-    const fullyOk = criticalOk && blueskyOk && deviantartOk && pixivOk;
+    const fullyOk = criticalOk && blueskyOk && deviantartOk && pixivOk && redditOk;
     return {
         status: fullyOk ? 'ok' : criticalOk ? 'degraded' : 'down',
         instagram,
@@ -103,6 +106,7 @@ async function getDependencyHealth() {
                 bluesky: blueskyOk,
                 deviantart: deviantartOk,
                 pixiv: pixivOk,
+                reddit: redditOk,
             },
         },
     };

@@ -578,7 +578,8 @@ export type UsageStats = {
     groups: number;
     private: number;
     inline: number;
-    // Hits on the bot's own Reddit embed page (no chat or user behind them).
+    // Hits on the bot's old Reddit embed page (no chat or user behind them).
+    // No longer written since Reddit moved to vxreddit; old rows age out.
     embeds: number;
     youtubeOffers: number;
     totalPrev: number;

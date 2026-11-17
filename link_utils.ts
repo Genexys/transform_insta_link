@@ -8,8 +8,27 @@ export const INSTA_FIX_FALLBACK = 'kkinstagram.com';
 // rendered no preview. tnktok.com returns a real og:video + HEAD 200.
 export const TIKTOK_FIXERS = ['tnktok.com'];
 export const TWITTER_FIXERS = ['fxtwitter.com', 'fixupx.com'];
+// Reddit previews come from vxreddit (title, image, and the video muxed to
+// mp4). The bot used to render them itself from Reddit's JSON API, which now
+// answers 403 to datacenter IPs; links it posted then point at its own
+// domain, which redirects them here (legacyRedditRedirect).
+export const REDDIT_FIXER = 'vxreddit.com';
 export const REDDIT_EMBED_DOMAIN =
   'transforminstalink-production.up.railway.app';
+
+const REDDIT_POST_PATH_REGEX =
+  /^\/r\/([A-Za-z0-9_]+)\/comments\/([A-Za-z0-9]+)/;
+const REDDIT_SHORT_PATH_REGEX = /^\/comments\/([A-Za-z0-9]+)/;
+
+// Where an old link to the bot's own Reddit embed page goes now: the same post
+// on vxreddit, built only from the validated ids, or Reddit for anything else.
+export function legacyRedditRedirect(path: string): string {
+  const post = path.match(REDDIT_POST_PATH_REGEX);
+  if (post) return `https://${REDDIT_FIXER}/r/${post[1]}/comments/${post[2]}`;
+  const short = path.match(REDDIT_SHORT_PATH_REGEX);
+  if (short) return `https://${REDDIT_FIXER}/comments/${short[1]}`;
+  return `https://www.reddit.com${path.startsWith('/') ? path : `/${path}`}`;
+}
 
 export const instaRegex = /(?:(?:www|m)\.)?(?:instagram\.com|instagr\.am)/;
 export const instaReelRegex =
@@ -29,6 +48,7 @@ export function revertUrlForDownload(url: string): string {
     .replace(INSTA_FIX_DOMAIN_LEGACY, 'instagram.com')
     .replace(INSTA_FIX_FALLBACK, 'instagram.com')
     .replace(REDDIT_EMBED_DOMAIN, 'reddit.com')
+    .replace(REDDIT_FIXER, 'reddit.com')
     .replace('vxthreads.net', 'threads.net')
     .replace('bskx.app', 'bsky.app')
     .replace('fixdeviantart.com', 'deviantart.com')
@@ -63,9 +83,14 @@ export function convertToInstaFix(url: string): string {
   let convertedUrl = url
     .replace(/(?:(?:www|m)\.)?instagram\.com/g, INSTA_FIX_DOMAIN)
     .replace(/(?:(?:www|m)\.)?instagr\.am/g, INSTA_FIX_DOMAIN)
-    // redd.it/<id> short links map onto the proxy's /comments/<id> route.
-    .replace(/^(https?:\/\/)?redd\.it\//, `$1${REDDIT_EMBED_DOMAIN}/comments/`)
-    .replace(/(?:(?:www|old|new|np|m)\.)?reddit\.com/g, REDDIT_EMBED_DOMAIN)
+    // Anchored to the host: a global replace would also hit the "reddit.com"
+    // inside vxreddit.com. Any subdomain (www, old, m, sh…) goes.
+    .replace(
+      /^(https?:\/\/)?(?:[A-Za-z0-9-]+\.)*reddit\.com/,
+      `$1${REDDIT_FIXER}`
+    )
+    // redd.it/<id> short links are /comments/<id> on vxreddit.
+    .replace(/^(https?:\/\/)?redd\.it\//, `$1${REDDIT_FIXER}/comments/`)
     // vxthreads.net down (2026), threads.net передаём без изменений
     .replace(/bsky\.app/g, 'bskx.app')
     .replace(/deviantart\.com/g, 'fixdeviantart.com')

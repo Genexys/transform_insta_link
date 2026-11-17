@@ -14,7 +14,7 @@ The project is intentionally small and pragmatic. `bot.ts` is now a very thin ru
 - **yt-dlp + ffmpeg** for TikTok and YouTube downloads (yt-dlp pinned in `requirements-ytdlp.txt`, with `yt-dlp-ejs` for YouTube)
 - **Sentry** for exception capture
 - **Railway + Dockerfile** for deployment
-- **Built-in `http` server** for `/health` and Reddit embed proxy
+- **Built-in `http` server** for `/health` and the redirect of old Reddit links
 
 ## Repository Shape
 
@@ -51,7 +51,7 @@ The repo is very small:
 - `r2_storage.ts` — the worker's R2 upload and presigned download links (keys only at home)
 - `payment_handlers.ts` — Stars invoices (donation, paid download, lifetime pass), pre-checkout, payment fulfilment and refunds
 - `command_handlers.ts` — text commands (`/start`, `/help`, `/premium`, `/purchases`, `/paysupport`, `/terms`, `/settings`, `/chatstats`, `/invite`, `/donate`, `/feedback`, owner-only `/admin`, `/stats` and `/broadcast`) and onboarding
-- `http_server.ts` — `/healthz` liveness, `/health` dependency report, Reddit embed proxy, and HTTP server startup
+- `http_server.ts` — `/healthz` liveness, `/health` dependency report, the 301 of old Reddit embed links to vxreddit, and HTTP server startup
 - `compose.yaml` — recommended local PostgreSQL service for DB-backed development
 - `migrations/*` — explicit PostgreSQL schema history managed by `node-pg-migrate`
 - `scripts/run-migrations.js` — deploy/start migration wrapper
@@ -124,7 +124,7 @@ Main happy path:
    - Instagram: self-hosted InstaFix -> fallback
    - TikTok: parallel fixer check
    - Twitter/X: parallel fixer check
-   - Reddit/Bluesky/DeviantArt/Pixiv: direct rewrite
+   - Reddit/Bluesky/DeviantArt/Pixiv: direct rewrite (vxreddit.com, bskx.app, fixdeviantart.com, phixiv.net)
 4. The bot logs the event to `link_events`.
 5. In groups the bot answers in one of two modes:
    - **replace** — reposts the whole message with fixed links and deletes the original;
@@ -151,7 +151,7 @@ The bot currently contains several distinct feature areas:
 - referral link via `/invite`; inviting 5 new users (`REFERRAL_PASS_THRESHOLD`) grants the lifetime pass. Only users the bot has never seen count (`registerReferral`)
 - onboarding message on `my_chat_member`
 - admin alerts and health monitoring
-- Reddit HTML proxy endpoint
+- Reddit through vxreddit.com. The bot used to render Reddit previews itself from Reddit's JSON API, which now answers 403 to Railway; links it posted to its own domain are redirected to vxreddit (`legacyRedditRedirect`)
 
 ## Supported Platforms
 
@@ -214,11 +214,11 @@ Most runtime logging now goes through the structured logger in `runtime.ts`. Rem
 - Instagram service state
 - TikTok service state
 - Twitter/X service state
-- supplemental fixer state for Bluesky, DeviantArt, and Pixiv
+- supplemental fixer state for Bluesky, DeviantArt, Pixiv and Reddit
 - grouped critical/supplemental checks
 - 24h link stats summary
 
-This health endpoint is more truthful now, but it still does not perform an end-to-end probe of the Reddit API/embed flow.
+The fixer probes are a HEAD of each fixer's home page: they catch a fixer that is down, not one that stopped returning previews.
 
 ### Deployment
 
@@ -315,7 +315,6 @@ The recommended local DB path is `docker compose` with the Postgres service defi
 If you need to improve the project, prefer this order:
 
 1. Split `bot.ts` into modules:
-   - optional split of `http_server.ts` into `health/*` and `reddit_proxy/*`
    - optional split of `download_handlers.ts` into gating/download/cleanup helpers
 2. Add tests for:
    - `findsocialLinks()`

@@ -9,7 +9,7 @@ Telegram bot that rewrites social links into preview-friendly fixer URLs so Tele
 - supports inline mode
 - supports TikTok and YouTube (videos and Shorts) download through `yt-dlp`. YouTube is offered only while the [home worker](docs/youtube-home-worker.md) is connected, because YouTube blocks Railway's IPs: always in private chats, in groups when enabled in `/settings`. The quality is the best that fits Telegram's 50 MB bot upload limit (about 10 min at 480p, 25 min at 240p); for pass holders a longer video comes as a 24-hour download link (720p, Cloudflare R2) when the worker has R2 keys
 - supports Telegram Stars donations and premium chat features
-- exposes `/healthz` (liveness), `/health` (dependency report) and a Reddit embed proxy over HTTP
+- exposes `/healthz` (liveness) and `/health` (dependency report) over HTTP, and redirects old Reddit links it posted to vxreddit
 
 ## Active Platform Support
 
@@ -44,7 +44,7 @@ Not currently active:
 - `callback_handlers.ts` — callback router and chat settings toggle
 - `download_handlers.ts` — TikTok download flow
 - `payment_handlers.ts` — donation and payment-success flow
-- `http_server.ts` — `/healthz`, `/health` and Reddit embed proxy
+- `http_server.ts` — `/healthz`, `/health` and the redirect of old Reddit links
 - `db.ts` — DB connection and helpers
 - `link_utils.ts` — pure link parsing and URL rewrite helpers
 - `compose.yaml` — recommended local PostgreSQL dev database

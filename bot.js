@@ -88,11 +88,12 @@ async function runHourlyHealthCheck() {
     const bluesky = health.other['bskx.app'];
     const deviantart = health.other['fixdeviantart.com'];
     const pixiv = health.other['phixiv.net'];
+    const reddit = health.other[link_utils_1.REDDIT_FIXER];
     await sendAdminAlert(`📊 Статус сервисов: ${health.status}\n\n` +
         `Instagram:\n${e(instaMain)} ${link_utils_1.INSTA_FIX_DOMAIN}\n${e(instaFallback)} ${link_utils_1.INSTA_FIX_FALLBACK}\n${instaSession}\n\n` +
         `TikTok:\n${tiktokLines}\n\n` +
         `Twitter:\n${twitterLines}\n\n` +
-        `Другие:\n${e(bluesky)} bskx.app\n${e(deviantart)} fixdeviantart.com\n${e(pixiv)} phixiv.net`);
+        `Другие:\n${e(bluesky)} bskx.app\n${e(deviantart)} fixdeviantart.com\n${e(pixiv)} phixiv.net\n${e(reddit)} ${link_utils_1.REDDIT_FIXER}`);
 }
 const INSTA_DEGRADED_ALERT_THRESHOLD = 3;
 let lastInstaPreviewBroken = null;
