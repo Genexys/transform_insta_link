@@ -26,6 +26,19 @@ export function requireEnv(name: string): string {
   process.exit(1);
 }
 
+// For logs: "fetch failed" alone does not say what broke; the causes under it
+// do (connection reset, timeout, DNS...). Undefined when there are none.
+export function errorCauses(error: unknown): string | undefined {
+  const causes: string[] = [];
+  let cause = (error as { cause?: unknown } | null)?.cause;
+  while (cause && causes.length < 4) {
+    const code = (cause as { code?: unknown }).code;
+    causes.push(code ? `${String(code)}: ${String(cause)}` : String(cause));
+    cause = (cause as { cause?: unknown }).cause;
+  }
+  return causes.length ? causes.join(' <- ') : undefined;
+}
+
 export const log = {
   info: (msg: string, meta?: object) =>
     console.log(

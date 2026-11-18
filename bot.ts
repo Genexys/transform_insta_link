@@ -25,7 +25,7 @@ import {
   TIKTOK_FIXERS,
   TWITTER_FIXERS,
 } from './link_utils';
-import { log } from './runtime';
+import { errorCauses, log } from './runtime';
 
 const bot = new TelegramBot(getBotToken(), { polling: true });
 const mediaRuntime = initMediaRuntime();
@@ -79,7 +79,10 @@ startWeeklyReport(bot);
 previewMonitor.start(sendAdminAlert);
 
 bot.on('polling_error', error => {
-  log.error('Polling error', { err: String(error) });
+  log.error('Polling error', {
+    err: String(error),
+    cause: errorCauses(error),
+  });
 });
 
 // Global error handling

@@ -3,6 +3,9 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.InstaVideoTooBigError = exports.TELEGRAM_BOT_FILE_LIMIT_BYTES = void 0;
+exports.instaVideoLink = instaVideoLink;
+exports.instaVideoLinkMessage = instaVideoLinkMessage;
 exports.downloadInstaVideoFile = downloadInstaVideoFile;
 exports.downloadInstaImageFile = downloadInstaImageFile;
 exports.probeVideoMeta = probeVideoMeta;
@@ -20,9 +23,38 @@ const app_env_1 = require("./app_env");
 const db_1 = require("./db");
 const insta_preview_client_1 = require("./insta_preview_client");
 const i18n_1 = require("./i18n");
+const link_utils_1 = require("./link_utils");
 const runtime_1 = require("./runtime");
 const execFileAsync = (0, util_1.promisify)(child_process_1.execFile);
-async function downloadInstaVideoFile(shortcode, destPath) {
+exports.TELEGRAM_BOT_FILE_LIMIT_BYTES = 50 * 1024 * 1024;
+class InstaVideoTooBigError extends Error {
+    constructor(bytes) {
+        super('Instagram video is over the Telegram bot file limit');
+        this.bytes = bytes;
+        this.name = 'InstaVideoTooBigError';
+    }
+}
+exports.InstaVideoTooBigError = InstaVideoTooBigError;
+function instaVideoLink(shortcode) {
+    return `https://${link_utils_1.INSTA_FIX_DOMAIN}/v/${encodeURIComponent(shortcode)}.mp4`;
+}
+function instaVideoLinkMessage(L, shortcode, bytes) {
+    const size = bytes ? L.sizeLabel(bytes) : undefined;
+    return {
+        text: L.instaVideoTooBig(size),
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    {
+                        text: L.instaVideoLinkButton(size),
+                        url: instaVideoLink(shortcode),
+                    },
+                ],
+            ],
+        },
+    };
+}
+async function downloadInstaVideoFile(shortcode, destPath, maxBytes = exports.TELEGRAM_BOT_FILE_LIMIT_BYTES) {
     const url = `https://${app_env_1.INSTA_PREVIEW_HOST}/v/${encodeURIComponent(shortcode)}.mp4`;
     const headers = {};
     if (app_env_1.INSTA_PREVIEW_TOKEN) {
@@ -36,7 +68,22 @@ async function downloadInstaVideoFile(shortcode, destPath) {
     if (!res.ok || !res.body) {
         throw new Error(`preview_service_${res.status}`);
     }
-    await (0, promises_1.pipeline)(stream_1.Readable.fromWeb(res.body), fs_1.default.createWriteStream(destPath));
+    const declared = Number(res.headers.get('content-length'));
+    if (declared > maxBytes) {
+        await res.body.cancel().catch(() => { });
+        throw new InstaVideoTooBigError(declared);
+    }
+    let received = 0;
+    const limit = new stream_1.Transform({
+        transform(chunk, _encoding, callback) {
+            received += chunk.length;
+            if (received > maxBytes)
+                callback(new InstaVideoTooBigError());
+            else
+                callback(null, chunk);
+        },
+    });
+    await (0, promises_1.pipeline)(stream_1.Readable.fromWeb(res.body), limit, fs_1.default.createWriteStream(destPath));
 }
 async function downloadInstaImageFile(imageUrl, destPath) {
     const res = await fetch(imageUrl, {
@@ -89,8 +136,20 @@ async function probeVideoMeta(filePath) {
 }
 async function deliverInstaVideo(bot, chatId, shortcode, opts) {
     const tempFilePath = path_1.default.join(os_1.default.tmpdir(), `video_${(0, crypto_1.randomUUID)()}.mp4`);
+    const replyParameters = opts.replyToMessageId
+        ? { reply_parameters: { message_id: opts.replyToMessageId } }
+        : {};
     try {
-        await downloadInstaVideoFile(shortcode, tempFilePath);
+        try {
+            await downloadInstaVideoFile(shortcode, tempFilePath);
+        }
+        catch (err) {
+            if (!(err instanceof InstaVideoTooBigError))
+                throw err;
+            const { text, reply_markup } = instaVideoLinkMessage((0, i18n_1.strings)(opts.lang ?? 'ru'), shortcode, err.bytes);
+            await bot.sendMessage(chatId, text, { reply_markup, ...replyParameters });
+            return 'link';
+        }
         if (!fs_1.default.existsSync(tempFilePath)) {
             throw new Error('preview_service_no_file');
         }
@@ -99,14 +158,13 @@ async function deliverInstaVideo(bot, chatId, shortcode, opts) {
         await bot.sendVideo(chatId, tempFilePath, {
             caption: opts.caption,
             protect_content: opts.protect,
-            ...(opts.replyToMessageId
-                ? { reply_parameters: { message_id: opts.replyToMessageId } }
-                : {}),
+            ...replyParameters,
             ...(meta.width && meta.height
                 ? { width: meta.width, height: meta.height }
                 : {}),
             ...(meta.duration ? { duration: meta.duration } : {}),
         });
+        return 'file';
     }
     finally {
         if (fs_1.default.existsSync(tempFilePath)) {
@@ -133,14 +191,16 @@ async function deliverInstaMedia(bot, chatId, shortcode, opts) {
         userId: opts.userId,
         durationMs: Date.now() - startedAt,
     });
+    let sent;
     try {
-        await sendInstaMedia(bot, chatId, shortcode, opts);
+        sent = await sendInstaMedia(bot, chatId, shortcode, opts);
     }
     catch (err) {
         record('failed');
         throw err;
     }
-    record('ok');
+    record(sent === 'link' ? 'link' : 'ok');
+    return sent;
 }
 async function sendInstaMedia(bot, chatId, shortcode, opts) {
     const L = (0, i18n_1.strings)(opts.lang ?? 'ru');
@@ -150,12 +210,12 @@ async function sendInstaMedia(bot, chatId, shortcode, opts) {
         throw new Error('photo_preview_only');
     }
     if (!photo) {
-        await deliverInstaVideo(bot, chatId, shortcode, {
+        return deliverInstaVideo(bot, chatId, shortcode, {
             protect: opts.protect,
             caption: L.videoCaption(Boolean(opts.premium)),
             replyToMessageId: opts.replyToMessageId,
+            lang: opts.lang,
         });
-        return;
     }
     const tempFilePath = path_1.default.join(os_1.default.tmpdir(), `photo_${(0, crypto_1.randomUUID)()}.jpg`);
     try {
@@ -171,6 +231,7 @@ async function sendInstaMedia(bot, chatId, shortcode, opts) {
                 ? { reply_parameters: { message_id: opts.replyToMessageId } }
                 : {}),
         });
+        return 'file';
     }
     finally {
         if (fs_1.default.existsSync(tempFilePath)) {

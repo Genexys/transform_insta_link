@@ -23,10 +23,16 @@ import {
   revertUrlForDownload,
   youTubeVideo,
 } from './link_utils';
-import { downloadInstaVideoFile, probeVideoMeta } from './video_delivery';
+import {
+  InstaVideoTooBigError,
+  TELEGRAM_BOT_FILE_LIMIT_BYTES,
+  downloadInstaVideoFile,
+  instaVideoLinkMessage,
+  probeVideoMeta,
+} from './video_delivery';
 import { resolveLang } from './chat_lang';
 import { strings } from './i18n';
-import { log } from './runtime';
+import { errorCauses, log } from './runtime';
 import { ytDlpBinaries } from './media_runtime';
 import {
   YouTubeDownloadError,
@@ -309,7 +315,33 @@ export async function handleDownloadCallback(
       // This free in-chat button only ever fires for videos (TikTok, or an
       // oversized Instagram video). Image-only posts are handled by the paid
       // save flow (deliverInstaMedia), not here.
-      await downloadInstaVideoFile(shortcode, tempFilePath);
+      try {
+        await downloadInstaVideoFile(shortcode, tempFilePath);
+      } catch (err) {
+        if (!(err instanceof InstaVideoTooBigError)) throw err;
+        // Over Telegram's limit for bots: a link to the preview service, for
+        // everyone, instead of a file.
+        const { text, reply_markup } = instaVideoLinkMessage(
+          L,
+          shortcode,
+          err.bytes
+        );
+        await bot.editMessageText(text, {
+          chat_id: chatId,
+          message_id: loadingMsg.message_id,
+          reply_markup,
+        });
+        log.info('Instagram video link sent', {
+          chatId,
+          telegramId,
+          sizeBytes: err.bytes,
+        });
+        record('link', err.bytes);
+        if (DATABASE_URL) {
+          await incrementDownloads(telegramId);
+        }
+        return;
+      }
     } else if (isYouTube) {
       const progress = linkProgressEditor(
         bot,
@@ -366,6 +398,10 @@ export async function handleDownloadCallback(
       telegramId,
       sizeBytes: stats.size,
     });
+    // Never offer Telegram a file it refuses (see TELEGRAM_BOT_FILE_LIMIT_BYTES).
+    if (stats.size > TELEGRAM_BOT_FILE_LIMIT_BYTES) {
+      throw new Error(`File is larger than 50 MB: ${stats.size} bytes`);
+    }
 
     await bot.sendChatAction(chatId, 'upload_video');
 
@@ -400,6 +436,7 @@ export async function handleDownloadCallback(
       chatId,
       telegramId,
       err: error instanceof Error ? error.message : String(error),
+      cause: errorCauses(error),
     });
 
     await saveErrorLog(

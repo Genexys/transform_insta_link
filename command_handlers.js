@@ -126,7 +126,9 @@ function registerCommandHandlers(bot) {
                     }
                 }
                 else {
-                    await (0, payment_handlers_1.sendDownloadInvoice)(bot, chatId, shortcode, lang);
+                    const sent = await (0, payment_handlers_1.sendDownloadInvoice)(bot, chatId, shortcode, lang);
+                    if (sent === 'link')
+                        return;
                     await bot
                         .sendMessage(chatId, L.passUpsell, {
                         reply_markup: {
