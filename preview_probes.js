@@ -20,6 +20,11 @@ exports.PREVIEW_SAMPLES = [
         expect: 'image',
     },
     {
+        platform: 'Twitter',
+        url: 'https://x.com/elonmusk/status/1585341984679469056',
+        expect: 'video',
+    },
+    {
         platform: 'Bluesky',
         url: 'https://bsky.app/profile/bsky.app/post/3l4cilpvtr22w',
         expect: 'image',

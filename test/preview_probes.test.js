@@ -33,9 +33,26 @@ test('every fixer gets a check, converted by the real code', () => {
         c.converted === 'https://bskx.app/profile/bsky.app/post/3l4cilpvtr22w'
     )
   );
+  // Every TikTok and Twitter sample is checked on each of their fixers.
+  const perFixer = PREVIEW_SAMPLES.filter(
+    s => s.platform === 'TikTok' || s.platform === 'Twitter'
+  );
+  const tiktok = perFixer.filter(s => s.platform === 'TikTok').length;
   assert.equal(
     checks.length,
-    PREVIEW_SAMPLES.length - 2 + TIKTOK_FIXERS.length + TWITTER_FIXERS.length
+    PREVIEW_SAMPLES.length -
+      perFixer.length +
+      tiktok * TIKTOK_FIXERS.length +
+      (perFixer.length - tiktok) * TWITTER_FIXERS.length
+  );
+  // Twitter is checked with a picture and with a video.
+  assert.deepEqual(
+    [
+      ...new Set(
+        checks.filter(c => c.platform === 'Twitter').map(c => c.expect)
+      ),
+    ].sort(),
+    ['image', 'video']
   );
 });
 
