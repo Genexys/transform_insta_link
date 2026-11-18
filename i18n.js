@@ -26,6 +26,12 @@ function ruPlural(n, one, few, many) {
     return many;
 }
 const enPlural = (n, one, many) => n === 1 ? one : many;
+const ruOverBotLimit = (size) => size
+    ? `Видео весит ${size}, а Telegram не принимает от ботов файлы больше 50 МБ`
+    : 'Видео больше 50 МБ, а больше Telegram от ботов не принимает';
+const enOverBotLimit = (size) => size
+    ? `The video is ${size}, and Telegram does not accept files over 50 MB from bots`
+    : 'The video is over 50 MB, more than Telegram accepts from bots';
 const SUPPORTED_LIST = 'Instagram, TikTok, Twitter/X, Reddit, Bluesky, Pixiv, DeviantArt';
 const ru = {
     someone: 'кто-то',
@@ -65,13 +71,17 @@ const ru = {
     downloadLoading: '⏳ Скачиваю, это может занять несколько секунд...',
     downloadReady: '🎥 Ваше видео готово!',
     downloadErrTooBig: '❌ Видео слишком большое для отправки через Telegram (>50MB).',
-    oversizedNoteTooBig: (size) => `\n\n📦 Видео весит ${size}, а Telegram не принимает от ботов файлы больше 50 МБ — кнопка ниже даст ссылку на скачивание.`,
-    instaLinkDownloadButton: '📥 Скачать видео',
-    instaVideoTooBig: (size) => size
-        ? `📦 Видео весит ${size}, а Telegram не принимает от ботов файлы больше 50 МБ — поэтому вот ссылка на скачивание.`
-        : '📦 Видео больше 50 МБ, а больше Telegram от ботов не принимает — поэтому вот ссылка на скачивание.',
+    oversizedNoteTooBig: (size, freeCopy, paidCopy) => `\n\n📦 ${ruOverBotLimit(size)}.` +
+        (freeCopy && paidCopy
+            ? ' Кнопками ниже — сжатая копия в чат или оригинал ссылкой.'
+            : freeCopy
+                ? ' Кнопкой ниже — сжатая копия в чат.'
+                : ' Кнопкой ниже — оригинал ссылкой.'),
+    instaVideoTooBig: (size) => `📦 ${ruOverBotLimit(size)} — поэтому оригинал по ссылке.`,
     instaVideoLinkButton: (size) => size ? `📥 Скачать · ${size}` : '📥 Скачать',
-    bigVideoFreeRefund: 'Видео больше 50 МБ — такие бот отдаёт ссылкой бесплатно, она выше.',
+    instaCompressing: (size) => `⏳ ${ruOverBotLimit(size)}. Готовлю сжатую копию для просмотра — это может занять пару минут…`,
+    instaCompressedCaption: (size, stars) => `🎥 Сжатая копия для просмотра. ${ruOverBotLimit(size)}; оригинал можно сохранить ссылкой за ⭐${stars} (кнопка «Сохранить») или с /premium.`,
+    instaCompressFailed: (size, stars) => `❌ ${ruOverBotLimit(size)}, а сжатую копию сейчас сделать не получилось. Оригинал можно сохранить ссылкой за ⭐${stars} (кнопка «Сохранить») или с /premium.`,
     downloadErrPreview: (detail) => `❌ Сервис превью вернул ошибку: ${detail}. Попробуйте через минуту.`,
     downloadErrGeneric: '❌ Произошла ошибка на сервере. Попробуйте позже или используйте другую ссылку.',
     downloadErrYouTubeTooLong: '❌ Видео слишком длинное: даже в 240p оно больше 50 МБ — это предел Telegram для файлов от ботов.',
@@ -287,13 +297,17 @@ const en = {
     downloadLoading: '⏳ Downloading, this may take a few seconds...',
     downloadReady: '🎥 Your video is ready!',
     downloadErrTooBig: '❌ The video is too large to send via Telegram (>50MB).',
-    oversizedNoteTooBig: size => `\n\n📦 The video is ${size}, and Telegram does not accept files over 50 MB from bots — the button below gives a download link.`,
-    instaLinkDownloadButton: '📥 Download video',
-    instaVideoTooBig: size => size
-        ? `📦 The video is ${size}, and Telegram does not accept files over 50 MB from bots, so here is a download link.`
-        : '📦 The video is over 50 MB, more than Telegram accepts from bots, so here is a download link.',
+    oversizedNoteTooBig: (size, freeCopy, paidCopy) => `\n\n📦 ${enOverBotLimit(size)}.` +
+        (freeCopy && paidCopy
+            ? ' The buttons below give a compressed copy in the chat or the original as a link.'
+            : freeCopy
+                ? ' The button below gives a compressed copy in the chat.'
+                : ' The button below gives the original as a link.'),
+    instaVideoTooBig: size => `📦 ${enOverBotLimit(size)}, so here is a link to the original.`,
     instaVideoLinkButton: size => size ? `📥 Download · ${size}` : '📥 Download',
-    bigVideoFreeRefund: 'The video is over 50 MB; the bot hands such videos out as a free link, see above.',
+    instaCompressing: size => `⏳ ${enOverBotLimit(size)}. Preparing a compressed copy to watch; this can take a couple of minutes…`,
+    instaCompressedCaption: (size, stars) => `🎥 A compressed copy to watch. ${enOverBotLimit(size)}; the original can be saved as a link for ⭐${stars} (the Save button) or with /premium.`,
+    instaCompressFailed: (size, stars) => `❌ ${enOverBotLimit(size)}, and a compressed copy could not be made right now. The original can be saved as a link for ⭐${stars} (the Save button) or with /premium.`,
     downloadErrPreview: detail => `❌ The preview service returned an error: ${detail}. Try again in a minute.`,
     downloadErrGeneric: '❌ Server error. Try again later or use another link.',
     downloadErrYouTubeTooLong: '❌ The video is too long: even at 240p it is over 50 MB, the Telegram limit for files from bots.',

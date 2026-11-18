@@ -553,17 +553,10 @@ function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, entities, fix
         const downloadKeyboard = [];
         if (canOfferDownload) {
             downloadKeyboard.push([
-                {
-                    text: overBotLimit
-                        ? L.instaLinkDownloadButton
-                        : L.downloadToChatButton,
-                    callback_data: 'download_video',
-                },
+                { text: L.downloadToChatButton, callback_data: 'download_video' },
             ]);
         }
-        const refreshSaveRow = overBotLimit
-            ? null
-            : await buildInstaSaveRow(bot, instaShortcodes[0], L, 'video');
+        const refreshSaveRow = await buildInstaSaveRow(bot, instaShortcodes[0], L, 'video');
         if (refreshSaveRow)
             downloadKeyboard.push(refreshSaveRow);
         if (downloadKeyboard.length === 0)
@@ -573,7 +566,7 @@ function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, entities, fix
         };
         const notedText = text +
             (overBotLimit
-                ? L.oversizedNoteTooBig(L.sizeLabel(overBotLimit))
+                ? L.oversizedNoteTooBig(L.sizeLabel(overBotLimit), canOfferDownload, Boolean(refreshSaveRow))
                 : L.oversizedNote);
         try {
             const editOptions = {

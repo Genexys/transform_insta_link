@@ -42,17 +42,7 @@ async function sendDownloadInvoice(bot, chatId, shortcode, lang = 'ru') {
         await bot
             .sendMessage(chatId, L.previewOnly)
             .catch(() => { });
-        return 'refused';
-    }
-    const videoBytes = preview.ok
-        ? preview.data.media?.[0]?.sizeBytes
-        : undefined;
-    if (!photo &&
-        typeof videoBytes === 'number' &&
-        videoBytes > video_delivery_1.TELEGRAM_BOT_FILE_LIMIT_BYTES) {
-        const { text, reply_markup } = (0, video_delivery_1.instaVideoLinkMessage)(L, shortcode, videoBytes);
-        await bot.sendMessage(chatId, text, { reply_markup }).catch(() => { });
-        return 'link';
+        return;
     }
     const kind = photo ? 'photo' : 'video';
     const { stars } = (0, billing_1.downloadPricing)(kind);
@@ -68,7 +58,6 @@ async function sendDownloadInvoice(bot, chatId, shortcode, lang = 'ru') {
         label: L.invoiceDownloadLabel(kind),
         errorText: L.invoiceDownloadError,
     });
-    return 'invoice';
 }
 async function sendPassInvoice(bot, chatId, shortcode, lang = 'ru') {
     const L = (0, i18n_1.strings)(lang);
@@ -243,21 +232,11 @@ function registerPaymentHandlers(bot) {
                 .sendMessage(chatId, L.paidSending)
                 .catch(() => { });
             try {
-                const sent = await (0, video_delivery_1.deliverInstaMedia)(bot, chatId, parsedPayload.shortcode, {
+                await (0, video_delivery_1.deliverInstaMedia)(bot, chatId, parsedPayload.shortcode, {
                     protect: false,
                     lang,
                     userId: telegramId,
                 });
-                if (sent === 'link') {
-                    await refundPayment(bot, {
-                        chatId,
-                        telegramId,
-                        chargeId,
-                        reason: 'video over the Telegram bot file limit, sent as a link',
-                        userText: L.bigVideoFreeRefund,
-                        lang,
-                    });
-                }
             }
             catch (err) {
                 runtime_1.log.error('Paid download delivery failed', {

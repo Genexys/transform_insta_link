@@ -5,11 +5,15 @@ const os = require('node:os');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
 
-// No database. The preview service is a table of routes (see `routes`).
+// No database. The preview service is a table of routes, by path and query
+// (see `previewService`); `requested` lists what the bot asked for.
 delete process.env.DATABASE_URL;
 let routes = {};
+let requested = [];
 global.fetch = async url => {
-  const route = routes[new URL(String(url)).pathname];
+  const { pathname, search } = new URL(String(url));
+  requested.push(pathname + search);
+  const route = routes[pathname + search];
   if (!route) return new Response('{}', { status: 404 });
   return route();
 };
@@ -23,15 +27,25 @@ const {
 } = require('../video_delivery.js');
 const { handleDownloadCallback } = require('../download_handlers.js');
 const { registerMessageHandlers } = require('../message_handlers.js');
-const { sendDownloadInvoice } = require('../payment_handlers.js');
+const {
+  registerPaymentHandlers,
+  sendDownloadInvoice,
+} = require('../payment_handlers.js');
+const { buildBillingPayload } = require('../billing.js');
 const { strings } = require('../i18n.js');
 
 const BIG = 72 * 1024 * 1024;
-const LINK = 'https://previewlinkbot.xyz/v/BIGone.mp4';
+const LINK = 'https://previewlinkbot.xyz/v/BIGone.mp4?original=1';
 
-// The preview service: /extract says the size, /v/ serves the file with a
-// Content-Length of `bytes` (and no body: the bot must not read it).
-function previewService(shortcode, bytes) {
+// The preview service for a video of `bytes`: /extract says the size; /v/
+// (plain and ?original=1) declares it, with no body (the bot must not read
+// it); ?fit=1 gives `fit` (a small copy) or a 503.
+function previewService(shortcode, bytes, { fit = 'small copy' } = {}) {
+  requested = [];
+  const declared = () =>
+    new Response('', {
+      headers: { 'content-type': 'video/mp4', 'content-length': String(bytes) },
+    });
   routes = {
     [`/extract/${shortcode}`]: () =>
       Response.json({
@@ -42,13 +56,15 @@ function previewService(shortcode, bytes) {
           ],
         },
       }),
-    [`/v/${shortcode}.mp4`]: () =>
-      new Response('', {
-        headers: {
-          'content-type': 'video/mp4',
-          'content-length': String(bytes),
-        },
-      }),
+    [`/v/${shortcode}.mp4`]: declared,
+    [`/v/${shortcode}.mp4?original=1`]: declared,
+    [`/v/${shortcode}.mp4?fit=1`]: () =>
+      fit === null
+        ? Response.json(
+            { ok: false, error: 'transcode_unavailable' },
+            { status: 503 }
+          )
+        : new Response(fit, { headers: { 'content-type': 'video/mp4' } }),
   };
 }
 
@@ -65,6 +81,7 @@ function createBot() {
     'sendVideo',
     'sendInvoice',
     'sendMediaGroup',
+    'refundStarPayment',
   ]) {
     bot[name] = async (...args) => {
       bot.calls.push({ name, args });
@@ -85,6 +102,12 @@ function createBot() {
 const tempFile = () =>
   path.join(os.tmpdir(), `insta_big_${process.pid}_${Math.random()}.mp4`);
 
+const flush = async (until, max = 200) => {
+  for (let i = 0; i < max && !until(); i++) {
+    await new Promise(resolve => setImmediate(resolve));
+  }
+};
+
 test('the limit is the 50 MB Telegram takes from bots', () => {
   assert.equal(TELEGRAM_BOT_FILE_LIMIT_BYTES, 50 * 1024 * 1024);
 });
@@ -98,29 +121,36 @@ test('a video the preview service says is too big is not downloaded', async () =
     return true;
   });
   assert.equal(fs.existsSync(dest), false);
+  assert.deepEqual(requested, ['/v/BIGone.mp4']);
 });
 
 test('a video without a size is cut off at the limit', async () => {
   routes = { '/v/nosize.mp4': () => new Response('x'.repeat(100)) };
   const dest = tempFile();
-  await assert.rejects(downloadInstaVideoFile('nosize', dest, 10), err => {
-    assert.ok(err instanceof InstaVideoTooBigError);
-    assert.equal(err.bytes, undefined);
-    return true;
-  });
+  await assert.rejects(
+    downloadInstaVideoFile('nosize', dest, { maxBytes: 10 }),
+    err => {
+      assert.ok(err instanceof InstaVideoTooBigError);
+      assert.equal(err.bytes, undefined);
+      return true;
+    }
+  );
   fs.rmSync(dest, { force: true });
 
-  routes = { '/v/small.mp4': () => new Response('x'.repeat(10)) };
-  await downloadInstaVideoFile('small', dest, 10);
+  routes = { '/v/small.mp4?original=1': () => new Response('x'.repeat(10)) };
+  await downloadInstaVideoFile('small', dest, {
+    maxBytes: 10,
+    variant: 'original',
+  });
   assert.equal(fs.readFileSync(dest, 'utf8'), 'x'.repeat(10));
   fs.rmSync(dest);
 });
 
-test('the link message says why and links to the preview service', () => {
+test('the link message says why and links to the original', () => {
   const ru = instaVideoLinkMessage(strings('ru'), 'BIGone', BIG);
   assert.equal(
     ru.text,
-    '📦 Видео весит 72 МБ, а Telegram не принимает от ботов файлы больше 50 МБ — поэтому вот ссылка на скачивание.'
+    '📦 Видео весит 72 МБ, а Telegram не принимает от ботов файлы больше 50 МБ — поэтому оригинал по ссылке.'
   );
   assert.deepEqual(ru.reply_markup.inline_keyboard, [
     [{ text: '📥 Скачать · 72 МБ', url: LINK }],
@@ -130,31 +160,54 @@ test('the link message says why and links to the preview service', () => {
   assert.equal(unknown.reply_markup.inline_keyboard[0][0].text, '📥 Download');
 });
 
-test('the free button gives everyone the link instead of uploading', async () => {
-  previewService('BIGone', BIG);
-  const bot = createBot();
-  await handleDownloadCallback(
+const freeClick = (bot, chatId) =>
+  handleDownloadCallback(
     bot,
     {
       id: 'q1',
-      from: { id: 501, language_code: 'ru' },
+      from: { id: chatId, language_code: 'ru' },
       message: {
         message_id: 10,
-        chat: { id: 501, type: 'private' },
+        chat: { id: chatId, type: 'private' },
         text: 'https://previewlinkbot.xyz/reel/BIGone\n\n📦 note',
       },
     },
     null
   );
-  assert.equal(bot.of('sendVideo').length, 0);
-  const [edit] = bot.of('editMessageText');
-  assert.match(edit.args[0], /^📦 Видео весит 72 МБ/);
-  assert.deepEqual(edit.args[1].reply_markup.inline_keyboard, [
-    [{ text: '📥 Скачать · 72 МБ', url: LINK }],
-  ]);
+
+test('the free button sends the compressed copy, view-only', async () => {
+  previewService('BIGone', BIG);
+  const bot = createBot();
+  await freeClick(bot, 501);
+  assert.deepEqual(requested, ['/v/BIGone.mp4', '/v/BIGone.mp4?fit=1']);
+  assert.match(
+    bot.of('editMessageText')[0].args[0],
+    /^⏳ Видео весит 72 МБ.*сжатую копию/
+  );
+  const [video] = bot.of('sendVideo');
+  assert.equal(video.args[2].protect_content, true);
+  assert.equal(
+    video.args[2].caption,
+    '🎥 Сжатая копия для просмотра. Видео весит 72 МБ, а Telegram не принимает от ботов файлы больше 50 МБ; оригинал можно сохранить ссылкой за ⭐10 (кнопка «Сохранить») или с /premium.'
+  );
+  // No link for free.
+  assert.ok(!JSON.stringify(bot.calls).includes('original=1'));
 });
 
-test('a paid or pass delivery of a big video sends the link', async () => {
+test('without a compressed copy the free button says so, with no link', async () => {
+  previewService('BIGone', BIG, { fit: null });
+  const bot = createBot();
+  await freeClick(bot, 506);
+  assert.equal(bot.of('sendVideo').length, 0);
+  const last = bot.of('editMessageText').at(-1);
+  assert.match(
+    last.args[0],
+    /^❌ Видео весит 72 МБ.*сжатую копию сейчас сделать не получилось.*⭐10/
+  );
+  assert.equal(last.args[1].reply_markup, undefined);
+});
+
+test('a paid or pass delivery fetches the original and links a big one', async () => {
   previewService('BIGone', BIG);
   const bot = createBot();
   const sent = await deliverInstaMedia(bot, 502, 'BIGone', {
@@ -162,24 +215,46 @@ test('a paid or pass delivery of a big video sends the link', async () => {
     lang: 'en',
   });
   assert.equal(sent, 'link');
+  assert.ok(requested.includes('/v/BIGone.mp4?original=1'));
+  assert.ok(!requested.some(r => r.endsWith('fit=1')));
   assert.equal(bot.of('sendVideo').length, 0);
   const [message] = bot.of('sendMessage');
-  assert.match(message.args[1], /^📦 The video is 72 MB/);
+  assert.match(message.args[1], /^📦 The video is 72 MB.*link to the original/);
   assert.equal(message.args[2].reply_markup.inline_keyboard[0][0].url, LINK);
 });
 
-test('no invoice for a video that is a free link anyway', async () => {
+test('a big video is still a paid save: invoice, then the link, no refund', async () => {
   previewService('BIGone', BIG);
   const bot = createBot();
-  assert.equal(await sendDownloadInvoice(bot, 503, 'BIGone', 'ru'), 'link');
-  assert.equal(bot.of('sendInvoice').length, 0);
-  assert.equal(
-    bot.of('sendMessage')[0].args[2].reply_markup.inline_keyboard[0][0].url,
-    LINK
-  );
+  await sendDownloadInvoice(bot, 503, 'BIGone', 'ru');
+  assert.equal(bot.of('sendInvoice').length, 1);
+
+  registerPaymentHandlers(bot);
+  bot.emit('message', {
+    message_id: 12,
+    chat: { id: 505, type: 'private' },
+    from: { id: 505, language_code: 'ru' },
+    successful_payment: {
+      currency: 'XTR',
+      total_amount: 10,
+      invoice_payload: buildBillingPayload('download', 10, {
+        shortcode: 'BIGone',
+      }),
+      telegram_payment_charge_id: 'charge-1',
+      provider_payment_charge_id: '',
+    },
+  });
+  const linkSent = () =>
+    bot
+      .of('sendMessage')
+      .some(c => String(c.args[1]).startsWith('📦 Видео весит 72 МБ'));
+  await flush(linkSent);
+  assert.ok(linkSent(), 'link sent');
+  await flush(() => false, 50);
+  assert.equal(bot.of('refundStarPayment').length, 0);
 });
 
-test('a big video gets the 50 MB note, a link button and no paid save', async t => {
+test('a big video gets the 50 MB note and both buttons', async t => {
   // The ?v=ready refresh 75 s later is not part of this.
   t.mock.timers.enable({ apis: ['setTimeout'] });
   previewService('BIGone', BIG);
@@ -201,64 +276,16 @@ test('a big video gets the 50 MB note, a link button and no paid save', async t 
     from: { id: 504, language_code: 'ru' },
     text: 'https://www.instagram.com/reel/BIGone/',
   });
-  let edit;
-  for (let i = 0; i < 200 && !edit; i++) {
-    await new Promise(resolve => setImmediate(resolve));
-    edit = bot.of('editMessageText')[0];
-  }
+  await flush(() => bot.of('editMessageText').length > 0);
+  const [edit] = bot.of('editMessageText');
   assert.ok(edit, 'the note was attached');
   assert.match(
     edit.args[0],
-    /📦 Видео весит 72 МБ, а Telegram не принимает от ботов файлы больше 50 МБ — кнопка ниже даст ссылку на скачивание\.$/
+    /📦 Видео весит 72 МБ, а Telegram не принимает от ботов файлы больше 50 МБ\. Кнопками ниже — сжатая копия в чат или оригинал ссылкой\.$/
   );
   const rows = edit.args[1].reply_markup.inline_keyboard;
   assert.deepEqual(rows[0], [
-    { text: '📥 Скачать видео', callback_data: 'download_video' },
+    { text: '📥 Скачать видео в чат', callback_data: 'download_video' },
   ]);
-  assert.ok(
-    !rows.flat().some(b => b.url?.includes('start=dl_')),
-    'no paid save button'
-  );
-});
-
-test('a paid save that turned out too big gets its Stars back', async () => {
-  const { registerPaymentHandlers } = require('../payment_handlers.js');
-  const { buildBillingPayload } = require('../billing.js');
-  previewService('BIGone', BIG);
-  const bot = createBot();
-  bot.refundStarPayment = async (...args) => {
-    bot.calls.push({ name: 'refundStarPayment', args });
-    return true;
-  };
-  registerPaymentHandlers(bot);
-  bot.emit('message', {
-    message_id: 12,
-    chat: { id: 505, type: 'private' },
-    from: { id: 505, language_code: 'ru' },
-    successful_payment: {
-      currency: 'XTR',
-      total_amount: 10,
-      invoice_payload: buildBillingPayload('download', 10, {
-        shortcode: 'BIGone',
-      }),
-      telegram_payment_charge_id: 'charge-1',
-      provider_payment_charge_id: '',
-    },
-  });
-  for (let i = 0; i < 200 && !bot.of('refundStarPayment').length; i++) {
-    await new Promise(resolve => setImmediate(resolve));
-  }
-  assert.deepEqual(bot.of('refundStarPayment')[0]?.args, [505, 'charge-1']);
-  for (let i = 0; i < 50; i++) await new Promise(r => setImmediate(r));
-  const texts = bot.of('sendMessage').map(c => c.args[1]);
-  assert.ok(
-    texts.some(t => t.startsWith('📦 Видео весит 72 МБ')),
-    'link sent'
-  );
-  assert.ok(
-    texts.includes(
-      'Видео больше 50 МБ — такие бот отдаёт ссылкой бесплатно, она выше.\n\n↩️ Звёзды возвращены.'
-    ),
-    texts.join(' | ')
-  );
+  assert.match(rows[1][0].url, /start=dl_BIGone$/);
 });
