@@ -38,6 +38,13 @@ export const PREVIEW_SAMPLES: PreviewSample[] = [
     url: 'https://x.com/BarackObama/status/266031293945503744',
     expect: 'image',
   },
+  // Videos go through fxtwitter's api.fxtwitter.com/2/go redirect to
+  // video.twimg.com, which the image sample above does not exercise.
+  {
+    platform: 'Twitter',
+    url: 'https://x.com/elonmusk/status/1585341984679469056',
+    expect: 'video',
+  },
   {
     platform: 'Bluesky',
     url: 'https://bsky.app/profile/bsky.app/post/3l4cilpvtr22w',
