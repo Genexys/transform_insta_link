@@ -210,7 +210,29 @@ async function handleDownloadCallback(bot, query, ytdlp) {
             if (!shortcode) {
                 throw new Error('Не удалось распознать shortcode Instagram-ссылки.');
             }
-            await (0, video_delivery_1.downloadInstaVideoFile)(shortcode, tempFilePath);
+            try {
+                await (0, video_delivery_1.downloadInstaVideoFile)(shortcode, tempFilePath);
+            }
+            catch (err) {
+                if (!(err instanceof video_delivery_1.InstaVideoTooBigError))
+                    throw err;
+                const { text, reply_markup } = (0, video_delivery_1.instaVideoLinkMessage)(L, shortcode, err.bytes);
+                await bot.editMessageText(text, {
+                    chat_id: chatId,
+                    message_id: loadingMsg.message_id,
+                    reply_markup,
+                });
+                runtime_1.log.info('Instagram video link sent', {
+                    chatId,
+                    telegramId,
+                    sizeBytes: err.bytes,
+                });
+                record('link', err.bytes);
+                if (app_env_1.DATABASE_URL) {
+                    await (0, db_1.incrementDownloads)(telegramId);
+                }
+                return;
+            }
         }
         else if (isYouTube) {
             const progress = linkProgressEditor(bot, chatId, loadingMsg.message_id, L);
@@ -255,6 +277,9 @@ async function handleDownloadCallback(bot, query, ytdlp) {
             telegramId,
             sizeBytes: stats.size,
         });
+        if (stats.size > video_delivery_1.TELEGRAM_BOT_FILE_LIMIT_BYTES) {
+            throw new Error(`File is larger than 50 MB: ${stats.size} bytes`);
+        }
         await bot.sendChatAction(chatId, 'upload_video');
         const meta = await (0, video_delivery_1.probeVideoMeta)(tempFilePath);
         await bot.sendVideo(chatId, tempFilePath, {
@@ -279,6 +304,7 @@ async function handleDownloadCallback(bot, query, ytdlp) {
             chatId,
             telegramId,
             err: error instanceof Error ? error.message : String(error),
+            cause: (0, runtime_1.errorCauses)(error),
         });
         await (0, db_1.saveErrorLog)(telegramId, error.message || 'Unknown error', error.stack || '', originalUrl);
         let errorMsg;

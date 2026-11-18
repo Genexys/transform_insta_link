@@ -29,7 +29,7 @@ The repo is very small:
 - `billing.ts` — Stars prices and invoice-payload build/parse helpers
 - `entity_utils.ts` — remaps Telegram message entities (mentions, formatting) when a message is rewritten
 - `insta_preview_client.ts` — client for the self-hosted Instagram preview service (`/extract`), with a short result cache
-- `video_delivery.ts` — downloads Instagram media from the preview service and sends it (photo/video)
+- `video_delivery.ts` — downloads Instagram media from the preview service and sends it (photo/video); a video over Telegram's 50 MB bot limit goes out as a link instead (`TELEGRAM_BOT_FILE_LIMIT_BYTES`)
 - `media_runtime.ts` — detects `yt-dlp`/`ffmpeg`; downloads are disabled when they are missing
 - `bot_identity.ts` — cached bot id/username (deep links, own-rights lookup)
 - `i18n.ts` — all user-facing copy in Russian and English (`strings(lang)`); `en` is type-checked against `ru`
@@ -132,7 +132,7 @@ Main happy path:
    - **reply** — leaves the original and replies with just the fixed links. Used for media captions, for edits of an already answered message, when the chat has `keep_original` on, and when the bot lacks the delete right (it then explains that once per chat).
    Either way the bot's message carries a delete button for the author and chat admins (`del:<author id>`), unless the chat turned it off.
 6. For TikTok-only single links, it adds a free download button (rate-limited per user in memory; pass holders are exempt).
-7. For Instagram, a background probe may attach a paid save button (single full-quality photo, or an oversized video) and send carousels as a native album.
+7. For Instagram, a background probe may attach a paid save button (single full-quality photo, or an oversized video) and send carousels as a native album. A video over Telegram's 50 MB limit for bots is never uploaded: its message says so, the download button answers with a link to the preview service's `/v/<shortcode>.mp4` (free, for everyone), and there is no paid save button; a paid save that still hits one gets the link and its Stars back.
 
 ### 4. Product Surfaces
 

@@ -55,6 +55,7 @@ import {
   strings,
 } from './i18n';
 import { log } from './runtime';
+import { TELEGRAM_BOT_FILE_LIMIT_BYTES } from './video_delivery';
 
 type Resolvers = {
   getPreferredFixers?: () => FixerPreferences;
@@ -779,6 +780,9 @@ function scheduleInstaPreviewRefresh(
   (async () => {
     let anyOversized = false;
     let singlePhoto = false;
+    // Size of a single video too big for Telegram to take from the bot: the
+    // button below then hands out a link, free, so there is no paid save.
+    let overBotLimit: number | null = null;
     for (const sc of instaShortcodes) {
       const result = await fetchInstaPreview(sc).catch(() => null);
       if (!result?.ok) continue;
@@ -796,6 +800,13 @@ function scheduleInstaPreviewRefresh(
       const size = result.data.media?.[0]?.sizeBytes;
       if (typeof size === 'number' && size > PREVIEW_REFRESH_BUDGET_BYTES) {
         anyOversized = true;
+      }
+      if (
+        instaShortcodes.length === 1 &&
+        typeof size === 'number' &&
+        size > TELEGRAM_BOT_FILE_LIMIT_BYTES
+      ) {
+        overBotLimit = size;
       }
     }
 
@@ -837,15 +848,17 @@ function scheduleInstaPreviewRefresh(
     const downloadKeyboard: InlineKeyboardButton[][] = [];
     if (canOfferDownload) {
       downloadKeyboard.push([
-        { text: L.downloadToChatButton, callback_data: 'download_video' },
+        {
+          text: overBotLimit
+            ? L.instaLinkDownloadButton
+            : L.downloadToChatButton,
+          callback_data: 'download_video',
+        },
       ]);
     }
-    const refreshSaveRow = await buildInstaSaveRow(
-      bot,
-      instaShortcodes[0],
-      L,
-      'video'
-    );
+    const refreshSaveRow = overBotLimit
+      ? null
+      : await buildInstaSaveRow(bot, instaShortcodes[0], L, 'video');
     if (refreshSaveRow) downloadKeyboard.push(refreshSaveRow);
 
     // Nothing to offer (downloads off and no save button) — leave the message be.
@@ -857,7 +870,11 @@ function scheduleInstaPreviewRefresh(
     // Explain why the video is behind a button: oversized clips can't auto-play
     // in the inline preview. Append the note (no entities, so existing
     // mentions/offsets are untouched) and show it together with the buttons.
-    const notedText = text + L.oversizedNote;
+    const notedText =
+      text +
+      (overBotLimit
+        ? L.oversizedNoteTooBig(L.sizeLabel(overBotLimit))
+        : L.oversizedNote);
     try {
       const editOptions: EditMessageTextOptionsWithEntities = {
         chat_id: chatId,

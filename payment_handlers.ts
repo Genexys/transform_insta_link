@@ -18,7 +18,11 @@ import {
   isSavablePhoto,
   pickDownloadablePhoto,
 } from './insta_preview_client';
-import { deliverInstaMedia } from './video_delivery';
+import {
+  TELEGRAM_BOT_FILE_LIMIT_BYTES,
+  deliverInstaMedia,
+  instaVideoLinkMessage,
+} from './video_delivery';
 import { type Lang, langFromCode, strings } from './i18n';
 import { log } from './runtime';
 
@@ -79,13 +83,15 @@ async function sendStarsInvoice(params: {
 // Sends a Stars invoice for a savable copy of an Instagram post. Triggered from
 // the t.me/<bot>?start=dl_<shortcode> deep link, so it always runs in the
 // payer's private chat with the bot. Price/wording follow the media type: an
-// image-only post is cheaper than a video (see downloadPricing).
+// image-only post is cheaper than a video (see downloadPricing). A video over
+// Telegram's limit for bots is a free link for everyone, so it gets that link
+// instead of an invoice. Returns what was sent.
 export async function sendDownloadInvoice(
   bot: TelegramBot,
   chatId: number,
   shortcode: string,
   lang: Lang = 'ru'
-) {
+): Promise<'invoice' | 'refused' | 'link'> {
   const L = strings(lang);
   const preview = await fetchInstaPreview(shortcode);
   const photo = preview.ok ? pickDownloadablePhoto(preview.data) : null;
@@ -98,7 +104,24 @@ export async function sendDownloadInvoice(
     await bot
       .sendMessage(chatId, L.previewOnly)
       .catch(() => {});
-    return;
+    return 'refused';
+  }
+
+  const videoBytes = preview.ok
+    ? preview.data.media?.[0]?.sizeBytes
+    : undefined;
+  if (
+    !photo &&
+    typeof videoBytes === 'number' &&
+    videoBytes > TELEGRAM_BOT_FILE_LIMIT_BYTES
+  ) {
+    const { text, reply_markup } = instaVideoLinkMessage(
+      L,
+      shortcode,
+      videoBytes
+    );
+    await bot.sendMessage(chatId, text, { reply_markup }).catch(() => {});
+    return 'link';
   }
 
   const kind = photo ? 'photo' : 'video';
@@ -116,6 +139,7 @@ export async function sendDownloadInvoice(
     label: L.invoiceDownloadLabel(kind),
     errorText: L.invoiceDownloadError,
   });
+  return 'invoice';
 }
 
 // Sends a Stars invoice for the one-time unlimited-download pass. If a shortcode
@@ -341,11 +365,28 @@ export function registerPaymentHandlers(bot: TelegramBot) {
         .sendMessage(chatId, L.paidSending)
         .catch(() => {});
       try {
-        await deliverInstaMedia(bot, chatId, parsedPayload.shortcode, {
-          protect: false,
-          lang,
-          userId: telegramId,
-        });
+        const sent = await deliverInstaMedia(
+          bot,
+          chatId,
+          parsedPayload.shortcode,
+          {
+            protect: false,
+            lang,
+            userId: telegramId,
+          }
+        );
+        // Over Telegram's limit for bots: the video went out as the link
+        // everyone gets for free, so the Stars go back.
+        if (sent === 'link') {
+          await refundPayment(bot, {
+            chatId,
+            telegramId,
+            chargeId,
+            reason: 'video over the Telegram bot file limit, sent as a link',
+            userText: L.bigVideoFreeRefund,
+            lang,
+          });
+        }
       } catch (err) {
         log.error('Paid download delivery failed', {
           telegramId,

@@ -1,11 +1,11 @@
-import TelegramBot from 'node-telegram-bot-api';
+import TelegramBot, { type InlineKeyboardMarkup } from 'node-telegram-bot-api';
 import { randomUUID } from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { Readable } from 'stream';
+import { Readable, Transform } from 'stream';
 import { pipeline } from 'stream/promises';
 import { INSTA_PREVIEW_HOST, INSTA_PREVIEW_TOKEN } from './app_env';
 import { recordDownloadEvent } from './db';
@@ -14,15 +14,64 @@ import {
   isSavablePhoto,
   pickDownloadablePhoto,
 } from './insta_preview_client';
-import { type Lang, strings } from './i18n';
+import { type Lang, type Strings, strings } from './i18n';
+import { INSTA_FIX_DOMAIN } from './link_utils';
 import { log } from './runtime';
 
 const execFileAsync = promisify(execFile);
 
+// Telegram takes files of up to 50 MB from bots. A bigger upload is refused,
+// and on 2026-11-18 two 72 MB attempts were each followed by minutes of
+// failed requests to Telegram, so nothing over the limit is ever sent.
+export const TELEGRAM_BOT_FILE_LIMIT_BYTES = 50 * 1024 * 1024;
+
+// An Instagram video over TELEGRAM_BOT_FILE_LIMIT_BYTES. `bytes` is its size
+// when the preview service said it, undefined when the download was cut off.
+export class InstaVideoTooBigError extends Error {
+  constructor(readonly bytes?: number) {
+    super('Instagram video is over the Telegram bot file limit');
+    this.name = 'InstaVideoTooBigError';
+  }
+}
+
+// The public address of a post's video on the preview service: anyone can
+// open or save it there, the way Telegram's preview fetcher does.
+export function instaVideoLink(shortcode: string): string {
+  return `https://${INSTA_FIX_DOMAIN}/v/${encodeURIComponent(shortcode)}.mp4`;
+}
+
+// The text and button that hand out a video Telegram will not take from bots.
+export function instaVideoLinkMessage(
+  L: Strings,
+  shortcode: string,
+  bytes?: number
+): {
+  text: string;
+  reply_markup: InlineKeyboardMarkup;
+} {
+  const size = bytes ? L.sizeLabel(bytes) : undefined;
+  return {
+    text: L.instaVideoTooBig(size),
+    reply_markup: {
+      inline_keyboard: [
+        [
+          {
+            text: L.instaVideoLinkButton(size),
+            url: instaVideoLink(shortcode),
+          },
+        ],
+      ],
+    },
+  };
+}
+
 // Fetch the preview service's prepared video for a shortcode to a local file.
+// Throws InstaVideoTooBigError, before or while downloading, for a video
+// Telegram would refuse.
 export async function downloadInstaVideoFile(
   shortcode: string,
-  destPath: string
+  destPath: string,
+  maxBytes: number = TELEGRAM_BOT_FILE_LIMIT_BYTES
 ): Promise<void> {
   const url = `https://${INSTA_PREVIEW_HOST}/v/${encodeURIComponent(
     shortcode
@@ -42,8 +91,23 @@ export async function downloadInstaVideoFile(
     throw new Error(`preview_service_${res.status}`);
   }
 
+  const declared = Number(res.headers.get('content-length'));
+  if (declared > maxBytes) {
+    await res.body.cancel().catch(() => {});
+    throw new InstaVideoTooBigError(declared);
+  }
+
+  let received = 0;
+  const limit = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      received += chunk.length;
+      if (received > maxBytes) callback(new InstaVideoTooBigError());
+      else callback(null, chunk);
+    },
+  });
   await pipeline(
     Readable.fromWeb(res.body as any),
+    limit,
     fs.createWriteStream(destPath)
   );
 }
@@ -130,16 +194,36 @@ export async function probeVideoMeta(
 
 // Download an Instagram video and send it to a chat with explicit dimensions.
 // `protect` toggles protect_content: the free in-chat copy is protected
-// (view-only), the paid copy is savable.
+// (view-only), the paid copy is savable. A video over Telegram's limit for
+// bots goes out as a link to the preview service instead: 'link' is returned.
 export async function deliverInstaVideo(
   bot: TelegramBot,
   chatId: number,
   shortcode: string,
-  opts: { protect: boolean; caption?: string; replyToMessageId?: number }
-): Promise<void> {
+  opts: {
+    protect: boolean;
+    caption?: string;
+    replyToMessageId?: number;
+    lang?: Lang;
+  }
+): Promise<'file' | 'link'> {
   const tempFilePath = path.join(os.tmpdir(), `video_${randomUUID()}.mp4`);
+  const replyParameters = opts.replyToMessageId
+    ? { reply_parameters: { message_id: opts.replyToMessageId } }
+    : {};
   try {
-    await downloadInstaVideoFile(shortcode, tempFilePath);
+    try {
+      await downloadInstaVideoFile(shortcode, tempFilePath);
+    } catch (err) {
+      if (!(err instanceof InstaVideoTooBigError)) throw err;
+      const { text, reply_markup } = instaVideoLinkMessage(
+        strings(opts.lang ?? 'ru'),
+        shortcode,
+        err.bytes
+      );
+      await bot.sendMessage(chatId, text, { reply_markup, ...replyParameters });
+      return 'link';
+    }
     if (!fs.existsSync(tempFilePath)) {
       throw new Error('preview_service_no_file');
     }
@@ -149,14 +233,13 @@ export async function deliverInstaVideo(
     await bot.sendVideo(chatId, tempFilePath, {
       caption: opts.caption,
       protect_content: opts.protect,
-      ...(opts.replyToMessageId
-        ? { reply_parameters: { message_id: opts.replyToMessageId } }
-        : {}),
+      ...replyParameters,
       ...(meta.width && meta.height
         ? { width: meta.width, height: meta.height }
         : {}),
       ...(meta.duration ? { duration: meta.duration } : {}),
     });
+    return 'file';
   } finally {
     if (fs.existsSync(tempFilePath)) {
       fs.unlink(tempFilePath, err => {
@@ -177,7 +260,8 @@ export async function deliverInstaVideo(
 // everything else goes through the existing video path. `premium` only tweaks
 // the caption wording. This is the single entry point for all paid/premium/pass
 // deliveries so both media types behave identically. Each call is recorded in
-// download_events (kind "save"), for /stats.
+// download_events (kind "save"), for /stats. Returns 'link' when the video was
+// over Telegram's limit for bots and went out as a link instead of a file.
 type DeliverInstaMediaOptions = {
   protect: boolean;
   premium?: boolean;
@@ -193,9 +277,9 @@ export async function deliverInstaMedia(
   chatId: number,
   shortcode: string,
   opts: DeliverInstaMediaOptions
-): Promise<void> {
+): Promise<'file' | 'link'> {
   const startedAt = Date.now();
-  const record = (outcome: 'ok' | 'failed') =>
+  const record = (outcome: 'ok' | 'link' | 'failed') =>
     void recordDownloadEvent({
       platform: 'instagram',
       kind: 'save',
@@ -206,13 +290,15 @@ export async function deliverInstaMedia(
       userId: opts.userId,
       durationMs: Date.now() - startedAt,
     });
+  let sent: 'file' | 'link';
   try {
-    await sendInstaMedia(bot, chatId, shortcode, opts);
+    sent = await sendInstaMedia(bot, chatId, shortcode, opts);
   } catch (err) {
     record('failed');
     throw err;
   }
-  record('ok');
+  record(sent === 'link' ? 'link' : 'ok');
+  return sent;
 }
 
 async function sendInstaMedia(
@@ -220,7 +306,7 @@ async function sendInstaMedia(
   chatId: number,
   shortcode: string,
   opts: DeliverInstaMediaOptions
-): Promise<void> {
+): Promise<'file' | 'link'> {
   const L = strings(opts.lang ?? 'ru');
   const preview = await fetchInstaPreview(shortcode);
   const photo = preview.ok ? pickDownloadablePhoto(preview.data) : null;
@@ -234,12 +320,12 @@ async function sendInstaMedia(
   }
 
   if (!photo) {
-    await deliverInstaVideo(bot, chatId, shortcode, {
+    return deliverInstaVideo(bot, chatId, shortcode, {
       protect: opts.protect,
       caption: L.videoCaption(Boolean(opts.premium)),
       replyToMessageId: opts.replyToMessageId,
+      lang: opts.lang,
     });
-    return;
   }
 
   const tempFilePath = path.join(os.tmpdir(), `photo_${randomUUID()}.jpg`);
@@ -256,6 +342,7 @@ async function sendInstaMedia(
         ? { reply_parameters: { message_id: opts.replyToMessageId } }
         : {}),
     });
+    return 'file';
   } finally {
     if (fs.existsSync(tempFilePath)) {
       fs.unlink(tempFilePath, err => {

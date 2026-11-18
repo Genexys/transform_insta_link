@@ -11,6 +11,7 @@ const bot_identity_1 = require("./bot_identity");
 const billing_1 = require("./billing");
 const i18n_1 = require("./i18n");
 const runtime_1 = require("./runtime");
+const video_delivery_1 = require("./video_delivery");
 exports.DELETE_CALLBACK_PREFIX = 'del:';
 function platformLabels(fixedLinks) {
     const platforms = new Set();
@@ -508,6 +509,7 @@ function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, entities, fix
     (async () => {
         let anyOversized = false;
         let singlePhoto = false;
+        let overBotLimit = null;
         for (const sc of instaShortcodes) {
             const result = await (0, insta_preview_client_1.fetchInstaPreview)(sc).catch(() => null);
             if (!result?.ok)
@@ -519,6 +521,11 @@ function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, entities, fix
             const size = result.data.media?.[0]?.sizeBytes;
             if (typeof size === 'number' && size > PREVIEW_REFRESH_BUDGET_BYTES) {
                 anyOversized = true;
+            }
+            if (instaShortcodes.length === 1 &&
+                typeof size === 'number' &&
+                size > video_delivery_1.TELEGRAM_BOT_FILE_LIMIT_BYTES) {
+                overBotLimit = size;
             }
         }
         if (singlePhoto && !anyOversized) {
@@ -546,10 +553,17 @@ function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, entities, fix
         const downloadKeyboard = [];
         if (canOfferDownload) {
             downloadKeyboard.push([
-                { text: L.downloadToChatButton, callback_data: 'download_video' },
+                {
+                    text: overBotLimit
+                        ? L.instaLinkDownloadButton
+                        : L.downloadToChatButton,
+                    callback_data: 'download_video',
+                },
             ]);
         }
-        const refreshSaveRow = await buildInstaSaveRow(bot, instaShortcodes[0], L, 'video');
+        const refreshSaveRow = overBotLimit
+            ? null
+            : await buildInstaSaveRow(bot, instaShortcodes[0], L, 'video');
         if (refreshSaveRow)
             downloadKeyboard.push(refreshSaveRow);
         if (downloadKeyboard.length === 0)
@@ -557,7 +571,10 @@ function scheduleInstaPreviewRefresh(bot, chatId, messageId, text, entities, fix
         const downloadMarkup = {
             inline_keyboard: [...downloadKeyboard, ...extraRows],
         };
-        const notedText = text + L.oversizedNote;
+        const notedText = text +
+            (overBotLimit
+                ? L.oversizedNoteTooBig(L.sizeLabel(overBotLimit))
+                : L.oversizedNote);
         try {
             const editOptions = {
                 chat_id: chatId,

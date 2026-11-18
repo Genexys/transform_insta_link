@@ -185,7 +185,15 @@ export function registerCommandHandlers(bot: TelegramBot) {
             }
           } else {
             // Pay-per-video invoice + a single upsell button for the pass.
-            await sendDownloadInvoice(bot, chatId, shortcode, lang);
+            // A video too big for Telegram gets a free link instead, and no
+            // upsell.
+            const sent = await sendDownloadInvoice(
+              bot,
+              chatId,
+              shortcode,
+              lang
+            );
+            if (sent === 'link') return;
             await bot
               .sendMessage(chatId, L.passUpsell, {
                 reply_markup: {

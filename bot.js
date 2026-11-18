@@ -59,7 +59,10 @@ void (0, bot_profile_1.syncBotProfile)(bot);
 (0, weekly_report_1.startWeeklyReport)(bot);
 preview_probes_1.previewMonitor.start(sendAdminAlert);
 bot.on('polling_error', error => {
-    runtime_1.log.error('Polling error', { err: String(error) });
+    runtime_1.log.error('Polling error', {
+        err: String(error),
+        cause: (0, runtime_1.errorCauses)(error),
+    });
 });
 process.on('uncaughtException', error => {
     runtime_1.log.error('uncaughtException', {

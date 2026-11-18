@@ -38,6 +38,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.log = void 0;
 exports.requireEnv = requireEnv;
+exports.errorCauses = errorCauses;
 const dotenv_1 = __importDefault(require("dotenv"));
 const Sentry = __importStar(require("@sentry/node"));
 dotenv_1.default.config();
@@ -57,6 +58,16 @@ function requireEnv(name) {
         ts: new Date().toISOString(),
     }));
     process.exit(1);
+}
+function errorCauses(error) {
+    const causes = [];
+    let cause = error?.cause;
+    while (cause && causes.length < 4) {
+        const code = cause.code;
+        causes.push(code ? `${String(code)}: ${String(cause)}` : String(cause));
+        cause = cause.cause;
+    }
+    return causes.length ? causes.join(' <- ') : undefined;
 }
 exports.log = {
     info: (msg, meta) => console.log(JSON.stringify({

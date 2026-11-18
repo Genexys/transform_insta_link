@@ -92,6 +92,18 @@ const ru = {
   downloadReady: '🎥 Ваше видео готово!',
   downloadErrTooBig:
     '❌ Видео слишком большое для отправки через Telegram (>50MB).',
+  // Instagram videos over Telegram's 50 MB limit for bots go out as a link.
+  oversizedNoteTooBig: (size: string) =>
+    `\n\n📦 Видео весит ${size}, а Telegram не принимает от ботов файлы больше 50 МБ — кнопка ниже даст ссылку на скачивание.`,
+  instaLinkDownloadButton: '📥 Скачать видео',
+  instaVideoTooBig: (size?: string) =>
+    size
+      ? `📦 Видео весит ${size}, а Telegram не принимает от ботов файлы больше 50 МБ — поэтому вот ссылка на скачивание.`
+      : '📦 Видео больше 50 МБ, а больше Telegram от ботов не принимает — поэтому вот ссылка на скачивание.',
+  instaVideoLinkButton: (size?: string) =>
+    size ? `📥 Скачать · ${size}` : '📥 Скачать',
+  bigVideoFreeRefund:
+    'Видео больше 50 МБ — такие бот отдаёт ссылкой бесплатно, она выше.',
   downloadErrPreview: (detail: string) =>
     `❌ Сервис превью вернул ошибку: ${detail}. Попробуйте через минуту.`,
   downloadErrGeneric:
@@ -392,6 +404,17 @@ const en: Strings = {
   downloadLoading: '⏳ Downloading, this may take a few seconds...',
   downloadReady: '🎥 Your video is ready!',
   downloadErrTooBig: '❌ The video is too large to send via Telegram (>50MB).',
+  oversizedNoteTooBig: size =>
+    `\n\n📦 The video is ${size}, and Telegram does not accept files over 50 MB from bots — the button below gives a download link.`,
+  instaLinkDownloadButton: '📥 Download video',
+  instaVideoTooBig: size =>
+    size
+      ? `📦 The video is ${size}, and Telegram does not accept files over 50 MB from bots, so here is a download link.`
+      : '📦 The video is over 50 MB, more than Telegram accepts from bots, so here is a download link.',
+  instaVideoLinkButton: size =>
+    size ? `📥 Download · ${size}` : '📥 Download',
+  bigVideoFreeRefund:
+    'The video is over 50 MB; the bot hands such videos out as a free link, see above.',
   downloadErrPreview: detail =>
     `❌ The preview service returned an error: ${detail}. Try again in a minute.`,
   downloadErrGeneric: '❌ Server error. Try again later or use another link.',
