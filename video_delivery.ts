@@ -34,13 +34,28 @@ export class InstaVideoTooBigError extends Error {
   }
 }
 
-// The public address of a post's video on the preview service: anyone can
-// open or save it there, the way Telegram's preview fetcher does.
-export function instaVideoLink(shortcode: string): string {
-  return `https://${INSTA_FIX_DOMAIN}/v/${encodeURIComponent(shortcode)}.mp4`;
+// Which file the preview service's /v/ hands out:
+// - 'preview': its 720p copy that fits Telegram's preview when it has one,
+//   else the original (free view-only copies, which may be compressed);
+// - 'original': always the original (paid and pass copies);
+// - 'fit': the 720p copy, waiting while it is made (a free copy of a video
+//   too big to send whole). Needs the token.
+export type InstaVideoVariant = 'preview' | 'original' | 'fit';
+
+function instaVideoQuery(variant: InstaVideoVariant): string {
+  if (variant === 'original') return '?original=1';
+  if (variant === 'fit') return '?fit=1';
+  return '';
 }
 
-// The text and button that hand out a video Telegram will not take from bots.
+// The public address of a post's original video on the preview service, for
+// the paid or pass copy of a video Telegram will not take from bots.
+export function instaVideoLink(shortcode: string): string {
+  return `https://${INSTA_FIX_DOMAIN}/v/${encodeURIComponent(shortcode)}.mp4?original=1`;
+}
+
+// The text and button that hand out the original of a video Telegram will
+// not take from bots.
 export function instaVideoLinkMessage(
   L: Strings,
   shortcode: string,
@@ -65,17 +80,25 @@ export function instaVideoLinkMessage(
   };
 }
 
-// Fetch the preview service's prepared video for a shortcode to a local file.
+// Fetch a shortcode's video from the preview service to a local file.
 // Throws InstaVideoTooBigError, before or while downloading, for a video
 // Telegram would refuse.
 export async function downloadInstaVideoFile(
   shortcode: string,
   destPath: string,
-  maxBytes: number = TELEGRAM_BOT_FILE_LIMIT_BYTES
+  {
+    variant = 'preview',
+    maxBytes = TELEGRAM_BOT_FILE_LIMIT_BYTES,
+    timeoutMs = 120_000,
+  }: {
+    variant?: InstaVideoVariant;
+    maxBytes?: number;
+    timeoutMs?: number;
+  } = {}
 ): Promise<void> {
   const url = `https://${INSTA_PREVIEW_HOST}/v/${encodeURIComponent(
     shortcode
-  )}.mp4`;
+  )}.mp4${instaVideoQuery(variant)}`;
   const headers: Record<string, string> = {};
   if (INSTA_PREVIEW_TOKEN) {
     headers.authorization = `Bearer ${INSTA_PREVIEW_TOKEN}`;
@@ -84,10 +107,11 @@ export async function downloadInstaVideoFile(
   const res = await fetch(url, {
     method: 'GET',
     headers,
-    signal: AbortSignal.timeout(120_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
 
   if (!res.ok || !res.body) {
+    await res.body?.cancel().catch(() => {});
     throw new Error(`preview_service_${res.status}`);
   }
 
@@ -192,10 +216,11 @@ export async function probeVideoMeta(
   }
 }
 
-// Download an Instagram video and send it to a chat with explicit dimensions.
-// `protect` toggles protect_content: the free in-chat copy is protected
-// (view-only), the paid copy is savable. A video over Telegram's limit for
-// bots goes out as a link to the preview service instead: 'link' is returned.
+// Download an Instagram video's original and send it to a chat with explicit
+// dimensions (the paid and pass copies; the free button has its own path in
+// download_handlers). `protect` toggles protect_content. A video over
+// Telegram's limit for bots goes out as a link to the original instead:
+// 'link' is returned.
 export async function deliverInstaVideo(
   bot: TelegramBot,
   chatId: number,
@@ -213,7 +238,9 @@ export async function deliverInstaVideo(
     : {};
   try {
     try {
-      await downloadInstaVideoFile(shortcode, tempFilePath);
+      await downloadInstaVideoFile(shortcode, tempFilePath, {
+        variant: 'original',
+      });
     } catch (err) {
       if (!(err instanceof InstaVideoTooBigError)) throw err;
       const { text, reply_markup } = instaVideoLinkMessage(

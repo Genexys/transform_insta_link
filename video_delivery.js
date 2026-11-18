@@ -35,8 +35,15 @@ class InstaVideoTooBigError extends Error {
     }
 }
 exports.InstaVideoTooBigError = InstaVideoTooBigError;
+function instaVideoQuery(variant) {
+    if (variant === 'original')
+        return '?original=1';
+    if (variant === 'fit')
+        return '?fit=1';
+    return '';
+}
 function instaVideoLink(shortcode) {
-    return `https://${link_utils_1.INSTA_FIX_DOMAIN}/v/${encodeURIComponent(shortcode)}.mp4`;
+    return `https://${link_utils_1.INSTA_FIX_DOMAIN}/v/${encodeURIComponent(shortcode)}.mp4?original=1`;
 }
 function instaVideoLinkMessage(L, shortcode, bytes) {
     const size = bytes ? L.sizeLabel(bytes) : undefined;
@@ -54,8 +61,8 @@ function instaVideoLinkMessage(L, shortcode, bytes) {
         },
     };
 }
-async function downloadInstaVideoFile(shortcode, destPath, maxBytes = exports.TELEGRAM_BOT_FILE_LIMIT_BYTES) {
-    const url = `https://${app_env_1.INSTA_PREVIEW_HOST}/v/${encodeURIComponent(shortcode)}.mp4`;
+async function downloadInstaVideoFile(shortcode, destPath, { variant = 'preview', maxBytes = exports.TELEGRAM_BOT_FILE_LIMIT_BYTES, timeoutMs = 120_000, } = {}) {
+    const url = `https://${app_env_1.INSTA_PREVIEW_HOST}/v/${encodeURIComponent(shortcode)}.mp4${instaVideoQuery(variant)}`;
     const headers = {};
     if (app_env_1.INSTA_PREVIEW_TOKEN) {
         headers.authorization = `Bearer ${app_env_1.INSTA_PREVIEW_TOKEN}`;
@@ -63,9 +70,10 @@ async function downloadInstaVideoFile(shortcode, destPath, maxBytes = exports.TE
     const res = await fetch(url, {
         method: 'GET',
         headers,
-        signal: AbortSignal.timeout(120_000),
+        signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok || !res.body) {
+        await res.body?.cancel().catch(() => { });
         throw new Error(`preview_service_${res.status}`);
     }
     const declared = Number(res.headers.get('content-length'));
@@ -141,7 +149,9 @@ async function deliverInstaVideo(bot, chatId, shortcode, opts) {
         : {};
     try {
         try {
-            await downloadInstaVideoFile(shortcode, tempFilePath);
+            await downloadInstaVideoFile(shortcode, tempFilePath, {
+                variant: 'original',
+            });
         }
         catch (err) {
             if (!(err instanceof InstaVideoTooBigError))

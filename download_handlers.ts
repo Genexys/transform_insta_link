@@ -5,6 +5,7 @@ import os from 'os';
 import path from 'path';
 import { YtDlp } from 'ytdlp-nodejs';
 import { DATABASE_URL } from './app_env';
+import { DOWNLOAD_PRICE_STARS } from './billing';
 import {
   type DownloadEvent,
   type DownloadOutcome,
@@ -292,6 +293,8 @@ export async function handleDownloadCallback(
 
   const tempFilePath = path.join(os.tmpdir(), `video_${randomUUID()}.mp4`);
   let loadingMsg: { message_id: number } | null = null;
+  // Set when the video sent is not the one asked for (a compressed copy).
+  let caption: string | undefined;
 
   try {
     await bot.answerCallbackQuery(query.id, { text: L.downloadStarting });
@@ -314,33 +317,69 @@ export async function handleDownloadCallback(
       }
       // This free in-chat button only ever fires for videos (TikTok, or an
       // oversized Instagram video). Image-only posts are handled by the paid
-      // save flow (deliverInstaMedia), not here.
+      // save flow (deliverInstaMedia), not here. Pass holders get the
+      // original; the free copy is view-only, so it may be the preview
+      // service's 720p copy.
       try {
-        await downloadInstaVideoFile(shortcode, tempFilePath);
+        await downloadInstaVideoFile(shortcode, tempFilePath, {
+          variant: isPassHolder ? 'original' : 'preview',
+        });
       } catch (err) {
         if (!(err instanceof InstaVideoTooBigError)) throw err;
-        // Over Telegram's limit for bots: a link to the preview service, for
-        // everyone, instead of a file.
-        const { text, reply_markup } = instaVideoLinkMessage(
-          L,
-          shortcode,
-          err.bytes
-        );
-        await bot.editMessageText(text, {
-          chat_id: chatId,
-          message_id: loadingMsg.message_id,
-          reply_markup,
-        });
-        log.info('Instagram video link sent', {
-          chatId,
-          telegramId,
-          sizeBytes: err.bytes,
-        });
-        record('link', err.bytes);
-        if (DATABASE_URL) {
-          await incrementDownloads(telegramId);
+        const size = err.bytes ? L.sizeLabel(err.bytes) : undefined;
+        if (isPassHolder) {
+          // Over Telegram's limit for bots: the original as a link.
+          const { text, reply_markup } = instaVideoLinkMessage(
+            L,
+            shortcode,
+            err.bytes
+          );
+          await bot.editMessageText(text, {
+            chat_id: chatId,
+            message_id: loadingMsg.message_id,
+            reply_markup,
+          });
+          log.info('Instagram video link sent', {
+            chatId,
+            telegramId,
+            sizeBytes: err.bytes,
+          });
+          record('link', err.bytes);
+          if (DATABASE_URL) {
+            await incrementDownloads(telegramId);
+          }
+          return;
         }
-        return;
+        // Free: a compressed copy to watch; the original stays the paid
+        // save (a link, for a video this big).
+        await bot
+          .editMessageText(L.instaCompressing(size), {
+            chat_id: chatId,
+            message_id: loadingMsg.message_id,
+          })
+          .catch(() => {});
+        try {
+          await downloadInstaVideoFile(shortcode, tempFilePath, {
+            variant: 'fit',
+            timeoutMs: 150_000,
+          });
+        } catch (fitErr) {
+          log.warn('Instagram compressed copy unavailable', {
+            chatId,
+            telegramId,
+            sizeBytes: err.bytes,
+            err: String(fitErr),
+          });
+          await bot
+            .editMessageText(
+              L.instaCompressFailed(size, DOWNLOAD_PRICE_STARS),
+              { chat_id: chatId, message_id: loadingMsg.message_id }
+            )
+            .catch(() => {});
+          record('too_big');
+          return;
+        }
+        caption = L.instaCompressedCaption(size, DOWNLOAD_PRICE_STARS);
       }
     } else if (isYouTube) {
       const progress = linkProgressEditor(
@@ -411,7 +450,7 @@ export async function handleDownloadCallback(
     // applied) so a portrait clip stays portrait.
     const meta = await probeVideoMeta(tempFilePath);
     await bot.sendVideo(chatId, tempFilePath, {
-      caption: L.downloadReady,
+      caption: caption ?? L.downloadReady,
       reply_parameters: { message_id: sourceMessage.message_id },
       // The free copy is view-only; pass holders get a savable one.
       protect_content: !isPassHolder,

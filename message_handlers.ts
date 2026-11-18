@@ -780,8 +780,8 @@ function scheduleInstaPreviewRefresh(
   (async () => {
     let anyOversized = false;
     let singlePhoto = false;
-    // Size of a single video too big for Telegram to take from the bot: the
-    // button below then hands out a link, free, so there is no paid save.
+    // Size of a single video too big for Telegram to take from the bot: its
+    // note says so (the free copy is compressed, the paid one is a link).
     let overBotLimit: number | null = null;
     for (const sc of instaShortcodes) {
       const result = await fetchInstaPreview(sc).catch(() => null);
@@ -848,17 +848,15 @@ function scheduleInstaPreviewRefresh(
     const downloadKeyboard: InlineKeyboardButton[][] = [];
     if (canOfferDownload) {
       downloadKeyboard.push([
-        {
-          text: overBotLimit
-            ? L.instaLinkDownloadButton
-            : L.downloadToChatButton,
-          callback_data: 'download_video',
-        },
+        { text: L.downloadToChatButton, callback_data: 'download_video' },
       ]);
     }
-    const refreshSaveRow = overBotLimit
-      ? null
-      : await buildInstaSaveRow(bot, instaShortcodes[0], L, 'video');
+    const refreshSaveRow = await buildInstaSaveRow(
+      bot,
+      instaShortcodes[0],
+      L,
+      'video'
+    );
     if (refreshSaveRow) downloadKeyboard.push(refreshSaveRow);
 
     // Nothing to offer (downloads off and no save button) — leave the message be.
@@ -873,7 +871,11 @@ function scheduleInstaPreviewRefresh(
     const notedText =
       text +
       (overBotLimit
-        ? L.oversizedNoteTooBig(L.sizeLabel(overBotLimit))
+        ? L.oversizedNoteTooBig(
+            L.sizeLabel(overBotLimit),
+            canOfferDownload,
+            Boolean(refreshSaveRow)
+          )
         : L.oversizedNote);
     try {
       const editOptions: EditMessageTextOptionsWithEntities = {

@@ -11,6 +11,7 @@ const fs_1 = __importDefault(require("fs"));
 const os_1 = __importDefault(require("os"));
 const path_1 = __importDefault(require("path"));
 const app_env_1 = require("./app_env");
+const billing_1 = require("./billing");
 const db_1 = require("./db");
 const insta_preview_client_1 = require("./insta_preview_client");
 const link_utils_1 = require("./link_utils");
@@ -193,6 +194,7 @@ async function handleDownloadCallback(bot, query, ytdlp) {
     activeDownloads.add(telegramId);
     const tempFilePath = path_1.default.join(os_1.default.tmpdir(), `video_${(0, crypto_1.randomUUID)()}.mp4`);
     let loadingMsg = null;
+    let caption;
     try {
         await bot.answerCallbackQuery(query.id, { text: L.downloadStarting });
         loadingMsg = await bot.sendMessage(chatId, L.downloadLoading, {
@@ -211,27 +213,58 @@ async function handleDownloadCallback(bot, query, ytdlp) {
                 throw new Error('Не удалось распознать shortcode Instagram-ссылки.');
             }
             try {
-                await (0, video_delivery_1.downloadInstaVideoFile)(shortcode, tempFilePath);
+                await (0, video_delivery_1.downloadInstaVideoFile)(shortcode, tempFilePath, {
+                    variant: isPassHolder ? 'original' : 'preview',
+                });
             }
             catch (err) {
                 if (!(err instanceof video_delivery_1.InstaVideoTooBigError))
                     throw err;
-                const { text, reply_markup } = (0, video_delivery_1.instaVideoLinkMessage)(L, shortcode, err.bytes);
-                await bot.editMessageText(text, {
+                const size = err.bytes ? L.sizeLabel(err.bytes) : undefined;
+                if (isPassHolder) {
+                    const { text, reply_markup } = (0, video_delivery_1.instaVideoLinkMessage)(L, shortcode, err.bytes);
+                    await bot.editMessageText(text, {
+                        chat_id: chatId,
+                        message_id: loadingMsg.message_id,
+                        reply_markup,
+                    });
+                    runtime_1.log.info('Instagram video link sent', {
+                        chatId,
+                        telegramId,
+                        sizeBytes: err.bytes,
+                    });
+                    record('link', err.bytes);
+                    if (app_env_1.DATABASE_URL) {
+                        await (0, db_1.incrementDownloads)(telegramId);
+                    }
+                    return;
+                }
+                await bot
+                    .editMessageText(L.instaCompressing(size), {
                     chat_id: chatId,
                     message_id: loadingMsg.message_id,
-                    reply_markup,
-                });
-                runtime_1.log.info('Instagram video link sent', {
-                    chatId,
-                    telegramId,
-                    sizeBytes: err.bytes,
-                });
-                record('link', err.bytes);
-                if (app_env_1.DATABASE_URL) {
-                    await (0, db_1.incrementDownloads)(telegramId);
+                })
+                    .catch(() => { });
+                try {
+                    await (0, video_delivery_1.downloadInstaVideoFile)(shortcode, tempFilePath, {
+                        variant: 'fit',
+                        timeoutMs: 150_000,
+                    });
                 }
-                return;
+                catch (fitErr) {
+                    runtime_1.log.warn('Instagram compressed copy unavailable', {
+                        chatId,
+                        telegramId,
+                        sizeBytes: err.bytes,
+                        err: String(fitErr),
+                    });
+                    await bot
+                        .editMessageText(L.instaCompressFailed(size, billing_1.DOWNLOAD_PRICE_STARS), { chat_id: chatId, message_id: loadingMsg.message_id })
+                        .catch(() => { });
+                    record('too_big');
+                    return;
+                }
+                caption = L.instaCompressedCaption(size, billing_1.DOWNLOAD_PRICE_STARS);
             }
         }
         else if (isYouTube) {
@@ -283,7 +316,7 @@ async function handleDownloadCallback(bot, query, ytdlp) {
         await bot.sendChatAction(chatId, 'upload_video');
         const meta = await (0, video_delivery_1.probeVideoMeta)(tempFilePath);
         await bot.sendVideo(chatId, tempFilePath, {
-            caption: L.downloadReady,
+            caption: caption ?? L.downloadReady,
             reply_parameters: { message_id: sourceMessage.message_id },
             protect_content: !isPassHolder,
             supports_streaming: true,
