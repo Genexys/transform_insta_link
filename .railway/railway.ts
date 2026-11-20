@@ -6,9 +6,9 @@ export const partial = "transform_insta_link";
 export default defineRailway(() => {
   const transform_insta_link = service("transform_insta_link", {
     source: github("Genexys/transform_insta_link", { branch: "master", checkSuites: false }),
-    // No builder value: Railway builds from the root `Dockerfile` automatically
-    // ("Using detected Dockerfile!" in the build log). Omitting it clears the
-    // old explicit NIXPACKS builder on apply.
+    // No builder value: Railway builds the root `Dockerfile` automatically,
+    // even over an explicit builder setting ("load build definition from
+    // Dockerfile" in the build log). Applying this clears the old NIXPACKS.
     build: { buildEnvironment: "V3" },
     start: "npm run railway:start",
     // Liveness only: /health reports third-party fixer state and can return
